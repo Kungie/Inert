@@ -51,7 +51,7 @@ impl Browser {
     }
 
     pub fn open_popover(&mut self, p: Popover, anchor: Rect) {
-        let recently_closed = self.ctx.data(|d| d.get_temp::<Instant>(Id::unique("pop_closed_at"))).is_some_and(|t| t.elapsed() < Duration::from_millis(250));
+        let recently_closed = self.ctx.data(|d| d.get_temp::<(Instant, Popover)>(Id::unique("pop_closed_at"))).is_some_and(|(t, k)| k == p && t.elapsed() < Duration::from_millis(250));
         if self.popover == p || recently_closed {
             self.popover = Popover::None;
             return;
@@ -108,7 +108,9 @@ impl Browser {
         let right = Rect::from_min_max(pos2(full.right() - 205.0, full.top() + 6.0), pos2(full.right() - 10.0, full.bottom()));
         let mut r = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)));
         let ai_color = if self.ai.open { ACCENT } else { FG };
-        if icons::button_c(&mut r, Icon::Spark, 28.0, "Assistant  Cmd+J", ai_color, true).clicked() {
+        let air = icons::button_c(&mut r, Icon::Spark, 28.0, "Assistant  Cmd+J", ai_color, true);
+        crate::drive::reg("ai", air.rect);
+        if air.clicked() {
             self.ai.open = !self.ai.open;
         }
         let st = &self.vpn.status;
@@ -120,6 +122,7 @@ impl Browser {
         let col = if st.connected() { OK } else { MUTED };
         let chip = egui::Button::new(RichText::new(format!("● {txt}")).font(FontId::new(10.5, mono())).color(col).extra_letter_spacing(1.2)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, if st.connected() { OK.gamma_multiply(0.6) } else { LINE_STRONG })).corner_radius(2).min_size(vec2(0.0, 24.0));
         let resp = r.add(chip).on_hover_text("Mullvad VPN");
+        crate::drive::reg("vpn", resp.rect);
         if resp.clicked() {
             self.open_popover(Popover::Vpn, resp.rect);
         }
@@ -164,7 +167,9 @@ impl Browser {
         for id in rest {
             self.tab_item(ui, id, tab_w, None);
         }
-        if icons::button(ui, Icon::Plus, 26.0, "New tab  Cmd+T").clicked() {
+        let plus = icons::button(ui, Icon::Plus, 26.0, "New tab  Cmd+T");
+        crate::drive::reg("newtab", plus.rect);
+        if plus.clicked() {
             self.add_tab("about:newtab", None, true, None);
         }
 
@@ -176,6 +181,7 @@ impl Browser {
         let galley = ui.painter().layout_no_wrap(label.clone(), FontId::new(10.5, mono()), color);
         let w = galley.size().x + if icon.is_some() { 30.0 } else { 16.0 } + if count > 0 { 16.0 } else { 0.0 };
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
+        crate::drive::reg(format!("group:{}", g.name), rect);
         let p = ui.painter();
         let fill = if resp.hovered() { color.gamma_multiply(0.18) } else { color.gamma_multiply(0.1) };
         p.rect_filled(rect, 3.0, fill);
@@ -269,6 +275,7 @@ impl Browser {
             Kind::Page(_) => (Icon::Spark, MUTED),
         };
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
+        crate::drive::reg(format!("tab:{title}"), rect);
         let p = ui.painter().clone();
         if active {
             p.rect_filled(rect, egui::CornerRadius { nw: 4, ne: 4, sw: 0, se: 0 }, PANEL);
@@ -355,7 +362,9 @@ impl Browser {
                 ui.close();
             }
             ui.separator();
-            if ui.button(if pinned { "Unpin" } else { "Pin" }).clicked() {
+            let pb = ui.button(if pinned { "Unpin" } else { "Pin" });
+            crate::drive::reg(if pinned { "ctx:Unpin" } else { "ctx:Pin" }, pb.rect);
+            if pb.clicked() {
                 if let Some(t) = self.tab_mut(id) {
                     t.pinned = !t.pinned;
                 }
@@ -393,10 +402,14 @@ impl Browser {
     fn toolbar(&mut self, ui: &mut Ui) {
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            if icons::button_c(ui, Icon::Back, 30.0, "Back  Cmd+[", FG, self.can_go(true)).clicked() {
+            let rb = icons::button_c(ui, Icon::Back, 30.0, "Back  Cmd+[", FG, self.can_go(true));
+            crate::drive::reg("back", rb.rect);
+            if rb.clicked() {
                 self.go_back();
             }
-            if icons::button_c(ui, Icon::Forward, 30.0, "Forward  Cmd+]", FG, self.can_go(false)).clicked() {
+            let rf = icons::button_c(ui, Icon::Forward, 30.0, "Forward  Cmd+]", FG, self.can_go(false));
+            crate::drive::reg("forward", rf.rect);
+            if rf.clicked() {
                 self.go_forward();
             }
             let loading = self.active_tab().is_some_and(|t| t.loading());
@@ -414,7 +427,9 @@ impl Browser {
             ui.add_space(6.0);
             let url = self.active_tab().map(|t| t.url()).unwrap_or_default();
             let marked = self.profile.is_bookmarked(&url);
-            if icons::button_c(ui, if marked { Icon::StarFilled } else { Icon::Star }, 30.0, "Bookmark this tab  Cmd+D", if marked { ACCENT } else { FG }, !url.starts_with("about:")).clicked() {
+            let rs = icons::button_c(ui, if marked { Icon::StarFilled } else { Icon::Star }, 30.0, "Bookmark this tab  Cmd+D", if marked { ACCENT } else { FG }, !url.starts_with("about:"));
+            crate::drive::reg("star", rs.rect);
+            if rs.clicked() {
                 let title = self.active_tab().map(|t| t.title()).unwrap_or_default();
                 self.profile.toggle_bookmark(&url, &title);
                 self.dirty = true;
@@ -426,10 +441,12 @@ impl Browser {
                 _ => (WARN, "Shield is preparing filter lists…".to_owned()),
             };
             let r = icons::button_c(ui, Icon::Shield, 30.0, &tip, shield_c, true);
+            crate::drive::reg("shield", r.rect);
             if r.clicked() {
                 self.open_popover(Popover::Shield, r.rect);
             }
             let r = icons::button(ui, Icon::Menu, 30.0, "Menu");
+            crate::drive::reg("menu", r.rect);
             if r.clicked() {
                 self.open_popover(Popover::Menu, r.rect);
             }
@@ -467,6 +484,7 @@ impl Browser {
 
         // Text field.
         let text_rect = Rect::from_min_max(pos2(badge.right() + 8.0, rect.top()), pos2(rect.right() - 8.0, rect.bottom()));
+        crate::drive::reg("omnibox", text_rect);
         if self.omni.focus {
             ui.memory_mut(|m| m.request_focus(id));
             self.omni.focus = false;
@@ -487,7 +505,10 @@ impl Browser {
             self.omni.editing = true;
             self.omni.select_all = true;
         }
-        if self.omni.select_all && resp.has_focus() {
+        // Select everything once the click that focused the box is over
+        // (the text box moves the cursor on press and release).
+        let pointer_busy = ui.input(|i| i.pointer.any_down() || i.pointer.any_released());
+        if self.omni.select_all && resp.has_focus() && !pointer_busy {
             let mut st = out.state.clone();
             st.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(self.omni.text.chars().count()))));
             st.store(ui.ctx(), id);
@@ -518,7 +539,7 @@ impl Browser {
         if escape && self.omni.editing {
             self.omni.editing = false;
             self.omni.sugg.clear();
-            self.omni.text = self.active_tab().map(|t| t.url()).unwrap_or_default();
+            self.omni.text = crate::app::display_url(&self.active_tab().map(|t| t.url()).unwrap_or_default());
             ui.memory_mut(|m| m.surrender_focus(id));
         }
         if enter {
@@ -788,8 +809,8 @@ impl Browser {
         let fresh = self.popover_opened.is_some_and(|t| t.elapsed() < Duration::from_millis(150));
         let in_menu = egui::Popup::is_any_open(ctx);
         if (outside && !fresh && !in_menu) || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            ctx.data_mut(|d| d.insert_temp(Id::unique("pop_closed_at"), (Instant::now(), self.popover)));
             self.popover = Popover::None;
-            ctx.data_mut(|d| d.insert_temp(Id::unique("pop_closed_at"), Instant::now()));
         }
     }
 
@@ -973,6 +994,7 @@ impl Browser {
         ui.spacing_mut().item_spacing.y = 2.0;
         let mut item = |ui: &mut Ui, icon: Icon, text: &str, key: &str| -> bool {
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+            crate::drive::reg(format!("menu:{text}"), rect);
             if resp.hovered() {
                 ui.painter().rect_filled(rect, 3.0, HOVER);
             }
@@ -1089,11 +1111,11 @@ impl Browser {
                 ui.set_width(300.0);
                 ui.label(theme::label("Name this group"));
                 let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(290.0).font(FontId::new(15.0, sans())));
-                if !r.has_focus() && !ui.input(|i| i.pointer.any_down()) {
-                    r.request_focus();
-                }
+                // Check Enter before re-requesting focus: requesting focus clears `lost_focus`.
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     done = true;
+                } else if !r.has_focus() && !ui.input(|i| i.pointer.any_down()) {
+                    r.request_focus();
                 }
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
@@ -1195,6 +1217,7 @@ impl Browser {
             return;
         }
         let r = ui.add(egui::TextEdit::multiline(&mut self.ai.input).desired_rows(2).desired_width(ui.available_width()).hint_text("Ask anything…  Enter sends · Shift+Enter for a new line").font(FontId::new(14.0, sans())));
+        crate::drive::reg("ai:input", r.rect);
         let send = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
         if send && !self.ai.waiting {
             let q = self.ai.input.trim().to_owned();
@@ -1348,9 +1371,15 @@ impl Browser {
         let mut hits = Vec::new();
         ctx.input_mut(|i| {
             for (m, k, name) in [
+                (shift, Key::T, "reopen"),
+                (shift, Key::B, "bookmarks-bar"),
+                (alt, Key::B, "bookmarks"),
+                (alt, Key::I, "devtools"),
+                (Modifiers::CTRL | Modifiers::SHIFT, Key::Tab, "prev-tab"),
+                (alt, Key::ArrowRight, "next-tab"),
+                (alt, Key::ArrowLeft, "prev-tab"),
                 (cmd, Key::T, "new-tab"),
                 (cmd, Key::W, "close-tab"),
-                (shift, Key::T, "reopen"),
                 (cmd, Key::L, "focus-omnibox"),
                 (cmd, Key::R, "reload"),
                 (cmd, Key::OpenBracket, "back"),
@@ -1360,17 +1389,11 @@ impl Browser {
                 (cmd, Key::J, "assistant"),
                 (cmd, Key::F, "find"),
                 (cmd, Key::Comma, "settings"),
-                (shift, Key::B, "bookmarks-bar"),
-                (alt, Key::B, "bookmarks"),
-                (alt, Key::I, "devtools"),
                 (cmd, Key::Equals, "zoom-in"),
                 (cmd, Key::Plus, "zoom-in"),
                 (cmd, Key::Minus, "zoom-out"),
                 (cmd, Key::Num0, "zoom-reset"),
                 (Modifiers::CTRL, Key::Tab, "next-tab"),
-                (Modifiers::CTRL | Modifiers::SHIFT, Key::Tab, "prev-tab"),
-                (alt, Key::ArrowRight, "next-tab"),
-                (alt, Key::ArrowLeft, "prev-tab"),
             ] {
                 if i.consume_key(m, k) {
                     hits.push(name.to_owned());

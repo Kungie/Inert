@@ -169,6 +169,7 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
             let b = egui::Button::new(text).fill(fill).stroke(stroke).corner_radius(CornerRadius::same(r.d.radius.min(16) as u8)).min_size(vec2(0.0, 40.0 * r.z));
             let busy = r.busy;
             let resp = ui.allocate_ui_with_layout(vec2(0.0, 40.0 * r.z), Layout::left_to_right(Align::Center), |ui| ui.add_enabled(!busy, b)).inner;
+            crate::drive::reg(format!("btn:{label}"), resp.rect);
             if resp.clicked() {
                 submit(r, action, args, item);
             }
@@ -191,7 +192,8 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
                     if let Some(p) = placeholder {
                         te = te.hint_text(RichText::new(p).color(theme::DIM));
                     }
-                    ui.add(te);
+                    let resp = ui.add(te);
+                    crate::drive::reg(format!("input:{field}"), resp.rect);
                 }
                 if let Some(e) = r.errors.get(field) {
                     ui.label(RichText::new(e).color(theme::DANGER).font(FontId::new(12.0, theme::mono())));
@@ -244,6 +246,7 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
             if let FormValue::Bool(on) = entry {
                 ui.horizontal(|ui| {
                     let (rect, resp) = ui.allocate_exact_size(vec2(38.0, 22.0), Sense::click());
+                    crate::drive::reg(format!("toggle:{field}"), rect);
                     if resp.clicked() {
                         *on = !*on;
                     }
@@ -313,6 +316,7 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
             let rt = RichText::new(label).font(FontId::new(r.d.size(TextStyle::Body) as f32 * r.z, theme::sans())).color(accent);
             let resp = ui.add(egui::Label::new(rt).sense(Sense::click()));
             let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            crate::drive::reg(format!("link:{label}"), resp.rect);
             if resp.hovered() {
                 let rr = resp.rect;
                 ui.painter().line_segment([rr.left_bottom(), rr.right_bottom()], Stroke::new(1.0, accent));

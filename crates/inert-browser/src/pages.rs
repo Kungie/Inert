@@ -60,10 +60,14 @@ impl Browser {
                 ui.add_space(36.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 12.0;
-                    if primary(ui, "SIGN IN WITH CLAUDE →", 250.0).clicked() {
+                    let c = primary(ui, "SIGN IN WITH CLAUDE →", 250.0);
+                    crate::drive::reg("signin:claude", c.rect);
+                    if c.clicked() {
                         self.signin.provider = Some(Provider::Claude);
                     }
-                    if ghost(ui, "SIGN IN WITH GPT →", 230.0).clicked() {
+                    let g = ghost(ui, "SIGN IN WITH GPT →", 230.0);
+                    crate::drive::reg("signin:gpt", g.rect);
+                    if g.clicked() {
                         self.signin.provider = Some(Provider::Gpt);
                     }
                 });
@@ -89,7 +93,10 @@ impl Browser {
                 let mut finish = false;
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 12.0;
-                    let go = primary(ui, "CONTINUE →", 200.0).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                    crate::drive::reg("signin:key", r.rect);
+                    let cont = primary(ui, "CONTINUE →", 200.0);
+                    crate::drive::reg("signin:continue", cont.rect);
+                    let go = cont.clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
                     if go {
                         let k = self.signin.key.trim().to_owned();
                         if k.len() < 20 {
@@ -100,7 +107,9 @@ impl Browser {
                             finish = true;
                         }
                     }
-                    if ghost(ui, "SKIP FOR NOW", 170.0).clicked() {
+                    let sk = ghost(ui, "SKIP FOR NOW", 170.0);
+                    crate::drive::reg("signin:skip", sk.rect);
+                    if sk.clicked() {
                         finish = true;
                     }
                     if ui.add(egui::Label::new(theme::label("← back")).sense(Sense::click())).clicked() {

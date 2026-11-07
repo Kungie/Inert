@@ -160,7 +160,7 @@ pub struct Signin {
     pub error: Option<String>,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Popover {
     #[default]
     None,
@@ -198,13 +198,14 @@ pub struct Browser {
     pub ctx: egui::Context,
     pub menu: Option<crate::menu::AppMenu>,
     pub shot: Option<crate::shot::Shot>,
+    pub driver: Option<crate::drive::Driver>,
     pub overlay_rects: Vec<egui::Rect>,
     pub content_rect: egui::Rect,
     pub sites: Vec<(String, String)>,
 }
 
 impl Browser {
-    pub fn new(cc: &eframe::CreationContext<'_>, demo: bool, shot_dir: Option<std::path::PathBuf>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, demo: bool, shot_dir: Option<std::path::PathBuf>, drive_dir: Option<std::path::PathBuf>) -> Self {
         let ctx = cc.egui_ctx.clone();
         theme::install_fonts(&ctx);
         theme::install_style(&ctx);
@@ -249,6 +250,7 @@ impl Browser {
             ctx: ctx.clone(),
             menu,
             shot: shot_dir.map(crate::shot::Shot::new),
+            driver: drive_dir.map(crate::drive::Driver::new),
             overlay_rects: Vec::new(),
             content_rect: egui::Rect::NOTHING,
             sites: Vec::new(),
@@ -267,7 +269,7 @@ impl Browser {
         let order = b.visible_order();
         let idx = b.profile.active.min(order.len() - 1);
         b.active = order[idx];
-        b.omni.text = b.tab(b.active).map(|t| t.url()).unwrap_or_default();
+        b.omni.text = display_url(&b.tab(b.active).map(|t| t.url()).unwrap_or_default());
         vpn::start_polling(b.tx.clone(), ctx.clone(), demo);
         if b.profile.settings.adblock {
             b.ad.state = adblock::State::Preparing;
@@ -367,7 +369,7 @@ impl Browser {
             }
         }
         self.omni.editing = false;
-        self.omni.text = self.tab(id).map(|t| t.url()).unwrap_or_default();
+        self.omni.text = display_url(&self.tab(id).map(|t| t.url()).unwrap_or_default());
         self.dirty = true;
     }
 
@@ -440,7 +442,7 @@ impl Browser {
             t.kind = kind;
         }
         if id == self.active {
-            self.omni.text = url;
+            self.omni.text = display_url(&url);
             self.omni.editing = false;
         }
         self.dirty = true;
@@ -466,7 +468,7 @@ impl Browser {
         if let Some(t) = self.tab_mut(id) {
             t.kind = k;
         }
-        self.omni.text = target;
+        self.omni.text = display_url(&target);
     }
 
     pub fn go_back(&mut self) {
@@ -944,12 +946,24 @@ impl Browser {
     }
 }
 
+/// What the address bar shows for a URL (empty on the new tab page, like Chrome).
+pub fn display_url(u: &str) -> String {
+    if u == "about:newtab" { String::new() } else { u.to_owned() }
+}
+
 thread_local! {
     static RAW_PARAMS: std::cell::RefCell<HashMap<u64, Vec<(String, String)>>> = Default::default();
 }
 
 impl eframe::App for Browser {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(d) = &mut self.driver {
+            d.inject(raw);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        crate::drive::clear();
         self.handle_events(frame);
         self.overlay_rects.clear();
         let ctx = ui.ctx().clone();
@@ -1007,6 +1021,9 @@ impl Browser {
         }
         if self.shot.is_some() {
             crate::shot::step(self, ctx, frame);
+        }
+        if self.driver.is_some() {
+            crate::drive::Driver::step(self, ctx);
         }
     }
 

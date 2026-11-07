@@ -1,0 +1,393 @@
+//! `--demo --drive <dir>`: end-to-end UI tests with real input.
+//!
+//! Widgets record their on-screen rects in a per-frame registry. The driver
+//! turns each test step into genuine egui input events (pointer move, press,
+//! release, text, keys) injected through `App::raw_input_hook`, so every click
+//! travels the same path a physical click does: hit-testing, `Response`
+//! state, focus, text editing, shortcuts. After each step it asserts on the
+//! browser's state and writes `results.json` plus screenshot markers.
+
+use crate::app::{Browser, Kind, Page, Popover};
+use crate::inert_tab::Status;
+#[allow(unused_imports)]
+use crate::profile;
+use eframe::egui::{self, Event, Key, Modifiers, PointerButton, Pos2, Rect};
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+thread_local! {
+    static ON: Cell<bool> = const { Cell::new(false) };
+    static REG: RefCell<HashMap<String, Rect>> = RefCell::new(HashMap::new());
+}
+
+/// Records a widget's rect for this frame (first registration wins).
+pub fn reg(key: impl Into<String>, r: Rect) {
+    if ON.with(Cell::get) {
+        REG.with(|m| {
+            m.borrow_mut().entry(key.into()).or_insert(r);
+        });
+    }
+}
+
+pub fn clear() {
+    if ON.with(Cell::get) {
+        REG.with(|m| m.borrow_mut().clear());
+    }
+}
+
+fn lookup(key: &str) -> Option<Rect> {
+    REG.with(|m| m.borrow().get(key).copied())
+}
+
+type Cond = Box<dyn Fn(&Browser) -> bool>;
+type Act = Box<dyn Fn(&mut Browser)>;
+
+enum Step {
+    Click(String),
+    RightClick(String),
+    Type(String),
+    Press(Key, Modifiers),
+    /// Wait for a condition, then record a pass/fail check with this name.
+    Expect(String, Cond, u64),
+    /// Direct setup that is not part of what is being tested.
+    Setup(Act),
+    Shot(String),
+    Pause(u64),
+}
+
+pub struct Driver {
+    out: PathBuf,
+    steps: Vec<Step>,
+    i: usize,
+    started: Instant,
+    queue: VecDeque<Vec<Event>>,
+    results: Vec<(String, bool, String)>,
+    shot_until: Option<Instant>,
+    pending_mods: Modifiers,
+    finished: bool,
+}
+
+fn expect(name: &str, timeout_ms: u64, f: impl Fn(&Browser) -> bool + 'static) -> Step {
+    Step::Expect(name.to_owned(), Box::new(f), timeout_ms)
+}
+
+fn inert_on(b: &Browser, screen: &str) -> bool {
+    matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Inert(it)) if it.status == Status::Ready && !it.busy && it.screen.as_ref().is_some_and(|s| s.screen == screen))
+}
+
+fn data_len(b: &Browser, slot: &str) -> usize {
+    match b.active_tab().map(|t| &t.kind) {
+        Some(Kind::Inert(it)) => it.screen.as_ref().and_then(|s| s.data.get(slot)).and_then(|v| v.as_array()).map_or(0, <[_]>::len),
+        _ => 0,
+    }
+}
+
+fn dump(b: &Browser) -> String {
+    let t = b.active_tab();
+    format!(
+        "active={:?} omni={:?} editing={} popover={:?} rename={:?} groups={:?} tabs={} closed={:?}",
+        t.map(|t| t.url()),
+        b.omni.text,
+        b.omni.editing,
+        b.popover,
+        b.rename,
+        b.profile.groups.iter().map(|g| g.name.clone()).collect::<Vec<_>>(),
+        b.tabs.len(),
+        b.closed.iter().map(|c| c.url.clone()).collect::<Vec<_>>()
+    )
+}
+
+fn has_text(b: &Browser, needle: &str) -> bool {
+    match b.active_tab().map(|t| &t.kind) {
+        Some(Kind::Inert(it)) => it.semantic_text().contains(needle),
+        _ => false,
+    }
+}
+
+impl Driver {
+    pub fn new(out: PathBuf) -> Self {
+        ON.with(|c| c.set(true));
+        let _ = std::fs::create_dir_all(&out);
+        use Step::*;
+        let cmd = Modifiers::COMMAND;
+        let s = |x: &str| x.to_owned();
+        let steps = vec![
+            // 1. Sign-in: the only thing asked is the AI provider.
+            Pause(1200),
+            expect("signin.visible", 3000, |b| !b.profile.onboarded),
+            Shot(s("d01-signin")),
+            Click(s("signin:claude")),
+            expect("signin.claude_selected", 2000, |b| b.signin.provider == Some(crate::profile::Provider::Claude)),
+            Click(s("signin:skip")),
+            expect("signin.done_with_claude", 2000, |b| b.profile.onboarded && b.profile.settings.provider == Some(crate::profile::Provider::Claude)),
+            // Seed browsing history so completion has something to complete (setup, not under test).
+            Setup(Box::new(|b| {
+                for _ in 0..6 {
+                    b.profile.record_visit("https://github.com/anthropics", "GitHub");
+                }
+            })),
+            // 2. Omnibox: typed text completes inline and shows suggestions.
+            Click(s("omnibox")),
+            expect("omnibox.focused", 2000, |b| b.omni.editing),
+            Type(s("g")),
+            Type(s("i")),
+            Type(s("t")),
+            Type(s("h")),
+            expect("omnibox.inline_completion", 2000, |b| b.omni.text == "github.com"),
+            expect("omnibox.suggestions", 2000, |b| b.omni.sugg.iter().any(|x| x.target.contains("github.com"))),
+            Shot(s("d02-omnibox")),
+            Press(Key::Escape, Modifiers::NONE),
+            expect("omnibox.escape_restores", 2000, |b| !b.omni.editing),
+            // 3. Bank: open by clicking its tab, navigate, transfer.
+            Click(s("tab:Inert Bank")),
+            expect("bank.overview_verified", 15000, |b| inert_on(b, "overview")),
+            expect("bank.secured_badge", 1000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Inert(it)) if it.key_id.starts_with("ed25519:"))),
+            Click(s("link:Send money →")),
+            expect("bank.transfer_screen", 8000, |b| inert_on(b, "transfer")),
+            Click(s("input:to")),
+            Type(s("DE89 3704 0044 0532 0130 00")),
+            Click(s("input:amount")),
+            Type(s("99999")),
+            Click(s("btn:Send")),
+            expect("bank.over_limit_refused_locally", 5000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Inert(it)) if it.field_errors.contains_key("amount"))),
+            Shot(s("d03-bank-limit")),
+            Click(s("input:amount")),
+            Press(Key::A, cmd),
+            Type(s("12.50")),
+            Click(s("input:note")),
+            Type(s("Driver test")),
+            Setup(Box::new(|b| b.ai.input = String::new())),
+            Click(s("btn:Send")),
+            expect("bank.transfer_accepted", 8000, |b| inert_on(b, "overview") && has_text(b, "Driver test")),
+            Shot(s("d04-bank-after")),
+            // 4. Shop: catalog → product (link with params) → add to cart.
+            Click(s("tab:Inert Supply")),
+            expect("shop.catalog", 15000, |b| inert_on(b, "catalog") && data_len(b, "products") == 4),
+            Click(s("link:View →")),
+            expect("shop.product", 8000, |b| inert_on(b, "product")),
+            Click(s("btn:Add to cart")),
+            expect("shop.cart_has_line", 8000, |b| inert_on(b, "cart") && data_len(b, "lines") >= 1),
+            Click(s("btn:Remove")),
+            expect("shop.remove_line", 8000, |b| inert_on(b, "cart") && data_len(b, "lines") == 0),
+            // 5. Notes: add, open, toggle, save.
+            Click(s("tab:Inert Notes")),
+            expect("notes.list", 15000, |b| inert_on(b, "list")),
+            Click(s("input:title")),
+            Type(s("Note from the UI driver")),
+            Click(s("btn:Add")),
+            expect("notes.added", 8000, |b| inert_on(b, "list") && has_text(b, "Note from the UI driver")),
+            Click(s("link:Open →")),
+            expect("notes.opened", 8000, |b| inert_on(b, "note")),
+            Click(s("toggle:done")),
+            Click(s("btn:Save")),
+            expect("notes.saved_done", 8000, |b| inert_on(b, "note") && matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Inert(it)) if it.screen.as_ref().and_then(|s| s.data.get("done")).and_then(|v| v.as_bool()) == Some(true))),
+            Click(s("back")),
+            expect("notes.back_button", 8000, |b| inert_on(b, "list")),
+            // 6. Bookmarks: star button and shortcut (start from "not bookmarked").
+            Setup(Box::new(|b| {
+                let u = b.active_tab().map(|t| t.url()).unwrap_or_default();
+                b.profile.bookmarks.retain(|x| x.url != u);
+            })),
+            Click(s("star")),
+            expect("bookmark.star_adds", 2000, |b| b.profile.is_bookmarked(&b.active_tab().map(|t| t.url()).unwrap_or_default())),
+            Press(Key::D, cmd),
+            expect("bookmark.cmd_d_removes", 2000, |b| !b.profile.is_bookmarked(&b.active_tab().map(|t| t.url()).unwrap_or_default())),
+            // 7. Tab groups: collapse/expand, new group from the menu, pin from the context menu.
+            Click(s("group:Inbox")),
+            expect("groups.inbox_expands", 2000, |b| b.profile.groups.iter().any(|g| g.name == "Inbox" && !g.collapsed)),
+            Shot(s("d05-groups")),
+            Click(s("group:Inbox")),
+            expect("groups.inbox_collapses", 2000, |b| b.profile.groups.iter().any(|g| g.name == "Inbox" && g.collapsed)),
+            Click(s("menu")),
+            expect("menu.opens", 2000, |b| b.popover == Popover::Menu),
+            Click(s("menu:New tab group")),
+            expect("groups.new_group_rename", 2000, |b| b.rename.is_some()),
+            Press(Key::A, cmd),
+            Type(s("Research")),
+            Press(Key::Enter, Modifiers::NONE),
+            expect("groups.renamed", 2000, |b| b.profile.groups.iter().any(|g| g.name == "Research")),
+            RightClick(s("tab:Inert Notes")),
+            Click(s("ctx:Pin")),
+            expect("tabs.pin_from_context_menu", 2000, |b| b.tabs.iter().any(|t| t.pinned && t.title().contains("Notes"))),
+            // 8. Normal web: new tab, type a URL, Enter, it loads as unsecured.
+            Press(Key::T, cmd),
+            expect("tabs.cmd_t_new_tab", 2000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::NewTab)))),
+            Click(s("omnibox")),
+            Type(s("example.com")),
+            Press(Key::Enter, Modifiers::NONE),
+            expect("web.loads_unsecured", 20000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.url.starts_with("https://example.com") && !w.loading && w.view.is_some())),
+            Pause(1500),
+            Shot(s("d06-web")),
+            Click(s("back")),
+            expect("web.back_to_new_tab", 5000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::NewTab)))),
+            Press(Key::W, cmd),
+            expect("tabs.cmd_w_closes", 2000, |b| b.closed.iter().any(|s| s.url == "about:newtab")),
+            Press(Key::T, Modifiers::COMMAND | Modifiers::SHIFT),
+            expect("tabs.cmd_shift_t_reopens", 3000, |b| b.closed.iter().all(|s| s.url != "about:newtab") && matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::NewTab)))),
+            // 9. Panels: VPN, Shield, assistant.
+            Click(s("vpn")),
+            expect("vpn.panel", 2000, |b| b.popover == Popover::Vpn),
+            Shot(s("d07-vpn")),
+            Press(Key::Escape, Modifiers::NONE),
+            expect("vpn.closes", 2000, |b| b.popover == Popover::None),
+            Click(s("shield")),
+            expect("shield.panel", 2000, |b| b.popover == Popover::Shield),
+            Press(Key::Escape, Modifiers::NONE),
+            Click(s("tab:Inert Bank")),
+            expect("bank.back_on_tab", 5000, |b| inert_on(b, "overview")),
+            Press(Key::J, cmd),
+            expect("assistant.cmd_j", 2000, |b| b.ai.open),
+            Click(s("ai:input")),
+            Type(s("What can I do here?")),
+            Press(Key::Enter, Modifiers::NONE),
+            expect("assistant.answers", 8000, |b| b.ai.msgs.len() >= 2 && !b.ai.waiting),
+            Shot(s("d08-assistant")),
+            Press(Key::J, cmd),
+            // 10. History and reload.
+            Press(Key::Y, cmd),
+            expect("history.cmd_y", 2000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::History)))),
+            expect("history.has_entries", 2000, |b| b.profile.history.iter().any(|h| h.url.starts_with("inert://bank.example"))),
+            Click(s("tab:Inert Bank")),
+            Press(Key::R, cmd),
+            expect("bank.reload_reverifies", 15000, |b| inert_on(b, "overview")),
+        ];
+        Driver { out, steps, i: 0, started: Instant::now(), queue: VecDeque::new(), results: Vec::new(), shot_until: None, pending_mods: Modifiers::NONE, finished: false }
+    }
+
+    /// Feeds queued events into egui's input for this frame.
+    pub fn inject(&mut self, raw: &mut egui::RawInput) {
+        if let Some(batch) = self.queue.pop_front() {
+            for e in &batch {
+                if let Event::Key { modifiers, .. } = e {
+                    raw.events.push(Event::ModifiersChanged(*modifiers));
+                }
+            }
+            raw.events.extend(batch);
+        } else if self.pending_mods != Modifiers::NONE {
+            raw.events.push(Event::ModifiersChanged(Modifiers::NONE));
+            self.pending_mods = Modifiers::NONE;
+        }
+    }
+
+    fn click(&mut self, at: Pos2, button: PointerButton) {
+        let m = Modifiers::NONE;
+        self.queue.push_back(vec![Event::PointerMoved(at)]);
+        self.queue.push_back(vec![Event::PointerButton { pos: at, button, pressed: true, modifiers: m }]);
+        self.queue.push_back(vec![Event::PointerButton { pos: at, button, pressed: false, modifiers: m }]);
+        self.queue.push_back(vec![]);
+    }
+
+    fn record(&mut self, name: &str, ok: bool, note: String) {
+        eprintln!("{} {name} {note}", if ok { "PASS" } else { "FAIL" });
+        self.results.push((name.to_owned(), ok, note));
+    }
+
+    pub fn step(b: &mut Browser, ctx: &egui::Context) {
+        ctx.request_repaint_after(Duration::from_millis(30));
+        let Some(mut d) = b.driver.take() else { return };
+        d.advance(b, ctx);
+        if !d.finished {
+            b.driver = Some(d);
+        }
+    }
+
+    fn advance(&mut self, b: &mut Browser, ctx: &egui::Context) {
+        if !self.queue.is_empty() {
+            return;
+        }
+        if let Some(t) = self.shot_until {
+            if Instant::now() < t {
+                return;
+            }
+            self.shot_until = None;
+            self.i += 1;
+            self.started = Instant::now();
+        }
+        if self.i >= self.steps.len() {
+            self.finish(ctx);
+            return;
+        }
+        if matches!(self.steps[self.i], Step::Setup(_)) {
+            if let Step::Setup(f) = std::mem::replace(&mut self.steps[self.i], Step::Pause(0)) {
+                f(b);
+            }
+            self.i += 1;
+            self.started = Instant::now();
+            return;
+        }
+        enum Do {
+            Click(String, bool),
+            Type(String),
+            Key(Key, Modifiers),
+            Expect(String, bool, u64),
+            Shot(String),
+            Pause(u64),
+        }
+        let elapsed = self.started.elapsed();
+        let what = match &self.steps[self.i] {
+            Step::Click(k) => Do::Click(k.clone(), false),
+            Step::RightClick(k) => Do::Click(k.clone(), true),
+            Step::Type(t) => Do::Type(t.clone()),
+            Step::Press(k, m) => Do::Key(*k, *m),
+            Step::Expect(n, cond, t) => Do::Expect(n.clone(), cond(b), *t),
+            Step::Shot(n) => Do::Shot(n.clone()),
+            Step::Pause(ms) => Do::Pause(*ms),
+            Step::Setup(_) => Do::Pause(0),
+        };
+        let mut next = true;
+        match what {
+            Do::Click(k, right) => match lookup(&k) {
+                Some(r) => self.click(r.center(), if right { PointerButton::Secondary } else { PointerButton::Primary }),
+                None if elapsed < Duration::from_millis(4000) => next = false,
+                None => self.record(&format!("click:{k}"), false, "widget not found on screen".into()),
+            },
+            Do::Type(t) => {
+                for ch in t.chars() {
+                    self.queue.push_back(vec![Event::Text(ch.to_string())]);
+                }
+                self.queue.push_back(vec![]);
+            }
+            Do::Key(k, m) => {
+                self.pending_mods = m;
+                self.queue.push_back(vec![Event::Key { key: k, physical_key: Some(k), pressed: true, repeat: false, modifiers: m }]);
+                self.queue.push_back(vec![Event::Key { key: k, physical_key: Some(k), pressed: false, repeat: false, modifiers: m }]);
+                self.queue.push_back(vec![]);
+            }
+            Do::Expect(name, ok, timeout) => {
+                if ok {
+                    self.record(&name, true, format!("({} ms)", elapsed.as_millis()));
+                } else if elapsed < Duration::from_millis(timeout) {
+                    next = false;
+                } else {
+                    let state = dump(b);
+                    self.record(&name, false, format!("timed out after {timeout} ms | {state}"));
+                }
+            }
+            Do::Shot(name) => {
+                let _ = std::fs::write(self.out.join(format!("{name}.ready")), "");
+                self.shot_until = Some(Instant::now() + Duration::from_millis(1600));
+                return;
+            }
+            Do::Pause(ms) => next = elapsed >= Duration::from_millis(ms),
+        }
+        if next {
+            self.i += 1;
+            self.started = Instant::now();
+        }
+    }
+
+    fn finish(&mut self, ctx: &egui::Context) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
+        let pass = self.results.iter().filter(|r| r.1).count();
+        let json: Vec<serde_json::Value> = self.results.iter().map(|(n, ok, note)| serde_json::json!({"check": n, "pass": ok, "note": note})).collect();
+        let _ = std::fs::write(self.out.join("results.json"), serde_json::to_string_pretty(&serde_json::json!({"passed": pass, "total": self.results.len(), "checks": json})).unwrap_or_default());
+        eprintln!("UI DRIVER: {pass}/{} checks passed", self.results.len());
+        let _ = std::fs::write(self.out.join("DONE"), "done");
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+}
