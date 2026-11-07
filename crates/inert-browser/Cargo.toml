@@ -1,6 +1,42 @@
 [package]
 name = "inert-browser"
+description = "Inert Browser: a small, dark, AI-assisted browser in Rust. inert:// sites are secured; the rest of the web is shown as unsecured."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "inert-browser"
+path = "src/main.rs"
 
 [dependencies]
+inert-proto.workspace = true
+inert-verify.workspace = true
+inert-transport.workspace = true
+inert-client.workspace = true
+eframe = { version = "0.37", default-features = false, features = ["wgpu", "accesskit", "default_fonts", "clipboard"] }
+wry = { version = "0.57", features = ["devtools", "mac-proxy"] }
+raw-window-handle = "0.6"
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
+png.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+muda = "0.21"
+adblock = { version = "0.13", default-features = false, features = ["content-blocking"] }
+keyring = { version = "3", features = ["apple-native"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+image-webp = "0.2"
+url = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
+objc2-web-kit = { version = "0.3", features = ["WKContentRuleList", "WKContentRuleListStore", "WKUserContentController", "WKWebView", "block2"] }
+block2 = "0.6"

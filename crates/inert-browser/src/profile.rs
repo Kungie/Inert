@@ -1,0 +1,286 @@
+//! The user's profile: settings, bookmarks, history, tab groups, session and
+//! key pins. Stored as JSON in the app data directory. Secrets (AI keys) are
+//! never stored here — they live in the macOS Keychain (see `ai.rs`).
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Provider {
+    Claude,
+    Gpt,
+}
+
+impl Provider {
+    pub fn name(self) -> &'static str {
+        match self {
+            Provider::Claude => "Claude",
+            Provider::Gpt => "GPT",
+        }
+    }
+    pub fn default_model(self) -> &'static str {
+        match self {
+            Provider::Claude => "claude-opus-5-5",
+            Provider::Gpt => "gpt-5",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SearchEngine {
+    DuckDuckGo,
+    Google,
+    Brave,
+}
+
+impl SearchEngine {
+    pub const ALL: [SearchEngine; 3] = [SearchEngine::DuckDuckGo, SearchEngine::Google, SearchEngine::Brave];
+    pub fn name(self) -> &'static str {
+        match self {
+            SearchEngine::DuckDuckGo => "DuckDuckGo",
+            SearchEngine::Google => "Google",
+            SearchEngine::Brave => "Brave Search",
+        }
+    }
+    pub fn search_url(self, q: &str) -> String {
+        let q = url::form_urlencoded::byte_serialize(q.as_bytes()).collect::<String>();
+        match self {
+            SearchEngine::DuckDuckGo => format!("https://duckduckgo.com/?q={q}"),
+            SearchEngine::Google => format!("https://www.google.com/search?q={q}"),
+            SearchEngine::Brave => format!("https://search.brave.com/search?q={q}"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Settings {
+    pub provider: Option<Provider>,
+    pub model: String,
+    pub search: SearchEngine,
+    pub remote_suggestions: bool,
+    pub adblock: bool,
+    pub memory_saver: bool,
+    pub bookmarks_bar: bool,
+    pub vpn_last_location: Option<String>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            provider: None,
+            model: String::new(),
+            search: SearchEngine::DuckDuckGo,
+            remote_suggestions: true,
+            adblock: true,
+            memory_saver: true,
+            bookmarks_bar: true,
+            vpn_last_location: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Bookmark {
+    pub title: String,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    pub url: String,
+    pub title: String,
+    pub visits: u32,
+    pub last: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GroupKind {
+    Normal,
+    /// Mail, chat and other inboxes.
+    Inbox,
+    /// Self-hosted services on the home network.
+    Homeserver,
+    /// Web development: local dev servers, docs, repos.
+    Dev,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GroupDef {
+    pub id: u64,
+    pub name: String,
+    pub color: String,
+    pub kind: GroupKind,
+    pub collapsed: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SavedTab {
+    pub url: String,
+    pub title: String,
+    pub group: Option<u64>,
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+/// What a browser remembers about an `inert://` host (spec §8).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Pin {
+    pub key_b64: String,
+    pub pinned_at: u64,
+    pub max_version: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct Profile {
+    pub settings: Settings,
+    pub bookmarks: Vec<Bookmark>,
+    pub history: Vec<HistoryEntry>,
+    pub groups: Vec<GroupDef>,
+    pub session: Vec<SavedTab>,
+    pub active: usize,
+    pub pins: BTreeMap<String, Pin>,
+    pub next_id: u64,
+    #[serde(default)]
+    pub onboarded: bool,
+}
+
+pub fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+impl Profile {
+    pub fn dir(demo: bool) -> PathBuf {
+        if let Ok(p) = std::env::var("INERT_PROFILE_DIR") {
+            return PathBuf::from(p);
+        }
+        let base = dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("Inert");
+        if demo { base.join("demo-profile") } else { base.join("profile") }
+    }
+
+    pub fn load(demo: bool) -> Profile {
+        let p = Self::dir(demo).join("profile.json");
+        std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(Profile::first_run)
+    }
+
+    pub fn save(&self, demo: bool) {
+        let d = Self::dir(demo);
+        let _ = std::fs::create_dir_all(&d);
+        let tmp = d.join("profile.json.tmp");
+        if let Ok(s) = serde_json::to_string_pretty(self) {
+            if std::fs::write(&tmp, s).is_ok() {
+                let _ = std::fs::rename(&tmp, d.join("profile.json"));
+            }
+        }
+    }
+
+    pub fn new_id(&mut self) -> u64 {
+        self.next_id += 1;
+        self.next_id
+    }
+
+    /// Defaults on first launch: the three special groups, the demo sites, a bookmarks bar.
+    pub fn first_run() -> Profile {
+        let mut p = Profile { next_id: 100, ..Default::default() };
+        let g = |id, name: &str, color: &str, kind| GroupDef { id, name: name.into(), color: color.into(), kind, collapsed: true };
+        p.groups = vec![
+            g(1, "Inbox", "blue", GroupKind::Inbox),
+            g(2, "Homeserver", "green", GroupKind::Homeserver),
+            g(3, "Developer", "orange", GroupKind::Dev),
+            GroupDef { id: 4, name: "Inert demos".into(), color: "purple".into(), kind: GroupKind::Normal, collapsed: false },
+        ];
+        let t = |url: &str, title: &str, group| SavedTab { url: url.into(), title: title.into(), group, pinned: false };
+        p.session = vec![
+            t("https://mail.google.com/", "Gmail", Some(1)),
+            t("https://web.whatsapp.com/", "WhatsApp", Some(1)),
+            t("http://homeassistant.local:8123/", "Home Assistant", Some(2)),
+            t("http://localhost:3000/", "localhost:3000", Some(3)),
+            t("https://developer.mozilla.org/", "MDN Web Docs", Some(3)),
+            t("inert://bank.example", "Inert Bank", Some(4)),
+            t("inert://shop.example", "Inert Supply", Some(4)),
+            t("inert://notes.example", "Inert Notes", Some(4)),
+            t("about:newtab", "New Tab", None),
+        ];
+        p.active = p.session.len() - 1;
+        let b = |title: &str, url: &str| Bookmark { title: title.into(), url: url.into() };
+        p.bookmarks = vec![
+            b("Inert Bank", "inert://bank.example"),
+            b("Inert Supply", "inert://shop.example"),
+            b("Inert Notes", "inert://notes.example"),
+            b("GitHub", "https://github.com/"),
+            b("MDN", "https://developer.mozilla.org/"),
+            b("Wikipedia", "https://www.wikipedia.org/"),
+            b("crates.io", "https://crates.io/"),
+        ];
+        p
+    }
+
+    pub fn record_visit(&mut self, url: &str, title: &str) {
+        if url.starts_with("about:") || url.is_empty() {
+            return;
+        }
+        let t = now();
+        if let Some(h) = self.history.iter_mut().find(|h| h.url == url) {
+            h.visits += 1;
+            h.last = t;
+            if !title.is_empty() {
+                h.title = title.to_owned();
+            }
+        } else {
+            self.history.push(HistoryEntry { url: url.into(), title: title.into(), visits: 1, last: t });
+        }
+        if self.history.len() > 5000 {
+            self.history.sort_by(|a, b| b.last.cmp(&a.last));
+            self.history.truncate(4000);
+        }
+    }
+
+    pub fn is_bookmarked(&self, url: &str) -> bool {
+        self.bookmarks.iter().any(|b| b.url == url)
+    }
+
+    pub fn toggle_bookmark(&mut self, url: &str, title: &str) {
+        if let Some(i) = self.bookmarks.iter().position(|b| b.url == url) {
+            self.bookmarks.remove(i);
+        } else if !url.starts_with("about:") {
+            self.bookmarks.push(Bookmark { title: if title.is_empty() { url.into() } else { title.into() }, url: url.into() });
+        }
+    }
+}
+
+/// Quick-add presets for the special groups.
+pub fn presets(kind: GroupKind) -> &'static [(&'static str, &'static str)] {
+    match kind {
+        GroupKind::Inbox => &[
+            ("Gmail", "https://mail.google.com/"),
+            ("Outlook", "https://outlook.live.com/mail/"),
+            ("Proton Mail", "https://mail.proton.me/"),
+            ("WhatsApp", "https://web.whatsapp.com/"),
+            ("Telegram", "https://web.telegram.org/"),
+            ("Slack", "https://app.slack.com/client"),
+            ("Discord", "https://discord.com/app"),
+            ("Messenger", "https://www.messenger.com/"),
+        ],
+        GroupKind::Homeserver => &[
+            ("Home Assistant", "http://homeassistant.local:8123/"),
+            ("Proxmox", "https://proxmox.local:8006/"),
+            ("Portainer", "https://localhost:9443/"),
+            ("Pi-hole", "http://pi.hole/admin/"),
+            ("Jellyfin", "http://localhost:8096/"),
+            ("Router", "http://192.168.1.1/"),
+            ("OctoPrint", "http://octopi.local/"),
+            ("Grafana", "http://localhost:3001/"),
+        ],
+        GroupKind::Dev => &[
+            ("localhost:3000", "http://localhost:3000/"),
+            ("localhost:5173", "http://localhost:5173/"),
+            ("localhost:8080", "http://localhost:8080/"),
+            ("GitHub", "https://github.com/"),
+            ("MDN Web Docs", "https://developer.mozilla.org/"),
+            ("Can I use", "https://caniuse.com/"),
+            ("docs.rs", "https://docs.rs/"),
+            ("Inert Bank (dev)", "inert://bank.example"),
+        ],
+        GroupKind::Normal => &[],
+    }
+}
