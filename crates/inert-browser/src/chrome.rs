@@ -108,7 +108,7 @@ impl Browser {
         let right = Rect::from_min_max(pos2(full.right() - 205.0, full.top() + 6.0), pos2(full.right() - 10.0, full.bottom()));
         let mut r = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)));
         let ai_color = if self.ai.open { ACCENT } else { FG };
-        if icons::button_c(&mut r, Icon::Spark, 28.0, "Assistant  ⌘J", ai_color, true).clicked() {
+        if icons::button_c(&mut r, Icon::Spark, 28.0, "Assistant  Cmd+J", ai_color, true).clicked() {
             self.ai.open = !self.ai.open;
         }
         let st = &self.vpn.status;
@@ -164,7 +164,7 @@ impl Browser {
         for id in rest {
             self.tab_item(ui, id, tab_w, None);
         }
-        if icons::button(ui, Icon::Plus, 26.0, "New tab  ⌘T").clicked() {
+        if icons::button(ui, Icon::Plus, 26.0, "New tab  Cmd+T").clicked() {
             self.add_tab("about:newtab", None, true, None);
         }
 
@@ -393,10 +393,10 @@ impl Browser {
     fn toolbar(&mut self, ui: &mut Ui) {
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            if icons::button_c(ui, Icon::Back, 30.0, "Back  ⌘[", FG, self.can_go(true)).clicked() {
+            if icons::button_c(ui, Icon::Back, 30.0, "Back  Cmd+[", FG, self.can_go(true)).clicked() {
                 self.go_back();
             }
-            if icons::button_c(ui, Icon::Forward, 30.0, "Forward  ⌘]", FG, self.can_go(false)).clicked() {
+            if icons::button_c(ui, Icon::Forward, 30.0, "Forward  Cmd+]", FG, self.can_go(false)).clicked() {
                 self.go_forward();
             }
             let loading = self.active_tab().is_some_and(|t| t.loading());
@@ -404,7 +404,7 @@ impl Browser {
                 if icons::button(ui, Icon::Stop, 30.0, "Stop").clicked() {
                     self.stop();
                 }
-            } else if icons::button(ui, Icon::Reload, 30.0, "Reload  ⌘R").clicked() {
+            } else if icons::button(ui, Icon::Reload, 30.0, "Reload  Cmd+R").clicked() {
                 self.reload();
             }
             ui.add_space(6.0);
@@ -414,7 +414,7 @@ impl Browser {
             ui.add_space(6.0);
             let url = self.active_tab().map(|t| t.url()).unwrap_or_default();
             let marked = self.profile.is_bookmarked(&url);
-            if icons::button_c(ui, if marked { Icon::StarFilled } else { Icon::Star }, 30.0, "Bookmark this tab  ⌘D", if marked { ACCENT } else { FG }, !url.starts_with("about:")).clicked() {
+            if icons::button_c(ui, if marked { Icon::StarFilled } else { Icon::Star }, 30.0, "Bookmark this tab  Cmd+D", if marked { ACCENT } else { FG }, !url.starts_with("about:")).clicked() {
                 let title = self.active_tab().map(|t| t.title()).unwrap_or_default();
                 self.profile.toggle_bookmark(&url, &title);
                 self.dirty = true;
@@ -812,7 +812,8 @@ impl Browser {
                         "TLS 1.3 with post-quantum hybrid key exchange.",
                     ] {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("✓").color(OK));
+                            let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                            icons::paint(ui.painter(), r, Icon::Check, OK);
                             ui.label(theme::body(line));
                         });
                     }
@@ -980,7 +981,7 @@ impl Browser {
             ui.painter().text(pos2(rect.right() - 8.0, rect.center().y), egui::Align2::RIGHT_CENTER, key, FontId::new(11.0, mono()), DIM);
             resp.clicked()
         };
-        if item(ui, Icon::Tab, "New tab", "⌘T") {
+        if item(ui, Icon::Tab, "New tab", "Cmd+T") {
             self.add_tab("about:newtab", None, true, None);
             self.popover = Popover::None;
         }
@@ -989,11 +990,11 @@ impl Browser {
             self.group_new(id, "New group");
             self.popover = Popover::None;
         }
-        if item(ui, Icon::History, "History", "⌘Y") {
+        if item(ui, Icon::History, "History", "Cmd+Y") {
             self.add_tab("about:history", None, true, None);
             self.popover = Popover::None;
         }
-        if item(ui, Icon::Bookmark, "Bookmarks", "⌥⌘B") {
+        if item(ui, Icon::Bookmark, "Bookmarks", "Opt+Cmd+B") {
             self.add_tab("about:bookmarks", None, true, None);
             self.popover = Popover::None;
         }
@@ -1001,19 +1002,19 @@ impl Browser {
             self.add_tab("about:downloads", None, true, None);
             self.popover = Popover::None;
         }
-        if item(ui, Icon::Spark, "Assistant", "⌘J") {
+        if item(ui, Icon::Spark, "Assistant", "Cmd+J") {
             self.ai.open = !self.ai.open;
             self.popover = Popover::None;
         }
-        if item(ui, Icon::Search, "Find in page", "⌘F") {
+        if item(ui, Icon::Search, "Find in page", "Cmd+F") {
             self.find = Some(String::new());
             self.popover = Popover::None;
         }
-        if item(ui, Icon::Code, "Developer tools", "⌥⌘I") {
+        if item(ui, Icon::Code, "Developer tools", "Opt+Cmd+I") {
             self.devtools();
             self.popover = Popover::None;
         }
-        if item(ui, Icon::Gear, "Settings", "⌘,") {
+        if item(ui, Icon::Gear, "Settings", "Cmd+,") {
             self.add_tab("about:settings", None, true, None);
             self.popover = Popover::None;
         }
@@ -1215,7 +1216,7 @@ impl Browser {
             });
         });
         let Some(Kind::Inert(it)) = self.active_tab().map(|t| &t.kind) else {
-            ui.label(theme::muted("Open an inert:// tab to inspect its manifest. Web tabs use WebKit's developer tools (⌥⌘I)."));
+            ui.label(theme::muted("Open an inert:// tab to inspect its manifest. Web tabs use WebKit's developer tools (Opt+Cmd+I)."));
             return;
         };
         let Some(m) = it.manifest.clone() else { return };

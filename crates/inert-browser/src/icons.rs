@@ -31,6 +31,7 @@ pub enum Icon {
     Gear,
     Layers,
     Folder,
+    Check,
 }
 
 fn s(c: Color32) -> Stroke {
@@ -180,6 +181,9 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, c: Color32) {
                 let w = 6.0 - i as f32 * 0.0;
                 p.add(egui::Shape::closed_line(vec![at(0.0, y - 2.5), at(w, *y), at(0.0, y + 2.5), at(-w, *y)], s(c)));
             }
+        }
+        Icon::Check => {
+            p.add(egui::Shape::line(vec![at(-5.0, 0.5), at(-1.5, 4.0), at(5.5, -4.0)], Stroke::new(1.8, c)));
         }
         Icon::Folder => {
             p.add(egui::Shape::closed_line(vec![at(-6.0, -4.0), at(-2.0, -4.0), at(-0.5, -2.5), at(6.0, -2.5), at(6.0, 5.0), at(-6.0, 5.0)], s(c)));
