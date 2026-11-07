@@ -1,6 +1,19 @@
 [package]
 name = "inert-transport"
+description = "Inert transport: length-prefixed CBOR frames over TCP + TLS 1.3 (rustls, post-quantum hybrid key exchange)"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
+inert-proto.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+webpki-roots.workspace = true
+rcgen.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
