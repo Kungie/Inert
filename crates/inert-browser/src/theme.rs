@@ -74,8 +74,8 @@ pub fn install_style(ctx: &egui::Context) {
         v.faint_bg_color = PANEL;
         v.code_bg_color = RAISED;
         v.window_stroke = Stroke::new(1.0, LINE_STRONG);
-        v.window_corner_radius = egui::CornerRadius::same(4);
-        v.menu_corner_radius = egui::CornerRadius::same(4);
+        v.window_corner_radius = egui::CornerRadius::same(14);
+        v.menu_corner_radius = egui::CornerRadius::same(12);
         v.window_shadow = egui::epaint::Shadow::NONE;
         v.popup_shadow = egui::epaint::Shadow::NONE;
         v.selection.bg_fill = Color32::from_rgb(60, 48, 92);
@@ -83,7 +83,7 @@ pub fn install_style(ctx: &egui::Context) {
         v.hyperlink_color = SECURE;
         v.override_text_color = Some(FG);
         for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
-            w.corner_radius = egui::CornerRadius::same(2);
+            w.corner_radius = egui::CornerRadius::same(8);
             w.fg_stroke = Stroke::new(1.0, FG);
         }
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LINE);

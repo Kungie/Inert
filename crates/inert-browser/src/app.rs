@@ -208,6 +208,8 @@ pub struct Browser {
     pub servo_error: Option<String>,
     pub servo_restarts: u32,
     pub last_relief: Instant,
+    /// Tabs closing in the strip (animation only).
+    pub closing: Vec<crate::chrome::Ghost>,
 }
 
 impl Browser {
@@ -264,6 +266,7 @@ impl Browser {
             servo_error: None,
             servo_restarts: 0,
             last_relief: Instant::now(),
+            closing: Vec::new(),
         };
         b.refresh_sites();
         // Restore without activating, so collapsed groups stay collapsed.
@@ -385,6 +388,14 @@ impl Browser {
 
     pub fn close_tab(&mut self, id: u64) {
         let Some(i) = self.tabs.iter().position(|t| t.id == id) else { return };
+        // Leave a shrinking ghost where the tab stood.
+        let order = self.visible_order();
+        let w: Option<f32> = self.ctx.data(|d| d.get_temp(egui::Id::unique(("tab-w", id))));
+        if let (Some(w), Some(pos)) = (w, order.iter().position(|x| *x == id)) {
+            let after = if pos == 0 { None } else { Some(order[pos - 1]) };
+            let title = self.tabs[i].title();
+            self.closing.push(crate::chrome::Ghost { after, w, start: self.ctx.input(|x| x.time), title });
+        }
         let t = self.tabs.remove(i);
         self.closed.push(SavedTab { url: t.url(), title: t.title(), group: t.group, pinned: t.pinned });
         if self.tabs.is_empty() {

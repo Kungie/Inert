@@ -199,8 +199,11 @@ pub fn button(ui: &mut Ui, icon: Icon, size: f32, tooltip: &str) -> Response {
 pub fn button_c(ui: &mut Ui, icon: Icon, size: f32, tooltip: &str, color: Color32, enabled: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), if enabled { Sense::click() } else { Sense::hover() });
     let resp = resp.on_hover_text(tooltip);
-    if resp.hovered() && enabled {
-        ui.painter().rect_filled(rect, 3.0, crate::theme::HOVER);
+    // Round hover, fading in and out (Chrome's toolbar buttons).
+    let h = ui.ctx().animate_bool_with_time(resp.id.with("hover"), resp.hovered() && enabled, 0.12);
+    if h > 0.0 {
+        let fill = if resp.is_pointer_button_down_on() { crate::theme::LINE } else { crate::theme::HOVER };
+        ui.painter().circle_filled(rect.center(), size / 2.0, fill.gamma_multiply(h));
     }
     let c = if enabled { color } else { crate::theme::LINE_STRONG };
     paint(ui.painter(), rect.shrink(size * 0.22), icon, c);

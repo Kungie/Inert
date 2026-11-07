@@ -298,6 +298,8 @@ impl Driver {
                 Pause(30000),
                 expect("bank.still_verified", 1000, |b| inert_on(b, "overview")),
             ]
+        } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("look") {
+            look_steps()
         } else {
             steps
         };
@@ -451,6 +453,38 @@ impl Driver {
         let _ = std::fs::write(self.out.join("DONE"), "done");
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
+}
+
+/// INERT_DRIVE_SCENARIO=look: a short visual tour for checking the chrome.
+fn look_steps() -> Vec<Step> {
+    use Step::*;
+    let s = |x: &str| x.to_owned();
+    vec![
+        Pause(1200),
+        Click(s("signin:claude")),
+        Click(s("signin:skip")),
+        expect("signin.done", 2000, |b| b.profile.onboarded),
+        Pause(600),
+        Shot(s("l01-newtab")),
+        Click(s("tab:Inert Bank")),
+        expect("bank.overview", 15000, |b| inert_on(b, "overview")),
+        Pause(400),
+        Shot(s("l02-bank")),
+        Click(s("group:Inbox")),
+        Pause(80),
+        Shot(s("l03-group-opening")),
+        Pause(500),
+        Shot(s("l04-group-open")),
+        Click(s("omnibox")),
+        Type(s("gith")),
+        Pause(400),
+        Shot(s("l05-omnibox")),
+        Press(Key::Escape, Modifiers::NONE),
+        Click(s("vpn")),
+        Pause(400),
+        Shot(s("l06-vpn")),
+        Press(Key::Escape, Modifiers::NONE),
+    ]
 }
 
 pub fn save_png(path: &std::path::Path, img: &egui::ColorImage) {
