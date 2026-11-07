@@ -428,3 +428,5 @@ Spec'ten bilinçli sapmalar ve eklemeler. Her biri kodda tek bir sınırın arka
 **Ölçümler (release, macOS, 1100×880 pencere):**
 - Tarayıcı süreci açılışta en fazla 136 MB, kullanımda 64–95 MB. WebKit web süreçleri bunun dışında.
 - `inert-browser` release binary'si 19 MB (dört gömülü font dahil).
+
+**Fuzzing (2026-11-07):** Dört hedef (`cbor_decode`, `message_decode`, `manifest_verify`, `screen_action_verify`) paralel olarak her biri 10 dakika çalıştı. Toplamda yaklaşık 78 milyon girdi denendi, hiç çökme yok. §16'daki 30 dakikalık hedefin üçte biri; daha uzun bir koşu bir sonraki adım.
