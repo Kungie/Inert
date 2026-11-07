@@ -1,0 +1,6 @@
+[package]
+name = "inert-example-bank"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

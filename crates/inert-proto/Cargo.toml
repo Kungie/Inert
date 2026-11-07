@@ -1,0 +1,12 @@
+[package]
+name = "inert-proto"
+description = "Inert protocol: message and manifest types, strict deterministic CBOR codec, limits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

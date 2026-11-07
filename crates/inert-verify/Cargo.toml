@@ -1,0 +1,6 @@
+[package]
+name = "inert-verify"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

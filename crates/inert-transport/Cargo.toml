@@ -1,0 +1,6 @@
+[package]
+name = "inert-transport"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
