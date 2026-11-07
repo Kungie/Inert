@@ -22,9 +22,7 @@ use std::sync::{Arc, Mutex};
 
 struct Frame {
     view: u64,
-    w: u32,
-    h: u32,
-    rgba: Vec<u8>,
+    image: ColorImage,
 }
 
 #[derive(Default)]
@@ -165,9 +163,10 @@ fn reader(stdout: std::process::ChildStdout, shared: Arc<Mutex<Shared>>, tx: Sen
                 if len as u64 > SLOT_BYTES || start + len > m.len() {
                     continue;
                 }
-                let rgba = m[start..start + len].to_vec();
+                // One conversion straight out of shared memory; no extra copy.
+                let image = ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &m[start..start + len]);
                 if let Ok(mut s) = shared.lock() {
-                    s.frame = Some(Frame { view, w, h, rgba });
+                    s.frame = Some(Frame { view, image });
                 }
             }
             Ev::Load { view, started, url } => send(Event::WebLoad { tab: view, started, url }),
@@ -308,7 +307,7 @@ pub fn show(ui: &mut Ui, host: &Host, tab: u64, v: &View, overlay: bool) {
     }
     let frame = host.inner.shared.lock().ok().and_then(|mut s| if s.frame.as_ref().is_some_and(|f| f.view == tab) { s.frame.take() } else { None });
     if let Some(f) = frame {
-        let ci = ColorImage::from_rgba_unmultiplied([f.w as usize, f.h as usize], &f.rgba);
+        let ci = f.image;
         let mut t = host.texture.borrow_mut();
         match t.as_mut() {
             Some(tex) => tex.set(ci, TextureOptions::LINEAR),

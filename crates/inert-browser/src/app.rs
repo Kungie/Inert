@@ -207,6 +207,7 @@ pub struct Browser {
     pub servo: Option<crate::servo_web::Host>,
     pub servo_error: Option<String>,
     pub servo_restarts: u32,
+    pub last_relief: Instant,
 }
 
 impl Browser {
@@ -262,6 +263,7 @@ impl Browser {
             servo: None,
             servo_error: None,
             servo_restarts: 0,
+            last_relief: Instant::now(),
         };
         b.refresh_sites();
         // Restore without activating, so collapsed groups stay collapsed.
@@ -920,6 +922,15 @@ impl Browser {
     }
 
     fn memory_saver(&mut self) {
+        if self.last_relief.elapsed() > Duration::from_secs(3) {
+            self.last_relief = Instant::now();
+            if std::env::var_os("INERT_DEBUG_MEM").is_some() {
+                let tm = self.ctx.tex_manager();
+                let tm = tm.read();
+                let list: Vec<String> = tm.allocated().map(|(_, m)| format!("{}:{}x{}", m.name, m.size[0], m.size[1])).collect();
+                eprintln!("MEM pass {} textures {}", self.ctx.cumulative_pass_nr(), list.join(" "));
+            }
+        }
         if !self.profile.settings.memory_saver {
             return;
         }

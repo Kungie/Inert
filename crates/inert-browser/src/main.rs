@@ -18,6 +18,7 @@ mod pages;
 mod profile;
 mod render;
 mod servo_web;
+mod mem;
 mod shot;
 mod theme;
 mod vpn;
@@ -26,6 +27,7 @@ mod web;
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    mem::tune_allocator();
     let _ = tracing_subscriber::fmt().with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "warn,webrender=error,servo_base=error,script=error,profile_traits=error,storage=error".into())).try_init();
     // Servo uses rustls internally and needs a process-wide default provider.
     let _ = inert_transport::rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -50,6 +52,9 @@ fn main() -> eframe::Result {
         }
         vp = vp.with_always_on_top().with_active(true);
     }
-    let opts = eframe::NativeOptions { viewport: vp, ..Default::default() };
+    // Two swapchain images instead of three: at 2880×1800 each one is ~21 MB.
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+    wgpu_options.surface = eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY;
+    let opts = eframe::NativeOptions { viewport: vp, wgpu_options, ..Default::default() };
     eframe::run_native("Inert", opts, Box::new(move |cc| Ok(Box::new(app::Browser::new(cc, demo, shot, drive)))))
 }

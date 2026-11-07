@@ -396,13 +396,19 @@ impl Driver {
                     self.record(&name, false, format!("timed out after {timeout} ms | {state}"));
                 }
             }
+            Do::Shot(_) if std::env::var_os("INERT_DRIVE_NO_SHOTS").is_some() => {
+                // Memory runs: egui-wgpu keeps a window-sized capture texture and
+                // readback buffer after the first screenshot, which is test overhead.
+            }
             Do::Shot(name) => {
                 // In-app capture: works with the screen locked or asleep. Native
                 // WebKit views are not part of it; everything else (Servo included) is.
                 let path = self.out.join(format!("{name}.png"));
                 let ectx = ctx.clone();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |img| {
-                    save_png(&path, &img);
+                    if std::env::var_os("INERT_DRIVE_NOSAVE").is_none() {
+                        save_png(&path, &img);
+                    }
                     ectx.request_repaint();
                 })));
                 self.shot_until = Some(Instant::now() + Duration::from_millis(900));
