@@ -225,13 +225,15 @@ pub fn exec(cmd: Cmd, demo: bool, tx: Sender<Event>, ctx: eframe::egui::Context)
     std::thread::spawn(move || {
         if demo {
             // The demo profile pretends: any well-formed number signs in.
-            let s = match cmd {
-                Cmd::Login(_) => demo_status(true),
-                Cmd::Logout => demo_status(false),
+            let (s, login) = match cmd {
+                Cmd::Login(_) => (demo_status(true), true),
+                Cmd::Logout => (demo_status(false), false),
                 _ => return,
             };
             std::thread::sleep(Duration::from_millis(500));
-            let _ = tx.send(Event::VpnLogin(Ok(())));
+            if login {
+                let _ = tx.send(Event::VpnLogin(Ok(())));
+            }
             let _ = tx.send(Event::Vpn(s));
             ctx.request_repaint();
             return;

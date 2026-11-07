@@ -23,6 +23,16 @@ BIN="${BIN:-./target/release/inert-browser}"
 [ -x "$BIN" ] || scripts/build.sh --release
 [ "${SHOTS:-0}" = 1 ] || export INERT_DRIVE_NO_SHOTS=1
 fp() { footprint -p "$1" 2>/dev/null | awk '/phys_footprint:/{v=$2; u=$3; if(u=="GB")v*=1024; else if(u=="KB")v/=1024; print v; exit}'; }
+# A local login page for the password-fill check (http://127.0.0.1:8766).
+SITE="$OUT/site"; mkdir -p "$SITE"
+cat > "$SITE/login.html" <<'HTML'
+<!doctype html><title>login</title>
+<form><input type=text id=u oninput=upd() placeholder=user><input type=password id=p oninput=upd()></form>
+<script>function upd(){document.title=document.getElementById('u').value+':'+document.getElementById('p').value.length}</script>
+HTML
+python3 -m http.server 8766 --bind 127.0.0.1 --directory "$SITE" >/dev/null 2>&1 &
+WEB=$!
+trap 'kill $WEB 2>/dev/null' EXIT
 "$BIN" --demo --drive "$OUT" 2>"$OUT/driver.log" &
 PID=$!
 echo "t,browser_rss,browser_fp,servo_rss,servo_fp" > "$OUT/memory.csv"

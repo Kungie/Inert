@@ -95,7 +95,13 @@ impl Browser {
         let ui = &mut child;
         ui.add_space(56.0);
         ui.label(RichText::new("INERT").font(FontId::new(26.0, pixel())).color(WHITE));
-        ui.add_space((rect.height() * 0.22).max(40.0));
+        ui.add_space((rect.height() * if self.signin.import_step { 0.12 } else { 0.22 }).max(40.0));
+        if self.signin.import_step {
+            self.import_screen(ui);
+            let f = rect.shrink2(vec2(72.0, 36.0));
+            ui.painter().text(pos2(f.left(), f.bottom()), egui::Align2::LEFT_BOTTOM, "© 2026 INERT", FontId::new(10.5, mono()), DIM);
+            return;
+        }
         ui.label(theme::label("inert:// — an application protocol"));
         ui.add_space(18.0);
         ui.label(RichText::new("The web,\nbehind glass.").font(FontId::new(96.0, serif())).color(WHITE).extra_letter_spacing(-3.0).line_height(Some(92.0)));
@@ -172,7 +178,8 @@ impl Browser {
                     self.signin.key.clear();
                     self.profile.settings.provider = Some(p);
                     self.profile.settings.model = p.default_model().into();
-                    self.profile.onboarded = true;
+                    // Step 2: bring Chrome along (skippable).
+                    self.signin.import_step = true;
                     self.dirty = true;
                 }
             }
@@ -204,6 +211,7 @@ impl Browser {
                         Page::Bookmarks => self.bookmarks_page(ui),
                         Page::Settings => self.settings_page(ui),
                         Page::Downloads => self.downloads_page(ui),
+                        Page::Import => self.import_page(ui),
                     }
                     ui.add_space(80.0);
                 });
@@ -390,7 +398,8 @@ impl Browser {
                 self.ntp.editing = false;
             }
         }
-        if has && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        // egui drops focus on Escape before we see it, so check lost_focus too.
+        if (has || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.ntp = Default::default();
             ui.memory_mut(|m| m.surrender_focus(id));
         }
@@ -722,14 +731,17 @@ impl Browser {
         section(ui, "04", "Extensions");
         self.extensions_settings(ui);
 
-        section(ui, "05", "VPN");
+        section(ui, "05", "Passwords & import");
+        self.passwords_settings(ui);
+
+        section(ui, "06", "VPN");
         let s = self.vpn.status.clone();
         ui.label(theme::body(if s.installed { "Mullvad is installed. Open the VPN chip in the tab strip to connect or pick a location." } else { "Install Mullvad VPN to enable the built-in VPN." }));
         if s.installed {
             ui.label(theme::muted(&format!("Status: {}{}", s.state, if s.connected() { format!(" · {}, {}", s.city, s.country) } else { String::new() })));
         }
 
-        section(ui, "06", "Performance");
+        section(ui, "07", "Performance");
         if ui.checkbox(&mut self.profile.settings.memory_saver, "Memory saver: unload web tabs unused for 15 minutes (Inbox tabs stay awake)").changed() {
             self.dirty = true;
         }
@@ -737,7 +749,7 @@ impl Browser {
             self.dirty = true;
         }
 
-        section(ui, "07", "About");
+        section(ui, "08", "About");
         ui.label(theme::body("Inert Browser 0.1 — Rust, egui + wgpu, WebKit for the unsecured web."));
         ui.label(theme::muted("inert:// protocol v1 · TLS 1.3 with X25519MLKEM768 · Ed25519-signed manifests."));
         ui.label(theme::muted("Typefaces: Geist Serif, Sans, Mono and Pixel by Vercel (SIL Open Font License)."));
@@ -749,6 +761,66 @@ impl Browser {
             self.profile.settings.provider = None;
             self.profile.onboarded = false;
             self.signin = Default::default();
+            self.dirty = true;
+        }
+    }
+
+    fn passwords_settings(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            let b = ui.add(egui::Button::new(RichText::new("Import from Chrome…").font(FontId::new(13.0, sans()))).corner_radius(16).min_size(vec2(0.0, 32.0)));
+            crate::drive::reg("settings:import", b.rect);
+            if b.clicked() {
+                self.add_tab("about:import", None, true, None);
+            }
+            if let Some(f) = &self.profile.imported_from {
+                ui.label(theme::muted(&format!("Last import: {f}")));
+            }
+        });
+        ui.add_space(8.0);
+        let logins = self.profile.logins.clone();
+        if logins.is_empty() {
+            ui.label(theme::muted("No saved passwords. Import them from Chrome; they go into the macOS Keychain."));
+            return;
+        }
+        let reveal_k = Id::unique("pw-reveal");
+        let mut reveal: Option<(usize, String)> = ui.ctx().data(|d| d.get_temp(reveal_k));
+        let mut forget = None;
+        card(ui, |ui| {
+            ui.label(theme::label(&format!("{} saved passwords", logins.len())));
+            for (i, l) in logins.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                    icons::paint(ui.painter(), r, Icon::Key, MUTED);
+                    ui.label(theme::mono_text(l.origin.trim_start_matches("https://"), 12.5));
+                    ui.label(theme::body(&l.username));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.small_button("Delete").clicked() {
+                            forget = Some(i);
+                        }
+                        let shown = reveal.as_ref().filter(|(j, _)| *j == i).map(|(_, p)| p.clone());
+                        match shown {
+                            Some(p) => {
+                                if ui.small_button("Hide").clicked() {
+                                    reveal = None;
+                                }
+                                ui.label(theme::mono_text(&p, 12.0));
+                            }
+                            None => {
+                                if ui.small_button("Show").clicked() {
+                                    reveal = crate::passwords::get(&l.origin, &l.username, self.demo).map(|p| (i, p));
+                                }
+                                ui.label(theme::mono_text("••••••••", 12.0).color(DIM));
+                            }
+                        }
+                    });
+                });
+            }
+        });
+        ui.ctx().data_mut(|d| d.insert_temp(reveal_k, reveal));
+        if let Some(i) = forget {
+            let l = self.profile.logins.remove(i);
+            crate::passwords::forget(&l.origin, &l.username, self.demo);
+            ui.ctx().data_mut(|d| d.remove::<Option<(usize, String)>>(reveal_k));
             self.dirty = true;
         }
     }

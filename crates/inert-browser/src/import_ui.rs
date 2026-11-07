@@ -1,0 +1,252 @@
+//! The import screens: step 2 of onboarding, `about:import`, and applying
+//! what was imported to the profile, the Keychain and both cookie stores.
+
+use crate::app::{Browser, Event};
+use crate::icons::{self, Icon};
+use crate::import::{self, Imported};
+use crate::theme::{self, *};
+use eframe::egui::{self, Color32, FontId, RichText, Sense, Stroke, Ui, Vec2, vec2};
+
+fn pill(ui: &mut Ui, text: &str, on: bool) -> egui::Response {
+    ui.add(egui::Button::new(RichText::new(text).font(FontId::new(12.5, sans())).color(if on { BG } else { FG })).fill(if on { FG } else { RAISED }).stroke(Stroke::new(1.0, if on { FG } else { LINE_STRONG })).corner_radius(16).min_size(vec2(0.0, 32.0)))
+}
+
+impl Browser {
+    /// Source picker, checkboxes, Import button and the result. `onboarding`
+    /// adds Skip / Continue, which finish the first run.
+    pub fn import_panel(&mut self, ui: &mut Ui, onboarding: bool) {
+        if self.import.sources.is_empty() {
+            ui.label(theme::body("No Chrome, Brave, Edge, Arc, Vivaldi or Chromium profile was found on this Mac."));
+            if onboarding {
+                ui.add_space(18.0);
+                if big(ui, "CONTINUE →", true).clicked() {
+                    self.finish_onboarding();
+                }
+            }
+            return;
+        }
+        ui.label(theme::label("From"));
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            for i in 0..self.import.sources.len() {
+                let l = self.import.sources[i].label();
+                let r = pill(ui, &l, self.import.pick == i);
+                crate::drive::reg(format!("import:source:{i}"), r.rect);
+                if r.clicked() {
+                    self.import.pick = i;
+                }
+            }
+        });
+        ui.add_space(14.0);
+        let done = !self.import.summary.is_empty();
+        if !done {
+            let w = &mut self.import.what;
+            for (on, title, sub, key) in [
+                (&mut w.bookmarks, "Bookmarks", "the bookmarks bar first, then the rest", "bookmarks"),
+                (&mut w.history, "History", "visits and what the address bar should suggest", "history"),
+                (&mut w.passwords, "Saved passwords", "into the macOS Keychain; fill them with the key in the address bar", "passwords"),
+                (&mut w.cookies, "Sign-ins (cookies)", "stay signed in to Gmail, GitHub and the rest", "cookies"),
+                (&mut w.settings, "Habits", "search engine, bookmarks bar, pages that open at startup", "settings"),
+            ] {
+                ui.horizontal(|ui| {
+                    let r = ui.checkbox(on, RichText::new(title).font(FontId::new(15.0, sans())).color(FG));
+                    crate::drive::reg(format!("import:what:{key}"), r.rect);
+                    ui.label(theme::muted(sub));
+                });
+            }
+            let src = &self.import.sources[self.import.pick.min(self.import.sources.len() - 1)];
+            if (self.import.what.passwords || self.import.what.cookies) && src.demo_key.is_none() {
+                ui.add_space(6.0);
+                ui.label(theme::label_c(&format!("macOS will ask before Inert may read \"{}\" — choose Allow.", src.keychain.0), WARN));
+            }
+            ui.add_space(18.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                let running = self.import.running;
+                let b = big(ui, if running { "IMPORTING…" } else { "IMPORT →" }, true);
+                crate::drive::reg("import:go", b.rect);
+                if b.clicked() && !running {
+                    self.start_import();
+                }
+                if onboarding {
+                    let s = big(ui, "SKIP", false);
+                    crate::drive::reg("import:skip", s.rect);
+                    if s.clicked() {
+                        self.finish_onboarding();
+                    }
+                }
+            });
+        } else {
+            for line in self.import.summary.clone() {
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                    icons::paint(ui.painter(), r, Icon::Check, OK);
+                    ui.label(RichText::new(line).font(FontId::new(15.0, sans())).color(FG));
+                });
+            }
+            for e in self.import.errors.clone() {
+                ui.label(RichText::new(e).font(FontId::new(12.0, mono())).color(WARN));
+            }
+            ui.add_space(18.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                if onboarding {
+                    let b = big(ui, "CONTINUE →", true);
+                    crate::drive::reg("import:continue", b.rect);
+                    if b.clicked() {
+                        self.finish_onboarding();
+                    }
+                } else if big(ui, "IMPORT AGAIN", false).clicked() {
+                    self.import.summary.clear();
+                    self.import.errors.clear();
+                }
+            });
+        }
+    }
+
+    pub fn finish_onboarding(&mut self) {
+        self.signin.import_step = false;
+        self.profile.onboarded = true;
+        self.dirty = true;
+    }
+
+    fn start_import(&mut self) {
+        let Some(src) = self.import.sources.get(self.import.pick).cloned() else { return };
+        let what = self.import.what;
+        self.import.running = true;
+        let tx = self.tx.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let r = import::run(&src, what);
+            let _ = tx.send(Event::Imported(Box::new(r)));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn apply_import(&mut self, r: Imported) {
+        self.import.running = false;
+        let mut summary = Vec::new();
+        let p = &mut self.profile;
+        // Bookmarks: new ones go after Inert's, no duplicates.
+        let before = p.bookmarks.len();
+        for b in r.bookmarks {
+            if !p.bookmarks.iter().any(|x| x.url == b.url) {
+                p.bookmarks.push(b);
+            }
+        }
+        let nb = p.bookmarks.len() - before;
+        if nb > 0 {
+            summary.push(format!("{nb} bookmarks"));
+        }
+        // History: per-URL counts add up; the visit timeline merges by time.
+        let nh = r.history.len();
+        for h in r.history {
+            match p.history.iter_mut().find(|x| x.url == h.url) {
+                Some(x) => {
+                    x.visits += h.visits;
+                    x.last = x.last.max(h.last);
+                    if x.title.is_empty() {
+                        x.title = h.title;
+                    }
+                }
+                None => p.history.push(h),
+            }
+        }
+        let nv = r.visits.len();
+        p.visits.extend(r.visits);
+        p.visits.sort_by_key(|v| v.t);
+        p.visits.dedup();
+        let len = p.visits.len();
+        if len > 20_000 {
+            p.visits.drain(..len - 20_000);
+        }
+        if nh > 0 {
+            summary.push(format!("History: {nh} sites, {nv} visits"));
+        }
+        // Passwords into the Keychain; the profile keeps only who and where.
+        let mut np = 0;
+        let mut errors = r.errors;
+        for l in &r.logins {
+            match crate::passwords::save(&l.origin, &l.username, &l.password, self.demo) {
+                Ok(()) => {
+                    if !p.logins.iter().any(|x| x.origin == l.origin && x.username == l.username) {
+                        p.logins.push(crate::profile::LoginRef { origin: l.origin.clone(), username: l.username.clone(), from: r.source.clone() });
+                    }
+                    np += 1;
+                }
+                Err(e) => {
+                    errors.push(format!("Keychain: {e}"));
+                    break;
+                }
+            }
+        }
+        if np > 0 {
+            summary.push(format!("{np} saved passwords (in the Keychain)"));
+        }
+        // Habits.
+        let mut habits = Vec::new();
+        if let Some(e) = r.search {
+            p.settings.search = e;
+            habits.push(format!("search with {}", e.name()));
+        }
+        if let Some(b) = r.show_bookmarks_bar {
+            p.settings.bookmarks_bar = b;
+            habits.push(if b { "bookmarks bar on".into() } else { "bookmarks bar off".into() });
+        }
+        p.imported_from = Some(r.source.clone());
+        let startup = r.startup_urls;
+        if !startup.is_empty() {
+            habits.push(format!("{} startup page{}", startup.len(), if startup.len() == 1 { "" } else { "s" }));
+        }
+        if !habits.is_empty() {
+            summary.push(format!("Habits: {}", habits.join(", ")));
+        }
+        // Cookies: both engines, so imported sign-ins work in every tab.
+        let nc = r.cookies.len();
+        if nc > 0 {
+            crate::cookies::import(self, &r.cookies);
+            let sites: std::collections::BTreeSet<String> = r.cookies.iter().map(|(_, c)| crate::cookies::site_of(&c.domain)).collect();
+            summary.push(format!("Signed in on {} sites ({nc} cookies)", sites.len()));
+        }
+        for u in startup {
+            if !self.tabs.iter().any(|t| t.url() == u) {
+                self.add_tab(&u, None, false, None);
+            }
+        }
+        if summary.is_empty() {
+            summary.push("Nothing new to bring over".into());
+        }
+        self.import.summary = summary;
+        self.import.errors = errors;
+        self.dirty = true;
+    }
+
+    /// Step 2 of onboarding, in the sign-in screen's style.
+    pub fn import_screen(&mut self, ui: &mut Ui) {
+        ui.label(theme::label("inert:// — step 2 of 2"));
+        ui.add_space(18.0);
+        ui.label(RichText::new("Bring Chrome\nwith you.").font(FontId::new(80.0, serif())).color(WHITE).extra_letter_spacing(-2.5).line_height(Some(80.0)));
+        ui.add_space(20.0);
+        ui.label(RichText::new("Bookmarks, history, passwords, sign-ins and habits move over in one go. Nothing leaves this Mac.").font(FontId::new(17.0, sans())).color(MUTED));
+        ui.add_space(26.0);
+        self.import_panel(ui, true);
+    }
+
+    pub fn import_page(&mut self, ui: &mut Ui) {
+        ui.add_space(48.0);
+        ui.label(theme::label("Import"));
+        ui.label(theme::serif_text("Bring Chrome with you.", 44.0));
+        ui.add_space(6.0);
+        if let Some(f) = &self.profile.imported_from {
+            ui.label(theme::muted(&format!("Last import: {f}.")));
+        }
+        ui.add_space(16.0);
+        self.import_panel(ui, false);
+    }
+}
+
+pub fn big(ui: &mut Ui, text: &str, primary: bool) -> egui::Response {
+    let (fill, ink) = if primary { (FG, BG) } else { (Color32::TRANSPARENT, FG) };
+    ui.add(egui::Button::new(RichText::new(text).font(FontId::new(12.0, mono())).color(ink).extra_letter_spacing(1.4)).fill(fill).stroke(Stroke::new(1.0, if primary { FG } else { LINE_STRONG })).corner_radius(2).min_size(vec2(if primary { 200.0 } else { 150.0 }, 46.0)))
+}
+

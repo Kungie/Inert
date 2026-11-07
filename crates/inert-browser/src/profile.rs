@@ -139,6 +139,15 @@ pub struct HistoryEntry {
     pub last: u64,
 }
 
+/// A saved login. The password itself is in the Keychain (`passwords.rs`).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LoginRef {
+    pub origin: String,
+    pub username: String,
+    #[serde(default)]
+    pub from: String,
+}
+
 /// One visit, for the history page's timeline.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Visit {
@@ -192,6 +201,11 @@ pub struct Profile {
     /// Every visit, newest last (capped). `history` keeps per-URL counts.
     #[serde(default)]
     pub visits: Vec<Visit>,
+    #[serde(default)]
+    pub logins: Vec<LoginRef>,
+    /// Where the last import came from ("Chrome · Default").
+    #[serde(default)]
+    pub imported_from: Option<String>,
     pub groups: Vec<GroupDef>,
     pub session: Vec<SavedTab>,
     pub active: usize,

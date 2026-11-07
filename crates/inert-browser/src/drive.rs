@@ -121,6 +121,19 @@ impl Driver {
             Click(s("signin:claude")),
             expect("signin.claude_selected", 2000, |b| b.signin.provider == Some(crate::profile::Provider::Claude)),
             Click(s("signin:skip")),
+            // Step 2: import from Chrome (a fake Chrome profile in demo mode).
+            expect("import.step_after_signin", 2000, |b| b.signin.import_step && !b.profile.onboarded),
+            Shot(s("d01b-import")),
+            Click(s("import:go")),
+            expect("import.reads_chrome_profile", 10000, |b| !b.import.summary.is_empty() && !b.import.running),
+            expect("import.bookmarks", 1000, |b| b.profile.bookmarks.iter().any(|x| x.title == "Hacker News") && b.profile.bookmarks.iter().any(|x| x.title == "Printables")),
+            expect("import.history_and_visits", 1000, |b| b.profile.history.iter().any(|h| h.url == "https://news.ycombinator.com/" && h.visits >= 42) && b.profile.visits.len() >= 4),
+            expect("import.passwords_to_store", 1000, |b| b.profile.logins.len() == 2 && crate::passwords::get("https://news.ycombinator.com", "demo_user", true).as_deref() == Some("correct horse battery staple")),
+            expect("import.habits", 1000, |b| b.profile.settings.search == crate::profile::SearchEngine::DuckDuckGo && b.profile.imported_from.is_some()),
+            expect("import.cookies", 1000, |b| b.import.summary.iter().any(|l| l.contains("Signed in on 2 sites"))),
+            Pause(300),
+            Shot(s("d01c-import-done")),
+            Click(s("import:continue")),
             expect("signin.done_with_claude", 2000, |b| b.profile.onboarded && b.profile.settings.provider == Some(crate::profile::Provider::Claude)),
             // Seed browsing history so completion has something to complete (setup, not under test).
             Setup(Box::new(|b| {
@@ -215,12 +228,23 @@ impl Driver {
             // 8. Normal web: new tab, type a URL, Enter, it loads as unsecured.
             Press(Key::T, cmd),
             expect("tabs.cmd_t_new_tab", 2000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::NewTab)))),
+            // The new tab page's own search box: typing stays in it.
+            Click(s("ntp:search")),
+            Type(s("gith")),
+            expect("ntp.search_types_in_place", 2000, |b| b.ntp.text == "github.com" && b.ntp.editing && !b.ntp.sugg.is_empty() && !b.omni.editing && b.omni.text.is_empty()),
+            Pause(300),
+            Shot(s("d05b-ntp-search")),
+            Press(Key::Escape, Modifiers::NONE),
+            expect("ntp.escape_clears", 2000, |b| b.ntp.text.is_empty() && !b.ntp.editing),
             Click(s("omnibox")),
             Type(s("example.com")),
             Press(Key::Enter, Modifiers::NONE),
             expect("web.servo_renders_page", 20000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.engine == Some(profile::Engine::Servo) && w.sv.is_some() && w.url.starts_with("https://example.com") && !w.loading && w.title == "Example Domain")),
             Pause(800),
             Shot(s("d06-web-servo")),
+            Click(s("cookies")),
+            expect("cookies.panel_servo", 5000, |b| b.popover == Popover::Cookies && !b.cookie.loading && b.cookie.host == "example.com"),
+            Press(Key::Escape, Modifiers::NONE),
             // Engine switch from the site security panel: same page in WebKit.
             Click(s("badge")),
             Click(s("engine:switch")),
@@ -252,6 +276,9 @@ impl Driver {
             Click(s("group:Inbox")),
             Click(s("tab:Gmail")),
             expect("inbox.uses_webkit", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.engine == Some(profile::Engine::WebKit) && w.view.is_some())),
+            Click(s("cookies")),
+            expect("cookies.panel_webkit", 5000, |b| b.popover == Popover::Cookies && !b.cookie.loading),
+            Press(Key::Escape, Modifiers::NONE),
             Click(s("group:Inbox")),
             Press(Key::T, cmd),
             Press(Key::W, cmd),
@@ -262,6 +289,19 @@ impl Driver {
             Click(s("vpn")),
             expect("vpn.panel", 2000, |b| b.popover == Popover::Vpn),
             Shot(s("d07-vpn")),
+            Click(s("vpn:logout")),
+            Click(s("vpn:logout-confirm")),
+            expect("vpn.logout", 5000, |b| b.vpn.status.logged_in == Some(false)),
+            Pause(300),
+            Shot(s("d07b-vpn-login")),
+            Click(s("vpn:account")),
+            Type(s("1234")),
+            Click(s("vpn:login")),
+            expect("vpn.login_rejects_short_number", 2000, |b| b.vpn.login_error.is_some() && b.vpn.status.logged_in == Some(false)),
+            Click(s("vpn:account")),
+            Type(s(" 5678 9012 3456")),
+            Click(s("vpn:login")),
+            expect("vpn.login_with_account_number", 5000, |b| b.vpn.status.logged_in == Some(true) && b.vpn.account_input.is_empty() && b.vpn.login_error.is_none()),
             Press(Key::Escape, Modifiers::NONE),
             expect("vpn.closes", 2000, |b| b.popover == Popover::None),
             Click(s("shield")),
@@ -281,9 +321,49 @@ impl Driver {
             Press(Key::Y, cmd),
             expect("history.cmd_y", 2000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::History)))),
             expect("history.has_entries", 2000, |b| b.profile.history.iter().any(|h| h.url.starts_with("inert://bank.example"))),
+            expect("history.timeline", 2000, |b| b.profile.visits.iter().any(|v| v.url.starts_with("inert://bank.example"))),
+            Pause(300),
+            Shot(s("d09-history")),
             Click(s("tab:Inert Bank")),
             Press(Key::R, cmd),
             expect("bank.reload_reverifies", 15000, |b| inert_on(b, "overview")),
+            // 11. Cookie banners are rejected automatically (a OneTrust-style banner).
+            Press(Key::T, cmd),
+            Setup(Box::new(|b| {
+                let id = b.active;
+                b.navigate(id, "data:text/html,<title>banner</title><div id=\"onetrust-banner-sdk\"><p>We use cookies</p><button onclick=\"document.title='accepted'\">Accept all</button><button id=\"onetrust-reject-all-handler\" onclick=\"document.title='rejected'\">Reject all</button></div>");
+            })),
+            expect("cookies.banner_rejected", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.title == "rejected")),
+            Setup(Box::new(|b| {
+                let id = b.active;
+                b.navigate(id, "data:text/html,<title>banner2</title><div class=\"cookie-consent\"><button onclick=\"document.title='accepted'\">Accept</button><button onclick=\"document.title='rejected by text'\">Only necessary</button></div>");
+            })),
+            expect("cookies.banner_rejected_by_text", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.title == "rejected by text")),
+            // 12. A saved password fills on its own site only when asked (local test page).
+            Setup(Box::new(|b| {
+                let _ = crate::passwords::save("http://127.0.0.1:8766", "ada", "pw!", true);
+                b.profile.logins.push(crate::profile::LoginRef { origin: "http://127.0.0.1:8766".into(), username: "ada".into(), from: "test".into() });
+                let id = b.active;
+                b.navigate(id, "http://127.0.0.1:8766/login.html");
+            })),
+            expect("passwords.key_in_address_bar", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if !w.loading && w.title == "login") && b.logins_here().len() == 1),
+            Click(s("omni:key")),
+            expect("passwords.panel", 2000, |b| b.popover == Popover::Passwords),
+            Pause(400),
+            Shot(s("d10-password-fill")),
+            Click(s("pw:fill:0")),
+            expect("passwords.filled", 5000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.title == "ada:3")),
+            // 13. Search runs on DuckDuckGo in its dark theme.
+            Click(s("omnibox")),
+            Type(s("inert browser")),
+            Press(Key::Enter, Modifiers::NONE),
+            expect("search.duckduckgo_dark", 5000, |b| b.active_tab().map(|t| t.url()).is_some_and(|u| u.starts_with("https://duckduckgo.com/") && u.contains("kae=d"))),
+            // 14. Clear browsing data from the history page.
+            Press(Key::Y, cmd),
+            Click(s("history:clear")),
+            Click(s("clear:All time")),
+            Click(s("clear:go")),
+            expect("history.clear_all", 3000, |b| b.profile.visits.is_empty() && b.profile.history.is_empty()),
         ];
         // INERT_DRIVE_SCENARIO=bank-idle: sign in, open Inert Bank, then stay
         // on it for 30 s with the window drawing (memory baseline, spec §16).
@@ -292,6 +372,7 @@ impl Driver {
                 Pause(1200),
                 Click(s("signin:claude")),
                 Click(s("signin:skip")),
+                Click(s("import:skip")),
                 expect("signin.done_with_claude", 2000, |b| b.profile.onboarded),
                 Click(s("tab:Inert Bank")),
                 expect("bank.overview_verified", 15000, |b| inert_on(b, "overview")),
@@ -463,6 +544,8 @@ fn look_steps() -> Vec<Step> {
         Pause(1200),
         Click(s("signin:claude")),
         Click(s("signin:skip")),
+        Shot(s("l00-import")),
+        Click(s("import:skip")),
         expect("signin.done", 2000, |b| b.profile.onboarded),
         Pause(600),
         Shot(s("l01-newtab")),

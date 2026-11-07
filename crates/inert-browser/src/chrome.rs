@@ -619,7 +619,23 @@ impl Browser {
         // text row tall, with no inner margin.
         let font = FontId::new(13.5, sans());
         let row_h = ui.fonts_mut(|fo| fo.row_height(&font));
-        let text_rect = Rect::from_min_max(pos2(badge.right() + 10.0, rect.center().y - row_h / 2.0), pos2(rect.right() - 16.0, rect.center().y + row_h / 2.0));
+        // Saved passwords for this site: a key at the right end (Chrome's).
+        let here = self.logins_here().len();
+        let mut right_pad = 16.0;
+        if here > 0 && !typing_other {
+            let kr = Rect::from_center_size(pos2(rect.right() - 20.0, rect.center().y), Vec2::splat(26.0));
+            let k = ui.interact(kr, Id::unique("omni-key"), Sense::click()).on_hover_text("Saved passwords for this site");
+            crate::drive::reg("omni:key", kr);
+            if k.hovered() {
+                ui.painter().circle_filled(kr.center(), 13.0, HOVER);
+            }
+            icons::paint(ui.painter(), kr.shrink(6.0), Icon::Key, ACCENT);
+            if k.clicked() {
+                self.open_popover(Popover::Passwords, kr);
+            }
+            right_pad = 40.0;
+        }
+        let text_rect = Rect::from_min_max(pos2(badge.right() + 10.0, rect.center().y - row_h / 2.0), pos2(rect.right() - right_pad, rect.center().y + row_h / 2.0));
         crate::drive::reg("omnibox", Rect::from_min_max(pos2(text_rect.left(), rect.top()), pos2(text_rect.right(), rect.bottom())));
         if self.omni.focus {
             ui.memory_mut(|m| m.request_focus(id));
@@ -931,6 +947,7 @@ impl Browser {
                     Popover::Vpn => self.pop_vpn(ui),
                     Popover::Shield => self.pop_shield(ui),
                     Popover::Cookies => self.pop_cookies(ui),
+                    Popover::Passwords => self.pop_passwords(ui),
                     Popover::Menu => self.pop_menu(ui),
                     Popover::GroupAdd(g) => self.pop_group_add(ui, g),
                     Popover::None => {}
@@ -1219,6 +1236,49 @@ impl Browser {
         }
     }
 
+    /// Saved logins for the active page's origin (exact origin, like Chrome).
+    pub fn logins_here(&self) -> Vec<crate::profile::LoginRef> {
+        let Some(Kind::Web(w)) = self.active_tab().map(|t| &t.kind) else { return Vec::new() };
+        let Some(o) = crate::passwords::origin_of(&w.url) else { return Vec::new() };
+        self.profile.logins.iter().filter(|l| l.origin == o).cloned().collect()
+    }
+
+    fn pop_passwords(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+            icons::paint(ui.painter(), r, Icon::Key, ACCENT);
+            ui.label(theme::label("Saved passwords"));
+        });
+        ui.add_space(6.0);
+        let list = self.logins_here();
+        if let Some(l) = list.first() {
+            ui.label(theme::serif_text(l.origin.trim_start_matches("https://"), 22.0));
+        }
+        ui.add_space(6.0);
+        for (i, l) in list.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(theme::body(if l.username.is_empty() { "(no username)" } else { &l.username }));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let b = ui.add(egui::Button::new(RichText::new("FILL").font(FontId::new(11.0, mono())).color(BG).extra_letter_spacing(1.2)).fill(FG).corner_radius(14).min_size(vec2(64.0, 28.0)));
+                    crate::drive::reg(format!("pw:fill:{i}"), b.rect);
+                    if b.clicked() {
+                        match crate::passwords::get(&l.origin, &l.username, self.demo) {
+                            Some(pw) => {
+                                if let Some(Kind::Web(w)) = self.active_tab().map(|t| &t.kind) {
+                                    crate::web::js(w, &crate::passwords::fill_js(&l.username, &pw));
+                                }
+                                self.popover = Popover::None;
+                            }
+                            None => self.toast("That password is no longer in the Keychain"),
+                        }
+                    }
+                });
+            });
+        }
+        ui.add_space(6.0);
+        ui.label(theme::muted("Filled only on this exact site, only when you click. Passwords stay in the macOS Keychain."));
+    }
+
     fn pop_cookies(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
@@ -1364,6 +1424,10 @@ impl Browser {
         }
         if item(ui, Icon::Bookmark, "Bookmarks", "Opt+Cmd+B") {
             self.add_tab("about:bookmarks", None, true, None);
+            self.popover = Popover::None;
+        }
+        if item(ui, Icon::Import, "Import from Chrome…", "") {
+            self.add_tab("about:import", None, true, None);
             self.popover = Popover::None;
         }
         if item(ui, Icon::Folder, "Downloads", "") {

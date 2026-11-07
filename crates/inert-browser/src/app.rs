@@ -35,6 +35,7 @@ pub enum Event {
     /// The cookie-banner script's answer for a tab: what it clicked, if anything.
     Consent { tab: u64, what: String },
     WkCookies(Vec<inert_servo_ipc::CookieJson>),
+    Imported(Box<crate::import::Imported>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +45,7 @@ pub enum Page {
     Bookmarks,
     Settings,
     Downloads,
+    Import,
 }
 
 impl Page {
@@ -54,6 +56,7 @@ impl Page {
             Page::Bookmarks => "about:bookmarks",
             Page::Settings => "about:settings",
             Page::Downloads => "about:downloads",
+            Page::Import => "about:import",
         }
     }
     pub fn title(self) -> &'static str {
@@ -63,6 +66,7 @@ impl Page {
             Page::Bookmarks => "Bookmarks",
             Page::Settings => "Settings",
             Page::Downloads => "Downloads",
+            Page::Import => "Import from Chrome",
         }
     }
     pub fn from_url(u: &str) -> Option<Page> {
@@ -72,6 +76,7 @@ impl Page {
             "about:bookmarks" => Page::Bookmarks,
             "about:settings" | "about:preferences" => Page::Settings,
             "about:downloads" => Page::Downloads,
+            "about:import" => Page::Import,
             _ => return None,
         })
     }
@@ -167,6 +172,8 @@ pub struct AdState {
 
 #[derive(Default)]
 pub struct Signin {
+    /// Step 2 of onboarding: bring Chrome along.
+    pub import_step: bool,
     pub provider: Option<Provider>,
     pub key: String,
     pub error: Option<String>,
@@ -181,6 +188,7 @@ pub enum Popover {
     Shield,
     Menu,
     Cookies,
+    Passwords,
     GroupAdd(u64),
 }
 
@@ -227,6 +235,18 @@ pub struct Browser {
     pub cookie: crate::cookies::State,
     /// Imported cookies waiting for the Servo process to start.
     pub pending_servo_cookies: Vec<(String, inert_servo_ipc::CookieJson)>,
+    pub import: ImportState,
+}
+
+#[derive(Default)]
+pub struct ImportState {
+    pub sources: Vec<crate::import::Source>,
+    pub pick: usize,
+    pub what: crate::import::What,
+    pub running: bool,
+    /// What the last import brought over, one line per kind.
+    pub summary: Vec<String>,
+    pub errors: Vec<String>,
 }
 
 impl Browser {
@@ -289,8 +309,20 @@ impl Browser {
             closing: Vec::new(),
             cookie: Default::default(),
             pending_servo_cookies: Vec::new(),
+            import: ImportState::default(),
         };
         b.refresh_sites();
+        b.import.sources = crate::import::sources();
+        if demo {
+            // The demo profile imports from a fake Chrome profile, never the real one.
+            match crate::import::write_fixture(&Profile::dir(true).join("chrome-demo"), "demo-safe-storage") {
+                Ok(mut s) => {
+                    s.profile = "Demo profile (demo data)".into();
+                    b.import.sources = vec![s];
+                }
+                Err(e) => tracing::warn!("demo import fixture: {e}"),
+            }
+        }
         // Restore without activating, so collapsed groups stay collapsed.
         let session = b.profile.session.clone();
         for s in &session {
@@ -731,6 +763,7 @@ impl Browser {
                 Event::Menu(id) => self.on_menu(&id),
                 Event::ServoCookies { req, list } => self.on_servo_cookies(req, list),
                 Event::WkCookies(list) => self.on_wk_cookies(list),
+                Event::Imported(r) => self.apply_import(*r),
                 Event::Consent { tab, what } => {
                     self.cookie.consent.insert(tab, what);
                 }
