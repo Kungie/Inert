@@ -405,6 +405,34 @@ impl Driver {
                 Pause(4000),
                 Shot(s("r02-ddg-dark")),
             ]
+        } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("vpn") {
+            // The VPN panel in whatever state INERT_DEMO_VPN sets; with
+            // logged-out it also signs in with a (demo) account number.
+            let signin = std::env::var("INERT_DEMO_VPN").as_deref() == Ok("logged-out");
+            let mut v = vec![
+                Pause(1200),
+                Click(s("signin:claude")),
+                Click(s("signin:skip")),
+                Click(s("import:skip")),
+                expect("signin.done", 2000, |b| b.profile.onboarded),
+                Click(s("vpn")),
+                expect("vpn.panel", 2000, |b| b.popover == Popover::Vpn),
+                Pause(500),
+                Shot(s("v1-panel")),
+            ];
+            if signin {
+                v.extend([
+                    Click(s("vpn:account")),
+                    Type(s("1234 5678 9012 3456")),
+                    Pause(300),
+                    Shot(s("v2-number-typed")),
+                    Click(s("vpn:login")),
+                    expect("vpn.signed_in", 5000, |b| b.vpn.status.logged_in == Some(true)),
+                    Pause(500),
+                    Shot(s("v3-signed-in")),
+                ]);
+            }
+            v
         } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("look") {
             look_steps()
         } else {

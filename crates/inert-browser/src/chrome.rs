@@ -1174,7 +1174,7 @@ impl Browser {
         ui.label(theme::serif_text("Set up the VPN", 24.0));
         ui.label(theme::body("Inert's VPN is Mullvad's own WireGuard tunnel, dressed in Inert. Three steps:"));
         ui.add_space(6.0);
-        for (n, t) in [("1", "Install the Mullvad app from mullvad.net."), ("2", "Open it once so its background service starts."), ("3", "Come back here and type your account number.")] {
+        for (n, t) in [("1", "Install the Mullvad app from mullvad.net."), ("2", "Open it once so its background service starts."), ("3", "Come back and type your account number.")] {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(n).font(FontId::new(13.0, pixel())).color(ACCENT));
                 ui.label(theme::body(t));

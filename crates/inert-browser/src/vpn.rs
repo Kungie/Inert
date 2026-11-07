@@ -160,7 +160,12 @@ pub fn relays() -> Vec<Country> {
 pub fn start_polling(tx: Sender<Event>, ctx: eframe::egui::Context, demo: bool) {
     std::thread::spawn(move || {
         if demo {
-            let s = demo_status(std::env::var("INERT_DEMO_VPN").as_deref() != Ok("logged-out"));
+            // INERT_DEMO_VPN=not-installed | logged-out shows the setup steps.
+            let s = match std::env::var("INERT_DEMO_VPN").as_deref() {
+                Ok("not-installed") => Status::default(),
+                Ok("logged-out") => demo_status(false),
+                _ => demo_status(true),
+            };
             let _ = tx.send(Event::Vpn(s));
             let _ = tx.send(Event::VpnRelays(demo_relays()));
             ctx.request_repaint();
