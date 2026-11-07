@@ -217,11 +217,42 @@ impl Driver {
             Click(s("omnibox")),
             Type(s("example.com")),
             Press(Key::Enter, Modifiers::NONE),
-            expect("web.loads_unsecured", 20000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.url.starts_with("https://example.com") && !w.loading && w.view.is_some())),
-            Pause(1500),
-            Shot(s("d06-web")),
+            expect("web.servo_renders_page", 20000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.engine == Some(profile::Engine::Servo) && w.sv.is_some() && w.url.starts_with("https://example.com") && !w.loading && w.title == "Example Domain")),
+            Pause(800),
+            Shot(s("d06-web-servo")),
+            // Engine switch from the site security panel: same page in WebKit.
+            Click(s("badge")),
+            Click(s("engine:switch")),
+            expect("web.switch_to_webkit", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.engine == Some(profile::Engine::WebKit) && w.view.is_some() && w.sv.is_none())),
             Click(s("back")),
             expect("web.back_to_new_tab", 5000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::NewTab)))),
+            // Input forwarding into Servo: a click on a page-filling link…
+            Setup(Box::new(|b| {
+                let id = b.active;
+                b.navigate(id, "data:text/html,<a href=\"https://example.com/?clicked=1\" style=\"display:block;position:fixed;left:0;top:0;right:0;bottom:0;background:%23ffd400;font:48px sans-serif\">click anywhere</a>");
+            })),
+            expect("servo.page_ready", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.sv.is_some() && !w.loading)),
+            Pause(600),
+            Click(s("servo:surface")),
+            expect("servo.click_follows_link", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.url.contains("clicked=1"))),
+            // …and typing into a page-filling text field.
+            Setup(Box::new(|b| {
+                let id = b.active;
+                b.navigate(id, "data:text/html,<input style=\"position:fixed;left:0;top:0;width:100%;height:100%;font:48px sans-serif\" oninput=\"document.title=this.value\" placeholder=\"type here\">");
+            })),
+            expect("servo.form_ready", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.sv.is_some() && !w.loading && w.url.starts_with("data:"))),
+            Pause(600),
+            Click(s("servo:surface")),
+            Type(s("servo ok")),
+            expect("servo.typing_reaches_page", 10000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.title == "servo ok")),
+            Shot(s("d06b-servo-typing")),
+            Press(Key::W, cmd),
+            // Inbox tabs open in WebKit for compatibility.
+            Click(s("group:Inbox")),
+            Click(s("tab:Gmail")),
+            expect("inbox.uses_webkit", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.engine == Some(profile::Engine::WebKit) && w.view.is_some())),
+            Click(s("group:Inbox")),
+            Press(Key::T, cmd),
             Press(Key::W, cmd),
             expect("tabs.cmd_w_closes", 2000, |b| b.closed.iter().any(|s| s.url == "about:newtab")),
             Press(Key::T, Modifiers::COMMAND | Modifiers::SHIFT),
@@ -366,8 +397,15 @@ impl Driver {
                 }
             }
             Do::Shot(name) => {
-                let _ = std::fs::write(self.out.join(format!("{name}.ready")), "");
-                self.shot_until = Some(Instant::now() + Duration::from_millis(1600));
+                // In-app capture: works with the screen locked or asleep. Native
+                // WebKit views are not part of it; everything else (Servo included) is.
+                let path = self.out.join(format!("{name}.png"));
+                let ectx = ctx.clone();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |img| {
+                    save_png(&path, &img);
+                    ectx.request_repaint();
+                })));
+                self.shot_until = Some(Instant::now() + Duration::from_millis(900));
                 return;
             }
             Do::Pause(ms) => next = elapsed >= Duration::from_millis(ms),
@@ -389,5 +427,16 @@ impl Driver {
         eprintln!("UI DRIVER: {pass}/{} checks passed", self.results.len());
         let _ = std::fs::write(self.out.join("DONE"), "done");
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+}
+
+pub fn save_png(path: &std::path::Path, img: &egui::ColorImage) {
+    let Ok(f) = std::fs::File::create(path) else { return };
+    let mut e = png::Encoder::new(std::io::BufWriter::new(f), img.size[0] as u32, img.size[1] as u32);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    if let Ok(mut w) = e.write_header() {
+        let bytes: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect();
+        let _ = w.write_image_data(&bytes);
     }
 }

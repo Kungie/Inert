@@ -25,11 +25,14 @@ pub struct WebTab {
     pub hist: Vec<String>,
     pub pos: usize,
     pub pending: Option<i32>,
+    /// Chosen when the tab is first shown (see `Browser::sync_webviews`).
+    pub engine: Option<crate::profile::Engine>,
+    pub sv: Option<crate::servo_web::View>,
 }
 
 impl WebTab {
     pub fn new(url: &str, title: &str) -> Self {
-        WebTab { view: None, url: url.to_owned(), title: title.to_owned(), loading: false, last_active: Instant::now(), zoom: 1.0, visible: false, bounds: None, has_adblock: false, hist: Vec::new(), pos: 0, pending: None }
+        WebTab { view: None, url: url.to_owned(), title: title.to_owned(), loading: false, last_active: Instant::now(), zoom: 1.0, visible: false, bounds: None, has_adblock: false, hist: Vec::new(), pos: 0, pending: None, engine: None, sv: None }
     }
 
     pub fn track(&mut self, url: &str) {
@@ -51,6 +54,7 @@ impl WebTab {
 
     pub fn discard(&mut self) {
         self.view = None;
+        self.sv = None;
         self.visible = false;
         self.bounds = None;
         self.has_adblock = false;
@@ -139,10 +143,17 @@ pub fn js(t: &WebTab, script: &str) {
     if let Some(v) = &t.view {
         let _ = v.evaluate_script(script);
     }
+    if let Some(s) = &t.sv {
+        s.view.evaluate_javascript(script, |_| {});
+    }
 }
 
 /// Reads the page's visible text (for the AI panel). Treated as untrusted.
 pub fn read_text(t: &WebTab, tab: u64, tx: &Sender<Event>, ctx: &egui::Context) {
+    if let Some(s) = &t.sv {
+        crate::servo_web::read_text(s, tab, tx, ctx);
+        return;
+    }
     if let Some(v) = &t.view {
         let tx = tx.clone();
         let ctx = ctx.clone();

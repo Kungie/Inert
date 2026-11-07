@@ -29,6 +29,8 @@ pub enum Event {
     AdblockRules(String, usize),
     AdblockFailed(String),
     Menu(String),
+    ServoUrl { tab: u64, url: String },
+    ServoBlocker(Box<::adblock::Engine>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -202,6 +204,9 @@ pub struct Browser {
     pub overlay_rects: Vec<egui::Rect>,
     pub content_rect: egui::Rect,
     pub sites: Vec<(String, String)>,
+    /// Servo, created on first use.
+    pub servo: Option<crate::servo_web::Host>,
+    pub servo_error: Option<String>,
 }
 
 impl Browser {
@@ -254,6 +259,8 @@ impl Browser {
             overlay_rects: Vec::new(),
             content_rect: egui::Rect::NOTHING,
             sites: Vec::new(),
+            servo: None,
+            servo_error: None,
         };
         b.refresh_sites();
         // Restore without activating, so collapsed groups stay collapsed.
@@ -429,6 +436,9 @@ impl Browser {
                     if let Some(v) = &w.view {
                         let _ = v.load_url(&url);
                     }
+                    if let (Some(s), Ok(u)) = (&w.sv, url::Url::parse(&url)) {
+                        s.view.load(u);
+                    }
                     return;
                 }
             }
@@ -478,7 +488,12 @@ impl Browser {
             Kind::Inert(it) if !it.back.is_empty() => {
                 it.go_back();
             }
-            Kind::Web(w) if w.pos > 0 => {
+            Kind::Web(w) if w.sv.as_ref().is_some_and(|s| s.can_back.get()) => {
+                if let Some(s) = &w.sv {
+                    s.view.go_back(1);
+                }
+            }
+            Kind::Web(w) if w.sv.is_none() && w.pos > 0 => {
                 w.pending = Some(-1);
                 web::js(w, "history.back()");
             }
@@ -493,7 +508,12 @@ impl Browser {
             Kind::Inert(it) if !it.fwd.is_empty() => {
                 it.go_forward();
             }
-            Kind::Web(w) if w.pos + 1 < w.hist.len() => {
+            Kind::Web(w) if w.sv.as_ref().is_some_and(|s| s.can_fwd.get()) => {
+                if let Some(s) = &w.sv {
+                    s.view.go_forward(1);
+                }
+            }
+            Kind::Web(w) if w.sv.is_none() && w.pos + 1 < w.hist.len() => {
                 w.pending = Some(1);
                 web::js(w, "history.forward()");
             }
@@ -505,7 +525,10 @@ impl Browser {
         let Some(t) = self.active_tab() else { return false };
         let inner = match &t.kind {
             Kind::Inert(it) => if back { !it.back.is_empty() } else { !it.fwd.is_empty() },
-            Kind::Web(w) => if back { w.pos > 0 } else { w.pos + 1 < w.hist.len() },
+            Kind::Web(w) => match &w.sv {
+                Some(s) => if back { s.can_back.get() } else { s.can_fwd.get() },
+                None => if back { w.pos > 0 } else { w.pos + 1 < w.hist.len() },
+            },
             Kind::Page(_) => false,
         };
         inner || if back { !t.back.is_empty() } else { !t.fwd.is_empty() }
@@ -518,6 +541,10 @@ impl Browser {
             Some(Kind::Web(w)) => {
                 if let Some(v) = &w.view {
                     let _ = v.reload();
+                    w.loading = true;
+                }
+                if let Some(s) = &w.sv {
+                    s.view.reload();
                     w.loading = true;
                 }
             }
@@ -546,6 +573,9 @@ impl Browser {
                     w.zoom = if delta == 0.0 { 1.0 } else { (w.zoom + delta as f64).clamp(0.5, 3.0) };
                     if let Some(v) = &w.view {
                         let _ = v.zoom(w.zoom);
+                    }
+                    if let Some(s) = &w.sv {
+                        s.view.set_page_zoom(w.zoom as f32);
                     }
                 }
                 _ => {}
@@ -640,12 +670,29 @@ impl Browser {
                 Event::VpnRelays(r) => self.vpn.relays = r,
                 Event::AdblockRules(json, n) => {
                     self.ad.state = adblock::State::Compiling(n);
+                    // The filter lists are cached now: Servo's blocker can use them too.
+                    if self.servo.as_ref().is_some_and(|h| h.blocker.engine.borrow().is_none()) {
+                        crate::servo_web::build_blocker(self.tx.clone(), self.ctx.clone());
+                    }
                     #[cfg(target_os = "macos")]
                     adblock::mac::compile(&json, self.ad.slot.clone(), self.ctx.clone());
                     let _ = json;
                 }
                 Event::AdblockFailed(e) => self.ad.state = adblock::State::Failed(e),
                 Event::Menu(id) => self.on_menu(&id),
+                Event::ServoUrl { tab, url } => {
+                    if let Some(Kind::Web(w)) = self.tab_mut(tab).map(|t| &mut t.kind) {
+                        w.url = url.clone();
+                    }
+                    if tab == self.active && !self.omni.editing {
+                        self.omni.text = url;
+                    }
+                }
+                Event::ServoBlocker(engine) => {
+                    if let Some(h) = &self.servo {
+                        *h.blocker.engine.borrow_mut() = Some(*engine);
+                    }
+                }
             }
         }
         #[cfg(target_os = "macos")]
@@ -820,7 +867,7 @@ impl Browser {
         self.ai.msgs.push(Msg { user: true, text: q.clone() });
         self.ai.waiting = true;
         let id = self.active;
-        let is_web = matches!(self.tab(id).map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some());
+        let is_web = matches!(self.tab(id).map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some() || w.sv.is_some());
         let inert = match self.tab(id).map(|t| &t.kind) {
             Some(Kind::Inert(it)) => Some(PageContext::Inert { url: it.url(), text: it.semantic_text() }),
             _ => None,
@@ -888,7 +935,7 @@ impl Browser {
             }
             let inbox = t.group.and_then(|g| groups.iter().find(|x| x.id == g)).is_some_and(|g| g.kind == GroupKind::Inbox);
             if let Kind::Web(w) = &mut t.kind {
-                if w.view.is_some() && !inbox && w.last_active.elapsed() > Duration::from_secs(15 * 60) {
+                if (w.view.is_some() || w.sv.is_some()) && !inbox && w.last_active.elapsed() > Duration::from_secs(15 * 60) {
                     w.discard();
                 }
             }
@@ -904,8 +951,59 @@ impl Browser {
         let tx = self.tx.clone();
         let ctx = self.ctx.clone();
         let mut err = None;
+        let groups = self.profile.groups.clone();
+        let (default_engine, inbox_webkit) = (self.profile.settings.web_engine, self.profile.settings.inbox_webkit);
+        // Pick an engine for the active web tab, starting Servo on first use.
+        let mut need_servo = false;
         for t in &mut self.tabs {
             let Kind::Web(w) = &mut t.kind else { continue };
+            if w.engine.is_none() {
+                let inbox = t.group.and_then(|g| groups.iter().find(|x| x.id == g)).is_some_and(|g| g.kind == crate::profile::GroupKind::Inbox);
+                w.engine = Some(if inbox && inbox_webkit { crate::profile::Engine::WebKit } else { default_engine });
+            }
+            if t.id == active && w.engine == Some(crate::profile::Engine::Servo) {
+                need_servo = true;
+            }
+        }
+        if need_servo && self.servo.is_none() && self.servo_error.is_none() {
+            match crate::servo_web::Host::new(&self.ctx, Profile::dir(self.demo)) {
+                Ok(h) => {
+                    h.blocker.enabled.set(self.profile.settings.adblock);
+                    self.servo = Some(h);
+                    crate::servo_web::build_blocker(self.tx.clone(), self.ctx.clone());
+                }
+                Err(e) => self.servo_error = Some(e),
+            }
+        }
+        if let Some(h) = &self.servo {
+            h.blocker.enabled.set(self.profile.settings.adblock);
+        }
+        let servo_ok = self.servo.is_some();
+        for t in &mut self.tabs {
+            let Kind::Web(w) = &mut t.kind else { continue };
+            if w.engine == Some(crate::profile::Engine::Servo) && !servo_ok {
+                // Servo could not start: fall back to WebKit.
+                w.engine = Some(crate::profile::Engine::WebKit);
+            }
+            if w.engine == Some(crate::profile::Engine::Servo) {
+                w.view = None;
+                if t.id == active && w.sv.is_none() {
+                    if let Some(h) = &self.servo {
+                        match crate::servo_web::create(h, t.id, &w.url, &tx, &ctx) {
+                            Ok(v) => {
+                                w.sv = Some(v);
+                                w.loading = true;
+                            }
+                            Err(e) => err = Some(e),
+                        }
+                    }
+                }
+                if t.id == active {
+                    w.last_active = Instant::now();
+                }
+                continue;
+            }
+            w.sv = None;
             if t.id == active {
                 w.last_active = Instant::now();
                 if w.view.is_none() {
@@ -964,6 +1062,9 @@ impl eframe::App for Browser {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         crate::drive::clear();
+        if let Some(h) = &self.servo {
+            h.spin();
+        }
         self.handle_events(frame);
         self.overlay_rects.clear();
         let ctx = ui.ctx().clone();

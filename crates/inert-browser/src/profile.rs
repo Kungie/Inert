@@ -53,6 +53,35 @@ impl SearchEngine {
     }
 }
 
+/// Engine for the unsecured web.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Engine {
+    /// Servo, the Rust web engine (default).
+    #[default]
+    Servo,
+    /// The system WebKit (WKWebView), for maximum compatibility.
+    WebKit,
+}
+
+impl Engine {
+    pub fn name(self) -> &'static str {
+        match self {
+            Engine::Servo => "Servo",
+            Engine::WebKit => "WebKit",
+        }
+    }
+    pub fn other(self) -> Engine {
+        match self {
+            Engine::Servo => Engine::WebKit,
+            Engine::WebKit => Engine::Servo,
+        }
+    }
+}
+
+fn yes() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
     pub provider: Option<Provider>,
@@ -63,6 +92,11 @@ pub struct Settings {
     pub memory_saver: bool,
     pub bookmarks_bar: bool,
     pub vpn_last_location: Option<String>,
+    #[serde(default)]
+    pub web_engine: Engine,
+    /// Inbox tabs (mail, chat) use WebKit for compatibility.
+    #[serde(default = "yes")]
+    pub inbox_webkit: bool,
 }
 
 impl Default for Settings {
@@ -76,6 +110,8 @@ impl Default for Settings {
             memory_saver: true,
             bookmarks_bar: true,
             vpn_last_location: None,
+            web_engine: Engine::Servo,
+            inbox_webkit: true,
         }
     }
 }

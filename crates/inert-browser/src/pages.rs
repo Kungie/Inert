@@ -425,6 +425,22 @@ impl Browser {
         }
         ui.label(theme::muted("History, bookmarks, open tabs and inert:// sites always complete locally."));
 
+        ui.add_space(6.0);
+        ui.label(theme::label("Web engine for unsecured pages"));
+        ui.horizontal(|ui| {
+            for e in [crate::profile::Engine::Servo, crate::profile::Engine::WebKit] {
+                let label = if e == crate::profile::Engine::Servo { "Servo (Rust)" } else { "WebKit (system)" };
+                if ui.selectable_label(self.profile.settings.web_engine == e, label).clicked() {
+                    self.profile.settings.web_engine = e;
+                    self.dirty = true;
+                }
+            }
+        });
+        if ui.checkbox(&mut self.profile.settings.inbox_webkit, "Inbox tabs use WebKit (best compatibility for mail and chat apps)").changed() {
+            self.dirty = true;
+        }
+        ui.label(theme::muted("Applies to tabs opened from now on. Any page can switch engines from its site security panel."));
+
         section(ui, "03", "Privacy & Shield");
         let mut on = self.profile.settings.adblock;
         if ui.checkbox(&mut on, "Block ads & trackers on web pages (EasyList + EasyPrivacy)").changed() {

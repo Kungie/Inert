@@ -30,8 +30,8 @@ enum Security {
     Secured { dev: bool },
     Failed,
     Connecting,
-    Unsecured,
-    Unencrypted,
+    Unsecured(&'static str),
+    Unencrypted(&'static str),
     Internal,
 }
 
@@ -44,7 +44,8 @@ impl Browser {
                 Status::Failed => Security::Failed,
             },
             Some(Kind::Web(w)) => {
-                if w.url.starts_with("https://") { Security::Unsecured } else { Security::Unencrypted }
+                let e = w.engine.unwrap_or(self.profile.settings.web_engine).name();
+                if w.url.starts_with("https://") || w.url.starts_with("data:") { Security::Unsecured(e) } else { Security::Unencrypted(e) }
             }
             _ => Security::Internal,
         }
@@ -467,14 +468,17 @@ impl Browser {
             Security::Secured { dev: false } => ("SECURED", SECURE, Icon::Lock),
             Security::Connecting => ("VERIFYING", MUTED, Icon::Lock),
             Security::Failed => ("BLOCKED", DANGER, Icon::Unlock),
-            Security::Unsecured => ("UNSECURED", WARN, Icon::Unlock),
-            Security::Unencrypted => ("NOT ENCRYPTED", DANGER, Icon::Unlock),
+            Security::Unsecured("Servo") => ("UNSECURED · SERVO", WARN, Icon::Unlock),
+            Security::Unsecured(_) => ("UNSECURED · WEBKIT", WARN, Icon::Unlock),
+            Security::Unencrypted("Servo") => ("NOT ENCRYPTED · SERVO", DANGER, Icon::Unlock),
+            Security::Unencrypted(_) => ("NOT ENCRYPTED · WEBKIT", DANGER, Icon::Unlock),
             Security::Internal => ("INERT", MUTED, Icon::Spark),
         };
         let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::new(10.0, mono()), color);
         let bw = galley.size().x + 30.0;
         let badge = Rect::from_min_size(rect.min + vec2(4.0, 4.0), vec2(bw, rect.height() - 8.0));
         let bresp = ui.interact(badge, Id::unique("sec-badge"), Sense::click()).on_hover_text("Site security");
+        crate::drive::reg("badge", badge);
         ui.painter().rect_filled(badge, 3.0, if bresp.hovered() { HOVER } else { color.gamma_multiply(0.1) });
         icons::paint(ui.painter(), Rect::from_center_size(pos2(badge.left() + 12.0, badge.center().y), Vec2::splat(12.0)), icon, color);
         ui.painter().galley(pos2(badge.left() + 22.0, badge.center().y - galley.size().y / 2.0), galley, color);
@@ -508,7 +512,7 @@ impl Browser {
         // Select everything once the click that focused the box is over
         // (the text box moves the cursor on press and release).
         let pointer_busy = ui.input(|i| i.pointer.any_down() || i.pointer.any_released());
-        if self.omni.select_all && resp.has_focus() && !pointer_busy {
+        if self.omni.select_all && ui.memory(|m| m.has_focus(id)) && !pointer_busy {
             let mut st = out.state.clone();
             st.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(self.omni.text.chars().count()))));
             st.store(ui.ctx(), id);
@@ -516,7 +520,7 @@ impl Browser {
         }
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
-        if resp.has_focus() {
+        if ui.memory(|m| m.has_focus(id)) {
             let (down, up, tab) = ui.input_mut(|i| (i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown), i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp), i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)));
             let n = self.omni.sugg.len() + self.omni.remote.len();
             if down && n > 0 {
@@ -533,7 +537,7 @@ impl Browser {
                 st.store(ui.ctx(), id);
             }
         }
-        if self.omni.text != before && resp.has_focus() {
+        if self.omni.text != before && ui.memory(|m| m.has_focus(id)) {
             self.on_omni_typed(ui, id, &before, &out);
         }
         if escape && self.omni.editing {
@@ -868,10 +872,11 @@ impl Browser {
                     ui.label(theme::label("Inert page"));
                     ui.label(theme::body("Built into the browser."));
                 }
-                Security::Unencrypted => {
+                Security::Unencrypted(_) => {
                     ui.label(theme::label_c("○ Not encrypted", DANGER));
                     ui.add_space(4.0);
                     ui.label(theme::body("This page is plain HTTP: anyone on the network can read or change it, and it runs code from the site."));
+                    self.engine_switch(ui);
                 }
                 _ => {
                     ui.label(theme::label_c("○ Unsecured", WARN));
@@ -886,8 +891,31 @@ impl Browser {
                     };
                     ui.label(theme::muted(&shield));
                     ui.label(theme::muted("The assistant treats this page's text as untrusted."));
+                    self.engine_switch(ui);
                 }
             },
+        }
+    }
+
+    fn engine_switch(&mut self, ui: &mut Ui) {
+        let id = self.active;
+        let Some(Kind::Web(w)) = self.tab(id).map(|t| &t.kind) else { return };
+        let cur = w.engine.unwrap_or(self.profile.settings.web_engine);
+        ui.add_space(8.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(theme::label("Engine"));
+            ui.label(theme::mono_text(if cur == crate::profile::Engine::Servo { "Servo (Rust)" } else { "WebKit (system)" }, 12.0));
+        });
+        let other = cur.other();
+        let b = ui.button(format!("Open this page with {}", other.name()));
+        crate::drive::reg("engine:switch", b.rect);
+        if b.clicked() {
+            if let Some(Kind::Web(w)) = self.tab_mut(id).map(|t| &mut t.kind) {
+                w.discard();
+                w.engine = Some(other);
+            }
+            self.popover = Popover::None;
         }
     }
 
@@ -976,6 +1004,11 @@ impl Browser {
         };
         ui.label(theme::serif_text(&h, 24.0));
         ui.label(theme::body(&d));
+        if let Some(h) = &self.servo {
+            let n = h.blocker.blocked.get();
+            let ready = h.blocker.engine.borrow().is_some();
+            ui.label(theme::body(&if ready { format!("Servo tabs: {n} requests blocked this session.") } else { "Servo tabs: loading the blocking engine…".to_owned() }));
+        }
         ui.add_space(6.0);
         ui.label(theme::muted("inert:// sites never need it — they can't load third-party code."));
         ui.add_space(8.0);
@@ -1047,6 +1080,8 @@ impl Browser {
             Some(Kind::Web(w)) => {
                 if let Some(v) = &w.view {
                     v.open_devtools();
+                } else if w.sv.is_some() {
+                    self.toast("Servo has no built-in inspector yet. Open the page with WebKit (site security panel) to inspect it.");
                 }
             }
             Some(Kind::Inert(_)) => self.inspector = !self.inspector,
@@ -1114,7 +1149,7 @@ impl Browser {
                 // Check Enter before re-requesting focus: requesting focus clears `lost_focus`.
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     done = true;
-                } else if !r.has_focus() && !ui.input(|i| i.pointer.any_down()) {
+                } else if !ui.memory(|m| m.has_focus(r.id)) && !ui.input(|i| i.pointer.any_down()) {
                     r.request_focus();
                 }
                 ui.horizontal(|ui| {
@@ -1218,7 +1253,7 @@ impl Browser {
         }
         let r = ui.add(egui::TextEdit::multiline(&mut self.ai.input).desired_rows(2).desired_width(ui.available_width()).hint_text("Ask anything…  Enter sends · Shift+Enter for a new line").font(FontId::new(14.0, sans())));
         crate::drive::reg("ai:input", r.rect);
-        let send = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
+        let send = ui.memory(|m| m.has_focus(r.id)) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
         if send && !self.ai.waiting {
             let q = self.ai.input.trim().to_owned();
             self.ai.input.clear();
@@ -1292,6 +1327,15 @@ impl Browser {
             self.page(ui, p);
             return;
         }
+        // Servo-backed web pages are drawn by Inert itself.
+        let overlay = self.popover != Popover::None || (self.omni.editing && !self.omni.sugg.is_empty()) || egui::Popup::is_any_open(ui.ctx()) || self.rename.is_some();
+        if let (Some(Kind::Web(w)), Some(host)) = (self.tabs.iter().find(|t| t.id == id).map(|t| &t.kind), &self.servo) {
+            if let Some(sv) = &w.sv {
+                crate::drive::reg("servo:surface", ui.max_rect());
+                crate::servo_web::show(ui, host, id, sv, overlay);
+                return;
+            }
+        }
         let mut acts = None;
         let mut failure = None;
         let mut confirm = None;
@@ -1310,7 +1354,7 @@ impl Browser {
                     }
                 },
                 Kind::Web(_) => {
-                    // The native web view covers this area.
+                    // The native WebKit view covers this area.
                     let r = ui.max_rect();
                     ui.painter().rect_filled(r, 0.0, BG);
                 }
