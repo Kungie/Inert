@@ -1,0 +1,39 @@
+[package]
+name = "inert-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+inert-proto = { path = "../crates/inert-proto" }
+inert-verify = { path = "../crates/inert-verify" }
+
+[workspace]
+
+[[bin]]
+name = "cbor_decode"
+path = "fuzz_targets/cbor_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "message_decode"
+path = "fuzz_targets/message_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "manifest_verify"
+path = "fuzz_targets/manifest_verify.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "screen_action_verify"
+path = "fuzz_targets/screen_action_verify.rs"
+test = false
+doc = false

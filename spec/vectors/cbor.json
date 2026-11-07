@@ -1,0 +1,77 @@
+[
+  {
+    "cbor": "00",
+    "expect": "ok",
+    "name": "uint_0"
+  },
+  {
+    "cbor": "1818",
+    "expect": "ok",
+    "name": "uint_24"
+  },
+  {
+    "cbor": "3863",
+    "expect": "ok",
+    "name": "nint_minus_100"
+  },
+  {
+    "cbor": "63616263",
+    "expect": "ok",
+    "name": "text_abc"
+  },
+  {
+    "cbor": "a2617a0062616100",
+    "expect": "ok",
+    "name": "map_sorted_by_encoding"
+  },
+  {
+    "cbor": "1805",
+    "expect": "malformed_cbor",
+    "name": "uint_not_shortest"
+  },
+  {
+    "cbor": "9fff",
+    "expect": "malformed_cbor",
+    "name": "indefinite_array"
+  },
+  {
+    "cbor": "c100",
+    "expect": "malformed_cbor",
+    "name": "tag"
+  },
+  {
+    "cbor": "f93c00",
+    "expect": "malformed_cbor",
+    "name": "half_float"
+  },
+  {
+    "cbor": "f7",
+    "expect": "malformed_cbor",
+    "name": "undefined"
+  },
+  {
+    "cbor": "a2616201616102",
+    "expect": "malformed_cbor",
+    "name": "map_unsorted"
+  },
+  {
+    "cbor": "a2616101616102",
+    "expect": "malformed_cbor",
+    "name": "map_duplicate_key"
+  },
+  {
+    "cbor": "0000",
+    "expect": "malformed_cbor",
+    "name": "trailing_bytes"
+  },
+  {
+    "cbor": "62fffe",
+    "expect": "malformed_cbor",
+    "name": "invalid_utf8"
+  },
+  {
+    "cbor": "5bffffffffffffffff",
+    "expect": "malformed_cbor",
+    "name": "length_past_end"
+  }
+]

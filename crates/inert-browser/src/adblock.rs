@@ -94,23 +94,40 @@ pub mod mac {
             *slot.borrow_mut() = Some(Err("no content rule list store".into()));
             return;
         };
+        // The identifier changes whenever the converted rules change, so a
+        // cached compilation under the same id is always the right one.
         let id = NSString::from_str(&format!("{}-{}", super::RULES_VERSION, json.len()));
-        let encoded = NSString::from_str(json);
-        let block = RcBlock::new(move |list: *mut WKContentRuleList, err: *mut NSError| {
-            let r = if !list.is_null() {
-                match unsafe { Retained::retain(list) } {
-                    Some(l) => Ok(l),
-                    None => Err("null rule list".to_owned()),
+        let json = Rc::new(json.to_owned());
+        let lookup_store = store.clone();
+        let lookup_id = id.clone();
+        let lookup = RcBlock::new(move |list: *mut WKContentRuleList, _err: *mut NSError| {
+            if !list.is_null() {
+                if let Some(l) = unsafe { Retained::retain(list) } {
+                    *slot.borrow_mut() = Some(Ok(l));
+                    ctx.request_repaint();
+                    return;
                 }
-            } else if !err.is_null() {
-                Err(unsafe { (*err).localizedDescription() }.to_string())
-            } else {
-                Err("unknown WebKit error".to_owned())
-            };
-            *slot.borrow_mut() = Some(r);
-            ctx.request_repaint();
+            }
+            // Not compiled yet (first launch or new lists): compile once.
+            let (slot, ctx) = (slot.clone(), ctx.clone());
+            let done = RcBlock::new(move |list: *mut WKContentRuleList, err: *mut NSError| {
+                let r = if !list.is_null() {
+                    match unsafe { Retained::retain(list) } {
+                        Some(l) => Ok(l),
+                        None => Err("null rule list".to_owned()),
+                    }
+                } else if !err.is_null() {
+                    Err(unsafe { (*err).localizedDescription() }.to_string())
+                } else {
+                    Err("unknown WebKit error".to_owned())
+                };
+                *slot.borrow_mut() = Some(r);
+                ctx.request_repaint();
+            });
+            let encoded = NSString::from_str(&json);
+            unsafe { lookup_store.compileContentRuleListForIdentifier_encodedContentRuleList_completionHandler(Some(&lookup_id), Some(&encoded), Some(&done)) };
         });
-        unsafe { store.compileContentRuleListForIdentifier_encodedContentRuleList_completionHandler(Some(&id), Some(&encoded), Some(&block)) };
+        unsafe { store.lookUpContentRuleListForIdentifier_completionHandler(Some(&id), Some(&lookup)) };
     }
 
     pub fn attach(view: &wry::WebView, list: &WKContentRuleList) {
