@@ -1,0 +1,197 @@
+[
+ {
+  "file": "01-signin.png",
+  "pixels": 968000,
+  "black_pct": 77.2,
+  "tokens_seen": [
+   "accent purple",
+   "background",
+   "edge blue",
+   "heading",
+   "line",
+   "line strong",
+   "muted",
+   "text"
+  ],
+  "solid_on_palette_pct": 97.3,
+  "solid_off_palette": [
+   "#6776BB",
+   "#5A5A5A"
+  ]
+ },
+ {
+  "file": "03-new-tab.png",
+  "pixels": 968000,
+  "black_pct": 68.6,
+  "tokens_seen": [
+   "background",
+   "heading",
+   "line"
+  ],
+  "solid_on_palette_pct": 85.3,
+  "solid_off_palette": [
+   "#9977D9",
+   "#9A78D9",
+   "#57649F",
+   "#58659F",
+   "#9A77D9"
+  ]
+ },
+ {
+  "file": "04-bank-overview.png",
+  "pixels": 127600,
+  "black_pct": 21.8,
+  "tokens_seen": [
+   "accent purple",
+   "background",
+   "dim",
+   "line",
+   "line strong",
+   "muted",
+   "secure blue",
+   "text"
+  ],
+  "solid_on_palette_pct": 91.2,
+  "solid_off_palette": [
+   "#0F1409",
+   "#120E1A",
+   "#1A1207",
+   "#212228",
+   "#0D101A"
+  ]
+ },
+ {
+  "file": "07-shop-catalog.png",
+  "pixels": 127600,
+  "black_pct": 21.7,
+  "tokens_seen": [
+   "accent purple",
+   "background",
+   "dim",
+   "line",
+   "line strong",
+   "muted",
+   "secure blue",
+   "text"
+  ],
+  "solid_on_palette_pct": 91.3,
+  "solid_off_palette": [
+   "#0F1409",
+   "#120E1A",
+   "#1A1207",
+   "#212228",
+   "#0D101A"
+  ]
+ },
+ {
+  "file": "09-notes.png",
+  "pixels": 127600,
+  "black_pct": 21.7,
+  "tokens_seen": [
+   "accent purple",
+   "background",
+   "dim",
+   "line",
+   "line strong",
+   "muted",
+   "secure blue",
+   "text"
+  ],
+  "solid_on_palette_pct": 91.2,
+  "solid_off_palette": [
+   "#0F1409",
+   "#120E1A",
+   "#1A1207",
+   "#212228",
+   "#0D101A"
+  ]
+ },
+ {
+  "file": "10-tab-groups.png",
+  "pixels": 127600,
+  "black_pct": 22.6,
+  "tokens_seen": [
+   "accent purple",
+   "background",
+   "dim",
+   "edge blue",
+   "line",
+   "muted",
+   "secure blue",
+   "text"
+  ],
+  "solid_on_palette_pct": 91.2,
+  "solid_off_palette": [
+   "#0F1409",
+   "#1A1207",
+   "#120E1A",
+   "#212228",
+   "#0D101A"
+  ]
+ },
+ {
+  "file": "13-vpn.png",
+  "pixels": 968000,
+  "black_pct": 62.8,
+  "tokens_seen": [
+   "accent purple",
+   "background",
+   "heading",
+   "line",
+   "line strong",
+   "muted",
+   "text"
+  ],
+  "solid_on_palette_pct": 98.9,
+  "solid_off_palette": [
+   "#0F1409",
+   "#1A1207",
+   "#120E1A",
+   "#212228",
+   "#0D101A"
+  ]
+ },
+ {
+  "file": "19-shield.png",
+  "pixels": 968000,
+  "black_pct": 82.0,
+  "tokens_seen": [
+   "background",
+   "line",
+   "line strong",
+   "muted",
+   "text"
+  ],
+  "solid_on_palette_pct": 99.1,
+  "solid_off_palette": [
+   "#0F1409",
+   "#120E1A",
+   "#1A1207",
+   "#0D101A",
+   "#282015"
+  ]
+ },
+ {
+  "file": "25-servo-out-of-process.png",
+  "pixels": 167040,
+  "black_pct": 23.7,
+  "tokens_seen": [
+   "accent purple",
+   "background",
+   "dim",
+   "line",
+   "line strong",
+   "muted",
+   "secure blue",
+   "text"
+  ],
+  "solid_on_palette_pct": 92.4,
+  "solid_off_palette": [
+   "#1A1207",
+   "#0F1409",
+   "#120E1A",
+   "#282015",
+   "#0D101A"
+  ]
+ }
+]

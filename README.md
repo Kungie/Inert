@@ -62,10 +62,17 @@ cargo test --workspace
 ```
 
 UI tests that drive the real browser with injected mouse and keyboard events
-(49 checks, demo sites must be running):
+(49 checks, demo sites must be running). They also sample each process's
+memory while they run; `SHOTS=1` saves documentation screenshots too:
 
 ```bash
 scripts/ui-test.sh target/ui-test
+```
+
+Design check: counts screenshot pixels against the Yön A (Stencil) palette.
+
+```bash
+scripts/design-check.py docs/screenshots/01-signin.png
 ```
 
 Includes end-to-end tests over real TLS for all ten attack scenarios in the

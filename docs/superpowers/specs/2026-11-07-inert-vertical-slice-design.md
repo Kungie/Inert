@@ -458,20 +458,35 @@ Spec'ten bilinçli sapmalar ve eklemeler. Her biri kodda tek bir sınırın arka
 
 **Ölçümler (release, macOS, 2026-11-07 sabah, Servo ayrı süreçte):**
 
-Fiziksel ayak izi (`footprint`, Activity Monitor'daki "Bellek") ana ölçü. RSS, macOS'un paylaşılan framework sayfalarını da saydığı için ayrıca veriliyor.
+Ana ölçü fiziksel ayak izi (`footprint`), yani Activity Monitor'daki "Bellek". RSS ayrıca veriliyor, çünkü macOS'un paylaşılan framework sayfalarını da sayıyor. `scripts/ui-test.sh` 49 kontrolü koşarken iki süreci de sürekli örnekliyor (`docs/test-results/memory-ui-driver.csv`).
 
-| Durum (25 sn sonra) | Tarayıcı süreci | Servo süreci |
+| 49 kontrollük UI turu (3 koşu) | Medyan | En fazla |
 |---|---|---|
-| Banka açık (§16 kriteri) | **70 MB** (RSS 136) | çalışmıyor |
-| Servo sekmesi: example.com | 79 MB (RSS 147) | 120 MB (RSS 128) |
-| Servo sekmesi: wikipedia.org | 83 MB (RSS 151) | 155 MB (RSS 153) |
-| 49 kontrollük UI turu boyunca (uygulama içi ekran görüntüleri ve WebKit sekmeleri dahil) | medyan 187, en fazla 213 MB | medyan 87, en fazla 208 MB |
+| Tarayıcı süreci, ayak izi | **93–95 MB** | **98–103 MB** |
+| Tarayıcı süreci, RSS | 126 MB | 140 MB |
+| Servo süreci, ayak izi | 131 MB | 177 MB |
+| Tarayıcı, testin ekran görüntüleri açıkken (`SHOTS=1`) | 139 MB | 160 MB |
 
+- §16: Tarayıcı süreci tüm tur boyunca 150 MB hedefinin altında. Normal web motorunun belleği kendi sürecinde.
 - Binary: `inert-browser` 19 MB, `inert-servo-host` 95 MB.
-- §16: banka açıkken tarayıcı süreci 150 MB hedefinin altında. Normal web açıkken de tarayıcı süreci 85 MB'ın altında kalıyor, motorun belleği kendi sürecinde.
-- Önceki ölçüm (Servo tarayıcıya gömülüyken, RSS): UI turu boyunca medyan 167, en fazla 281 MB, binary 108 MB.
-- Çökme izolasyonu: Servo süreci `kill -9` ile öldürüldüğünde tarayıcı açık kalıyor, sekmeleri düşüyor ve yeni bir Servo süreci başlıyor (elle denendi, 2026-11-07).
-- Ham veriler: `docs/test-results/memory-ui-driver.csv`.
+- **Nereden geldi:** İlk ölçümde tarayıcı tur boyunca medyan 187 MB'tı. Üç neden vardı:
+  1. Servo aynı süreçteydi. Ayrı sürece taşındı.
+  2. macOS'un bellek ayırıcısı, serbest bırakılan büyük blokları (sayfa kareleri, çözülen görseller) kendi önbelleğinde kirli tutuyordu. Bu yaklaşık 40 MB ediyordu. Önbellek sadece süreç başlarken kapatılabildiği için tarayıcı ilk açılışta `MallocLargeCache=0` ile kendini bir kez yeniden çalıştırıyor (aynı PID, birkaç ms). Servo süreci ayarı devralıyor.
+  3. Testin uygulama içi ekran görüntüleri, egui-wgpu'nun yakalama dokusu ve okuma tamponlarıyla yaklaşık 36 MB GPU belleği tutuyordu. Bu testin kendi yükü, tarayıcıya ait değil. Ekran görüntüleri artık isteğe bağlı (`SHOTS=1`).
+- **Geçersiz ölçüm, kaldırıldı:** Önceki "banka açıkken 70 MB" ölçümü ekran kilitliyken yapıldı. Ekran kilitliyken normal açılan bir pencere hiç çizilmiyor (10 saniyede 0 kare), yani o ölçüm çizim belleğini içermiyordu. Turu süren UI sürücüsü pencereyi gerçekten çizdiriyor, bu yüzden yukarıdaki sayılar esas alınır.
+- Önceki ölçüm (Servo tarayıcıya gömülüyken, RSS): tur boyunca medyan 167, en fazla 281 MB, binary 108 MB.
+- **Çökme izolasyonu:** Servo süreci `kill -9` ile öldürüldüğünde tarayıcı açık kalıyor, Servo sekmeleri düşüyor ve yeni bir Servo süreci başlıyor (elle denendi, 2026-11-07).
+
+**Tasarım kontrolü (Yön A):** `theme.rs` token'ları Claude Design'daki Yön A dosyasıyla birebir aynı:
+- Zemin #000000, metin #EDEDED, başlık #FFFFFF, ikincil #9A9A9A ve #8A8A8A.
+- Çizgiler #222222 ve #3A3A3A. Vurgular #B48CFF, #7F9CFF, #B9C6FF.
+- Etiketler Geist Mono, büyük harf, geniş harf aralığı. Köşeler 2 px.
+
+Eklenenler:
+- Yükseltilmiş yüzeyler: #080808, #101010, #181818.
+- Durum renkleri ve grup renkleri.
+
+`scripts/design-check.py` ekran görüntülerinin piksellerini bu palete karşı sayıyor. Tarayıcı arayüzündeki düz renklerin %85–99'u paletten. Gerisi grup renklerinin soluk tonları ve dither çizimi (`docs/test-results/design-check.json`).
 
 **UI testleri:** `crates/inert-browser/src/drive.rs`, egui'nin girdi akışına gerçek fare ve klavye olayları enjekte ediyor (`App::raw_input_hook`). 49 kontrol var: giriş, omnibox tamamlama, banka transferi (limit dışı tutar dahil), mağaza sepeti, not ekleme ve kaydetme, yer imleri, sekme grupları, sağ tık menüsü, kısayollar, Servo'da tıklama ve yazma, motor değiştirme, Inbox'ın WebKit'te açılması, VPN, Shield, asistan, geçmiş. Hepsi geçiyor (`docs/test-results/ui-driver.json`), Servo ayrı süreçteyken tekrar koşuldu. Bu testler 4 gerçek hata buldu ve düzeltildi.
 
