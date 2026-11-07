@@ -225,7 +225,7 @@ impl Browser {
                     GroupKind::Dev => "dev servers · docs",
                     GroupKind::Normal => "",
                 };
-                p.text(r.min + vec2(16.0, 70.0), egui::Align2::LEFT_TOP, format!("{n} tabs · {sub}"), FontId::new(11.0, mono()), MUTED);
+                p.text(r.min + vec2(16.0, 70.0), egui::Align2::LEFT_TOP, format!("{n} {} · {sub}", if n == 1 { "tab" } else { "tabs" }), FontId::new(11.0, mono()), MUTED);
                 if resp.clicked() {
                     if let Some(first) = self.tabs.iter().find(|t| t.group == Some(g.id)).map(|t| t.id) {
                         self.activate(first);
