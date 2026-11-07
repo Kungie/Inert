@@ -76,8 +76,13 @@ struct Loc {
     mullvad_exit_ip: Option<bool>,
 }
 
-fn bin() -> Option<&'static str> {
-    ["/usr/local/bin/mullvad", "/opt/homebrew/bin/mullvad", "/Applications/Mullvad VPN.app/Contents/Resources/mullvad"].into_iter().find(|p| std::path::Path::new(p).exists())
+fn bin() -> Option<String> {
+    // INERT_MULLVAD_BIN (tests): look only there, e.g. a missing path to see
+    // the "not installed" setup steps on a Mac that has Mullvad.
+    if let Ok(p) = std::env::var("INERT_MULLVAD_BIN") {
+        return std::path::Path::new(&p).exists().then_some(p);
+    }
+    ["/usr/local/bin/mullvad", "/opt/homebrew/bin/mullvad", "/Applications/Mullvad VPN.app/Contents/Resources/mullvad"].into_iter().find(|p| std::path::Path::new(p).exists()).map(str::to_owned)
 }
 
 fn run(args: &[&str]) -> Option<String> {
