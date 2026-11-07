@@ -1,250 +1,294 @@
-//! Servo as the engine for the unsecured web.
+//! Servo as the engine for the unsecured web, in its own process.
 //!
-//! Servo renders offscreen into a `SoftwareRenderingContext`; each new frame
-//! is read back and drawn into the browser's content area as a texture.
-//! Mouse, wheel and keyboard input is forwarded from egui. Shield blocks ads
-//! and trackers by intercepting Servo's resource loads with Brave's adblock
-//! engine. `inert://` links are handed to the secured engine.
+//! The browser never links Servo. It spawns `inert-servo-host` (next to its
+//! own executable), sends JSON-line commands to its stdin and reads events
+//! from its stdout. The host renders offscreen and writes frames of the
+//! active page into a shared memory-mapped file; the browser copies the
+//! newest frame into a texture and draws it in the content area. Mouse,
+//! wheel and keyboard input is forwarded. Shield (Brave's adblock engine)
+//! runs inside the host. `inert://` links are handed back to the secured
+//! engine. If the host dies, its tabs are dropped and it is restarted.
 
 use crate::app::Event;
 use eframe::egui::{self, Color32, ColorImage, Id, Rect, Sense, TextureHandle, TextureOptions, Ui};
-use servo::{
-    DeviceIntRect, DeviceIntSize, DevicePoint, EventLoopWaker, InputEvent, Key, KeyState, KeyboardEvent, LoadStatus, MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent, NamedKey,
-    RenderingContext, Servo, ServoBuilder, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate, WheelDelta, WheelEvent, WheelMode,
-};
+use inert_servo_ipc::{Cmd, Ev, Input, SLOT_BYTES, SLOTS};
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
-#[derive(Clone)]
-struct Waker(egui::Context);
-
-impl EventLoopWaker for Waker {
-    fn clone_box(&self) -> Box<dyn EventLoopWaker> {
-        Box::new(self.clone())
-    }
-    fn wake(&self) {
-        self.0.request_repaint();
-    }
+struct Frame {
+    view: u64,
+    w: u32,
+    h: u32,
+    rgba: Vec<u8>,
 }
 
-/// Shared ad blocker for Servo tabs.
 #[derive(Default)]
-pub struct Blocker {
-    pub engine: RefCell<Option<adblock::Engine>>,
-    pub enabled: Cell<bool>,
-    pub blocked: Cell<u64>,
+struct Shared {
+    frame: Option<Frame>,
+    cursor: HashMap<u64, String>,
+    history: HashMap<u64, (bool, bool)>,
+    /// Pending `read_text` requests: req → tab.
+    reads: HashMap<u64, u64>,
+    blocked: u64,
+    shield_ready: bool,
+    dead: bool,
+}
+
+struct Inner {
+    stdin: RefCell<ChildStdin>,
+    shared: Arc<Mutex<Shared>>,
+    next_req: Cell<u64>,
+    child: RefCell<Child>,
+}
+
+impl Inner {
+    fn send(&self, c: &Cmd) {
+        let mut s = self.stdin.borrow_mut();
+        if let Ok(line) = serde_json::to_string(c) {
+            let _ = s.write_all(line.as_bytes()).and_then(|_| s.write_all(b"\n")).and_then(|_| s.flush());
+        }
+    }
 }
 
 pub struct Host {
-    pub servo: Servo,
-    ctx: Rc<SoftwareRenderingContext>,
+    inner: Rc<Inner>,
     size: Cell<(u32, u32)>,
     texture: RefCell<Option<TextureHandle>>,
-    painted_for: Cell<u64>,
-    /// Frames left to repaint after a resize (static pages send no new frame).
-    settle: Cell<u8>,
-    pub blocker: Rc<Blocker>,
+    shown: Cell<u64>,
+    adblock: Cell<Option<bool>>,
+    pub pid: u32,
+}
+
+fn helper_path() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("INERT_SERVO_HOST") {
+        return p.into();
+    }
+    let exe = std::env::current_exe().unwrap_or_default();
+    exe.with_file_name(if cfg!(windows) { "inert-servo-host.exe" } else { "inert-servo-host" })
 }
 
 impl Host {
-    pub fn new(ectx: &egui::Context, profile_dir: std::path::PathBuf) -> Result<Host, String> {
-        let ctx = Rc::new(SoftwareRenderingContext::new(dpi::PhysicalSize::new(1024, 768)).map_err(|e| format!("{e:?}"))?);
-        ctx.make_current().map_err(|e| format!("{e:?}"))?;
-        let mut prefs = servo::Preferences::default();
-        prefs.network_http_proxy_uri = String::new();
-        prefs.network_https_proxy_uri = String::new();
-        prefs.user_agent = crate::web::USER_AGENT.replace("Version/18.6 Safari/605.1.15", "Servo/0.7 InertBrowser/0.1");
-        // Cookies, local storage and cache live in the browser profile, so
-        // sign-ins on Servo tabs survive restarts (demo profiles are throwaway).
-        let dir = profile_dir.join("servo");
-        let _ = std::fs::create_dir_all(&dir);
-        let opts = servo::Opts { config_dir: Some(dir), ..Default::default() };
-        let servo = ServoBuilder::default().opts(opts).preferences(prefs).event_loop_waker(Box::new(Waker(ectx.clone()))).build();
-        Ok(Host { servo, ctx, size: Cell::new((1024, 768)), texture: RefCell::new(None), painted_for: Cell::new(0), settle: Cell::new(0), blocker: Rc::new(Blocker::default()) })
+    pub fn new(ectx: &egui::Context, profile_dir: std::path::PathBuf, tx: Sender<Event>) -> Result<Host, String> {
+        let helper = helper_path();
+        if !helper.exists() {
+            return Err(format!("{} not found (build it with `cargo build -p inert-servo-host`)", helper.display()));
+        }
+        let shm = std::env::temp_dir().join(format!("inert-servo-{}.frames", std::process::id()));
+        let mut child = Command::new(&helper)
+            .arg("--profile")
+            .arg(&profile_dir)
+            .arg("--shm")
+            .arg(&shm)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(if std::env::var_os("INERT_SERVO_LOG").is_some() { Stdio::inherit() } else { Stdio::null() })
+            .spawn()
+            .map_err(|e| format!("starting Servo: {e}"))?;
+        let stdin = child.stdin.take().ok_or("no stdin")?;
+        let stdout = child.stdout.take().ok_or("no stdout")?;
+        let pid = child.id();
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        {
+            let shared = shared.clone();
+            let ectx = ectx.clone();
+            std::thread::Builder::new().name("servo-ipc".into()).spawn(move || reader(stdout, shared, tx, ectx)).map_err(|e| e.to_string())?;
+        }
+        Ok(Host { inner: Rc::new(Inner { stdin: RefCell::new(stdin), shared, next_req: Cell::new(1), child: RefCell::new(child) }), size: Cell::new((0, 0)), texture: RefCell::new(None), shown: Cell::new(0), adblock: Cell::new(None), pid })
     }
 
-    pub fn spin(&self) {
-        self.servo.spin_event_loop();
+    /// True once the host process has exited (crash or kill).
+    pub fn dead(&self) -> bool {
+        self.inner.shared.lock().map(|s| s.dead).unwrap_or(true)
+    }
+
+    pub fn set_adblock(&self, on: bool) {
+        if self.adblock.get() != Some(on) {
+            self.adblock.set(Some(on));
+            self.inner.send(&Cmd::Adblock { on });
+        }
+    }
+
+    /// The filter lists are cached now: let the host build its engine.
+    pub fn load_filters(&self) {
+        self.inner.send(&Cmd::LoadFilters);
+    }
+
+    /// (requests blocked this session, engine ready)
+    pub fn shield(&self) -> (u64, bool) {
+        self.inner.shared.lock().map(|s| (s.blocked, s.shield_ready)).unwrap_or((0, false))
     }
 }
 
-pub struct View {
-    pub view: WebView,
-    frame: Rc<Cell<bool>>,
-    cursor: Rc<Cell<servo::Cursor>>,
-    pub can_back: Rc<Cell<bool>>,
-    pub can_fwd: Rc<Cell<bool>>,
-}
-
-struct Delegate {
-    tab: u64,
-    tx: Sender<Event>,
-    ectx: egui::Context,
-    frame: Rc<Cell<bool>>,
-    cursor: Rc<Cell<servo::Cursor>>,
-    can_back: Rc<Cell<bool>>,
-    can_fwd: Rc<Cell<bool>>,
-    blocker: Rc<Blocker>,
-}
-
-impl Delegate {
-    fn send(&self, e: Event) {
-        let _ = self.tx.send(e);
-        self.ectx.request_repaint();
+impl Drop for Host {
+    fn drop(&mut self) {
+        self.inner.send(&Cmd::Quit);
+        let mut c = self.inner.child.borrow_mut();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < deadline {
+            if let Ok(Some(_)) = c.try_wait() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = c.kill();
+        let _ = c.wait();
     }
 }
 
-impl WebViewDelegate for Delegate {
-    fn notify_new_frame_ready(&self, _w: WebView) {
-        self.frame.set(true);
-        self.ectx.request_repaint();
-    }
-
-    fn notify_load_status_changed(&self, w: WebView, status: LoadStatus) {
-        let url = w.url().map(|u| u.to_string()).unwrap_or_default();
-        match status {
-            LoadStatus::Started => self.send(Event::WebLoad { tab: self.tab, started: true, url }),
-            LoadStatus::Complete => self.send(Event::WebLoad { tab: self.tab, started: false, url }),
-            _ => {}
-        }
-    }
-
-    fn notify_url_changed(&self, _w: WebView, url: url::Url) {
-        self.send(Event::ServoUrl { tab: self.tab, url: url.to_string() });
-    }
-
-    fn notify_page_title_changed(&self, _w: WebView, title: Option<String>) {
-        if let Some(title) = title {
-            self.send(Event::WebTitle { tab: self.tab, title });
-        }
-    }
-
-    fn notify_cursor_changed(&self, _w: WebView, c: servo::Cursor) {
-        self.cursor.set(c);
-    }
-
-    fn notify_history_changed(&self, _w: WebView, entries: Vec<url::Url>, current: usize) {
-        self.can_back.set(current > 0);
-        self.can_fwd.set(current + 1 < entries.len());
-        self.ectx.request_repaint();
-    }
-
-    fn request_navigation(&self, _w: WebView, nav: servo::NavigationRequest) {
-        if nav.url.scheme() == "inert" {
-            let url = nav.url.to_string();
-            nav.deny();
-            self.send(Event::Navigate { tab: self.tab, url });
-        } else {
-            nav.allow();
-        }
-    }
-
-    fn request_create_new(&self, _parent: WebView, _req: servo::CreateNewWebViewRequest) {
-        // Pop-ups are not opened as separate windows; links with
-        // target=_blank still navigate through request_navigation.
-    }
-
-    fn load_web_resource(&self, _w: WebView, load: servo::WebResourceLoad) {
-        if !self.blocker.enabled.get() {
-            return;
-        }
-        let req = load.request();
-        if req.is_for_main_frame {
-            return;
-        }
-        let url = req.url.to_string();
-        let source = req.referrer_url.as_ref().map(|u| u.to_string()).unwrap_or_default();
-        let kind = match format!("{:?}", req.destination).to_ascii_lowercase().as_str() {
-            "script" => "script",
-            "image" => "image",
-            "style" => "stylesheet",
-            "font" => "font",
-            "audio" | "video" | "track" => "media",
-            "iframe" | "frame" => "subdocument",
-            "document" => "document",
-            "" | "none" => "xmlhttprequest",
-            _ => "other",
+fn reader(stdout: std::process::ChildStdout, shared: Arc<Mutex<Shared>>, tx: Sender<Event>, ectx: egui::Context) {
+    let mut map: Option<memmap2::Mmap> = None;
+    for line in BufReader::new(stdout).lines() {
+        let Ok(line) = line else { break };
+        let Ok(ev) = serde_json::from_str::<Ev>(&line) else { continue };
+        let send = |e: Event| {
+            let _ = tx.send(e);
         };
-        let blocked = self.blocker.engine.borrow().as_ref().and_then(|e| adblock::request::Request::new(&url, &source, kind, "GET").ok().map(|r| e.check_network_request(&r).should_block())).unwrap_or(false);
-        if blocked {
-            self.blocker.blocked.set(self.blocker.blocked.get() + 1);
-            let resp = servo::WebResourceResponse::new(req.url.clone()).status_code(http::StatusCode::FORBIDDEN);
-            load.intercept(resp).finish();
+        match ev {
+            Ev::Ready { shm } => {
+                if let Ok(f) = std::fs::File::open(&shm) {
+                    // SAFETY: the host created this file for us and only writes
+                    // a slot before announcing it; we copy it out right away.
+                    // A torn frame is possible under load, never a bad read:
+                    // the file length is fixed for the host's lifetime.
+                    map = unsafe { memmap2::Mmap::map(&f) }.ok();
+                }
+            }
+            Ev::Frame { view, slot, w, h, .. } => {
+                let Some(m) = &map else { continue };
+                let len = w as usize * h as usize * 4;
+                let start = (slot as u64 % SLOTS * SLOT_BYTES) as usize;
+                if len as u64 > SLOT_BYTES || start + len > m.len() {
+                    continue;
+                }
+                let rgba = m[start..start + len].to_vec();
+                if let Ok(mut s) = shared.lock() {
+                    s.frame = Some(Frame { view, w, h, rgba });
+                }
+            }
+            Ev::Load { view, started, url } => send(Event::WebLoad { tab: view, started, url }),
+            Ev::Url { view, url } => send(Event::ServoUrl { tab: view, url }),
+            Ev::Title { view, title } => send(Event::WebTitle { tab: view, title }),
+            Ev::History { view, back, fwd } => {
+                if let Ok(mut s) = shared.lock() {
+                    s.history.insert(view, (back, fwd));
+                }
+            }
+            Ev::Cursor { view, cursor } => {
+                if let Ok(mut s) = shared.lock() {
+                    s.cursor.insert(view, cursor);
+                }
+            }
+            Ev::Navigate { view, url } => send(Event::Navigate { tab: view, url }),
+            Ev::Eval { req, text } => {
+                let tab = shared.lock().ok().and_then(|mut s| s.reads.remove(&req));
+                if let Some(tab) = tab {
+                    send(Event::PageText { tab, text });
+                }
+            }
+            Ev::Blocked { n } => {
+                if let Ok(mut s) = shared.lock() {
+                    s.blocked = n;
+                }
+            }
+            Ev::ShieldReady => {
+                if let Ok(mut s) = shared.lock() {
+                    s.shield_ready = true;
+                }
+            }
+            Ev::Log { msg } => tracing::debug!("servo-host: {msg}"),
         }
+        ectx.request_repaint();
+    }
+    if let Ok(mut s) = shared.lock() {
+        s.dead = true;
+    }
+    ectx.request_repaint();
+}
+
+/// One Servo web view (a tab) living in the host process.
+pub struct View {
+    id: u64,
+    inner: Rc<Inner>,
+}
+
+impl View {
+    pub fn load(&self, url: &str) {
+        self.inner.send(&Cmd::Load { view: self.id, url: url.to_owned() });
+    }
+    pub fn back(&self) {
+        self.inner.send(&Cmd::Back { view: self.id });
+    }
+    pub fn forward(&self) {
+        self.inner.send(&Cmd::Forward { view: self.id });
+    }
+    pub fn reload(&self) {
+        self.inner.send(&Cmd::Reload { view: self.id });
+    }
+    pub fn zoom(&self, z: f32) {
+        self.inner.send(&Cmd::Zoom { view: self.id, z });
+    }
+    pub fn eval(&self, script: &str) {
+        self.inner.send(&Cmd::Eval { view: self.id, req: 0, script: script.to_owned() });
+    }
+    fn history(&self) -> (bool, bool) {
+        self.inner.shared.lock().ok().and_then(|s| s.history.get(&self.id).copied()).unwrap_or((false, false))
+    }
+    pub fn can_back(&self) -> bool {
+        self.history().0
+    }
+    pub fn can_fwd(&self) -> bool {
+        self.history().1
+    }
+    fn input(&self, ev: Input) {
+        self.inner.send(&Cmd::Input { view: self.id, ev });
     }
 }
 
-pub fn create(host: &Host, tab: u64, url: &str, tx: &Sender<Event>, ectx: &egui::Context) -> Result<View, String> {
-    let u = url::Url::parse(url).map_err(|e| e.to_string())?;
-    let frame = Rc::new(Cell::new(true));
-    let cursor = Rc::new(Cell::new(servo::Cursor::Default));
-    let can_back = Rc::new(Cell::new(false));
-    let can_fwd = Rc::new(Cell::new(false));
-    let d = Rc::new(Delegate { tab, tx: tx.clone(), ectx: ectx.clone(), frame: frame.clone(), cursor: cursor.clone(), can_back: can_back.clone(), can_fwd: can_fwd.clone(), blocker: host.blocker.clone() });
-    let view = WebViewBuilder::new(&host.servo, host.ctx.clone()).url(u).delegate(d).build();
-    Ok(View { view, frame, cursor, can_back, can_fwd })
+impl Drop for View {
+    fn drop(&mut self) {
+        self.inner.send(&Cmd::Close { view: self.id });
+    }
+}
+
+pub fn create(host: &Host, tab: u64, url: &str) -> Result<View, String> {
+    url::Url::parse(url).map_err(|e| e.to_string())?;
+    host.inner.send(&Cmd::Create { view: tab, url: url.to_owned() });
+    Ok(View { id: tab, inner: host.inner.clone() })
 }
 
 /// Reads the page's visible text for the assistant (untrusted).
-pub fn read_text(v: &View, tab: u64, tx: &Sender<Event>, ectx: &egui::Context) {
-    let tx = tx.clone();
-    let ectx = ectx.clone();
-    v.view.evaluate_javascript("(document.title + '\\n' + (document.body ? document.body.innerText : '')).slice(0, 24000)", move |r| {
-        let text = match r {
-            Ok(servo::JSValue::String(s)) => s,
-            _ => String::new(),
-        };
-        let _ = tx.send(Event::PageText { tab, text });
-        ectx.request_repaint();
-    });
+pub fn read_text(v: &View, tab: u64) {
+    let req = v.inner.next_req.get();
+    v.inner.next_req.set(req + 1);
+    if let Ok(mut s) = v.inner.shared.lock() {
+        s.reads.insert(req, tab);
+    }
+    v.inner.send(&Cmd::Eval { view: v.id, req, script: "(document.title + '\\n' + (document.body ? document.body.innerText : '')).slice(0, 24000)".into() });
 }
 
-fn point(rect: Rect, p: egui::Pos2, ppp: f32) -> servo::WebViewPoint {
-    DevicePoint::new((p.x - rect.left()) * ppp, (p.y - rect.top()) * ppp).into()
-}
-
-fn named(k: egui::Key) -> Option<NamedKey> {
+fn named(k: egui::Key) -> Option<&'static str> {
     use egui::Key as K;
     Some(match k {
-        K::Enter => NamedKey::Enter,
-        K::Backspace => NamedKey::Backspace,
-        K::Delete => NamedKey::Delete,
-        K::Tab => NamedKey::Tab,
-        K::Escape => NamedKey::Escape,
-        K::ArrowUp => NamedKey::ArrowUp,
-        K::ArrowDown => NamedKey::ArrowDown,
-        K::ArrowLeft => NamedKey::ArrowLeft,
-        K::ArrowRight => NamedKey::ArrowRight,
-        K::Home => NamedKey::Home,
-        K::End => NamedKey::End,
-        K::PageUp => NamedKey::PageUp,
-        K::PageDown => NamedKey::PageDown,
+        K::Enter => "Enter",
+        K::Backspace => "Backspace",
+        K::Delete => "Delete",
+        K::Tab => "Tab",
+        K::Escape => "Escape",
+        K::ArrowUp => "ArrowUp",
+        K::ArrowDown => "ArrowDown",
+        K::ArrowLeft => "ArrowLeft",
+        K::ArrowRight => "ArrowRight",
+        K::Home => "Home",
+        K::End => "End",
+        K::PageUp => "PageUp",
+        K::PageDown => "PageDown",
         _ => return None,
     })
-}
-
-fn modifiers(m: egui::Modifiers) -> servo::Modifiers {
-    let mut out = servo::Modifiers::empty();
-    if m.shift {
-        out |= servo::Modifiers::SHIFT;
-    }
-    if m.ctrl {
-        out |= servo::Modifiers::CONTROL;
-    }
-    if m.alt {
-        out |= servo::Modifiers::ALT;
-    }
-    if m.mac_cmd {
-        out |= servo::Modifiers::META;
-    }
-    out
-}
-
-fn key_event(state: KeyState, key: Key, m: egui::Modifiers) -> InputEvent {
-    let mut e = KeyboardEvent::from_state_and_key(state, key);
-    e.event.modifiers = modifiers(m);
-    InputEvent::Keyboard(e)
 }
 
 /// Draws the active Servo view into `rect` and forwards input to it.
@@ -253,42 +297,32 @@ pub fn show(ui: &mut Ui, host: &Host, tab: u64, v: &View, overlay: bool) {
     let rect = ui.max_rect();
     let ppp = ui.ctx().pixels_per_point();
     let want = ((rect.width() * ppp).round().max(1.0) as u32, (rect.height() * ppp).round().max(1.0) as u32);
+    if host.shown.get() != tab {
+        host.shown.set(tab);
+        host.inner.send(&Cmd::Show { view: tab });
+        host.size.set((0, 0));
+    }
     if host.size.get() != want {
         host.size.set(want);
-        // Only through the WebView: Servo resizes the context and the layout
-        // viewport together, and skips the viewport if the context already matches.
-        v.view.resize(dpi::PhysicalSize::new(want.0, want.1));
-        host.settle.set(30);
+        host.inner.send(&Cmd::Resize { w: want.0, h: want.1 });
     }
-    if v.view.size().width.round() as u32 != want.0 || v.view.size().height.round() as u32 != want.1 {
-        v.view.resize(dpi::PhysicalSize::new(want.0, want.1));
-        host.settle.set(30);
-    }
-    if host.painted_for.get() != tab {
-        host.painted_for.set(tab);
-        host.settle.set(30);
-    }
-    let settling = host.settle.get() > 0;
-    if settling {
-        host.settle.set(host.settle.get() - 1);
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
-    }
-    if v.frame.replace(false) || settling {
-        let _ = host.ctx.make_current();
-        v.view.paint();
-        if let Some(img) = host.ctx.read_to_image(DeviceIntRect::from_size(DeviceIntSize::new(want.0 as i32, want.1 as i32))) {
-            let ci = ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw());
-            let mut t = host.texture.borrow_mut();
-            match t.as_mut() {
-                Some(tex) => tex.set(ci, TextureOptions::LINEAR),
-                None => *t = Some(ui.ctx().load_texture("servo-surface", ci, TextureOptions::LINEAR)),
-            }
+    let frame = host.inner.shared.lock().ok().and_then(|mut s| if s.frame.as_ref().is_some_and(|f| f.view == tab) { s.frame.take() } else { None });
+    if let Some(f) = frame {
+        let ci = ColorImage::from_rgba_unmultiplied([f.w as usize, f.h as usize], &f.rgba);
+        let mut t = host.texture.borrow_mut();
+        match t.as_mut() {
+            Some(tex) => tex.set(ci, TextureOptions::LINEAR),
+            None => *t = Some(ui.ctx().load_texture("servo-surface", ci, TextureOptions::LINEAR)),
         }
     }
     let p = ui.painter();
     p.rect_filled(rect, 0.0, Color32::WHITE);
     if let Some(t) = host.texture.borrow().as_ref() {
-        p.image(t.id(), rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+        // Draw at the frame's own size so a stale frame during resize isn't stretched.
+        let [tw, th] = t.size();
+        let r = Rect::from_min_size(rect.min, egui::vec2(tw as f32 / ppp, th as f32 / ppp)).intersect(rect);
+        let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(r.width() * ppp / tw as f32, r.height() * ppp / th as f32));
+        p.image(t.id(), r, uv, Color32::WHITE);
     }
     if overlay {
         return;
@@ -297,66 +331,57 @@ pub fn show(ui: &mut Ui, host: &Host, tab: u64, v: &View, overlay: bool) {
     let id = Id::unique(("servo-surface", tab));
     let resp = ui.interact(rect, id, Sense::click_and_drag());
     if resp.is_pointer_button_down_on() || resp.clicked() {
+        if !ui.memory(|m| m.has_focus(id)) {
+            v.input(Input::Focus);
+        }
         resp.request_focus();
-        v.view.set_focused(true);
     }
     // egui's own focus (not the OS window's): keys go where egui routes them.
     let focused = ui.memory(|m| m.has_focus(id));
     if resp.hovered() {
-        ui.ctx().set_cursor_icon(match v.cursor.get() {
-            servo::Cursor::Pointer => egui::CursorIcon::PointingHand,
-            servo::Cursor::Text => egui::CursorIcon::Text,
-            servo::Cursor::Wait | servo::Cursor::Progress => egui::CursorIcon::Wait,
-            servo::Cursor::Crosshair => egui::CursorIcon::Crosshair,
-            servo::Cursor::NotAllowed => egui::CursorIcon::NotAllowed,
+        let c = host.inner.shared.lock().ok().and_then(|s| s.cursor.get(&tab).cloned()).unwrap_or_default();
+        ui.ctx().set_cursor_icon(match c.as_str() {
+            "pointer" => egui::CursorIcon::PointingHand,
+            "text" => egui::CursorIcon::Text,
+            "wait" => egui::CursorIcon::Wait,
+            "crosshair" => egui::CursorIcon::Crosshair,
+            "not-allowed" => egui::CursorIcon::NotAllowed,
             _ => egui::CursorIcon::Default,
         });
     }
+    let at = |p: egui::Pos2| ((p.x - rect.left()) * ppp, (p.y - rect.top()) * ppp);
     let events = ui.input(|i| i.events.clone());
     for ev in events {
         match ev {
             egui::Event::PointerMoved(pos) if rect.contains(pos) => {
-                v.view.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(point(rect, pos, ppp))));
+                let (x, y) = at(pos);
+                v.input(Input::Move { x, y });
             }
             egui::Event::PointerButton { pos, button, pressed, .. } if rect.contains(pos) => {
-                let b = match button {
-                    egui::PointerButton::Primary => MouseButton::Primary,
-                    egui::PointerButton::Secondary => MouseButton::Secondary,
-                    egui::PointerButton::Middle => MouseButton::Auxiliary,
-                    egui::PointerButton::Extra1 => MouseButton::Back,
-                    egui::PointerButton::Extra2 => MouseButton::Forward,
+                let button = match button {
+                    egui::PointerButton::Primary => 0,
+                    egui::PointerButton::Middle => 1,
+                    egui::PointerButton::Secondary => 2,
+                    egui::PointerButton::Extra1 => 3,
+                    egui::PointerButton::Extra2 => 4,
                 };
-                let a = if pressed { MouseButtonAction::Down } else { MouseButtonAction::Up };
-                v.view.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(a, b, point(rect, pos, ppp))));
+                let (x, y) = at(pos);
+                v.input(Input::Button { x, y, button, down: pressed });
             }
             egui::Event::MouseWheel { unit, delta, .. } if resp.hovered() => {
                 let (mode, scale) = match unit {
-                    egui::MouseWheelUnit::Point => (WheelMode::DeltaPixel, ppp as f64),
-                    egui::MouseWheelUnit::Line => (WheelMode::DeltaLine, 1.0),
-                    egui::MouseWheelUnit::Page => (WheelMode::DeltaPage, 1.0),
+                    egui::MouseWheelUnit::Point => (0, ppp as f64),
+                    egui::MouseWheelUnit::Line => (1, 1.0),
+                    egui::MouseWheelUnit::Page => (2, 1.0),
                 };
-                let at = ui.ctx().pointer_latest_pos().unwrap_or(rect.center());
+                let (x, y) = at(ui.ctx().pointer_latest_pos().unwrap_or(rect.center()));
                 // DOM convention: positive deltaY scrolls down.
-                let d = WheelDelta { x: -(delta.x as f64) * scale, y: -(delta.y as f64) * scale, z: 0.0, mode };
-                v.view.notify_input_event(InputEvent::Wheel(WheelEvent::new(d, point(rect, at, ppp))));
+                v.input(Input::Wheel { x, y, dx: -(delta.x as f64) * scale, dy: -(delta.y as f64) * scale, mode });
             }
-            egui::Event::Text(t) if focused => {
-                for ch in t.chars() {
-                    let k = Key::Character(ch.to_string());
-                    v.view.notify_input_event(key_event(KeyState::Down, k.clone(), egui::Modifiers::NONE));
-                    v.view.notify_input_event(key_event(KeyState::Up, k, egui::Modifiers::NONE));
-                }
-            }
-            egui::Event::Paste(t) if focused => {
-                for ch in t.chars() {
-                    let k = Key::Character(ch.to_string());
-                    v.view.notify_input_event(key_event(KeyState::Down, k.clone(), egui::Modifiers::NONE));
-                    v.view.notify_input_event(key_event(KeyState::Up, k, egui::Modifiers::NONE));
-                }
-            }
+            egui::Event::Text(s) | egui::Event::Paste(s) if focused => v.input(Input::Text { s }),
             egui::Event::Key { key, pressed, modifiers: m, .. } if focused => {
-                if let Some(nk) = named(key) {
-                    v.view.notify_input_event(key_event(if pressed { KeyState::Down } else { KeyState::Up }, Key::Named(nk), m));
+                if let Some(k) = named(key) {
+                    v.input(Input::Key { key: k.into(), down: pressed, shift: m.shift, ctrl: m.ctrl, alt: m.alt, meta: m.mac_cmd });
                 }
             }
             _ => {}
@@ -366,24 +391,4 @@ pub fn show(ui: &mut Ui, host: &Host, tab: u64, v: &View, overlay: bool) {
     if focused {
         ui.memory_mut(|mem| mem.set_focus_lock_filter(id, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: false }));
     }
-}
-
-/// Builds the ad blocking engine from the cached filter lists (background thread).
-pub fn build_blocker(tx: Sender<Event>, ectx: egui::Context) {
-    std::thread::spawn(move || {
-        let dir = dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("Inert").join("adblock");
-        let mut set = adblock::lists::FilterSet::new(false);
-        let mut any = false;
-        for name in ["easylist", "easyprivacy"] {
-            if let Ok(t) = std::fs::read_to_string(dir.join(format!("{name}.txt"))) {
-                set.add_filter_list(t, adblock::lists::ParseOptions::default());
-                any = true;
-            }
-        }
-        if any {
-            let engine = adblock::Engine::new_with_filter_set(set);
-            let _ = tx.send(Event::ServoBlocker(Box::new(engine)));
-            ectx.request_repaint();
-        }
-    });
 }

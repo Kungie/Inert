@@ -1,9 +1,20 @@
 # Inert — Dikey Dilim Tasarımı
 
 - **Tarih:** 2026-11-07
-- **Durum:** Taslak, onay bekliyor
+- **Durum:** Uygulandı (2026-11-07 gecesi). Bu sürüm, uygulama sırasında verilen kararlarla uzlaştırıldı. Değişiklikler aşağıdaki günlükte.
 - **Kapsam:** Alt proje 1–3'ün en küçük uçtan uca hâli (protokol + çekirdek, server SDK, tarayıcı)
 - **Bağlam:** Projenin genel kararları `CLAUDE.md` dosyasında. Bu belge sadece dikey dilimi tanımlar.
+
+### Değişiklik günlüğü
+
+| Tarih | Bölüm | Değişiklik |
+|---|---|---|
+| 2026-11-07 | §2 | Servo ve normal web, salt okunur asistan, "Sign in with Claude / GPT" ve Mullvad VPN + Shield, kullanıcının gece hedefiyle kapsama alındı. |
+| 2026-11-07 | §4 | `inert-client`, `inert-servo-ipc` ve `inert-servo-host` eklendi. `inert-servo-host` ayrı bir Cargo workspace. |
+| 2026-11-07 | §11.1 | Çizim katmanı `vello` + `parley` + `taffy` yerine `egui` + `eframe` (wgpu). §17'nin izin verdiği alternatif. |
+| 2026-11-07 | §11.2 | Tek süreç yerine üç süreç sınıfı: tarayıcı, Servo süreci, WebKit'in kendi süreçleri. |
+| 2026-11-07 | §11.3 | `https://` artık açılıyor: Servo varsayılan, Inbox sekmeleri WebKit, motor seçimi kuralları. |
+| 2026-11-07 | §16 | Bellek kriteri süreç bazında tanımlandı ve ölçüldü. |
 
 ---
 
@@ -16,9 +27,16 @@ Inert fikrinin uçtan uca çalıştığını kanıtlamak:
 3. Kullanıcı bir aksiyon tetiklediğinde tipli bir `Action` gider, sunucu bunu tekrar doğrular, handler çalışır ve yeni bir `Screen` döner.
 4. Projenin vaadi olan saldırı senaryoları otomatik testlerle reddedilir.
 
-## 2. Kapsam dışı
+## 2. Kapsam
 
-Servo ve normal web, AI paneli ve kullanıcı uyarlama AI'ı, agent toolkit ve MCP istemcisi, "Sign in with GPT / Claude", gerçek DNS kaydı ile anahtar keşfi, şeffaflık kaydı, QUIC, uygulama içi giriş ekranı ve hesaplar, web sitesi, dağıtım paketleri.
+**Kapsam dışı:** Kullanıcı uyarlama AI'ı (font, kontrast, sade düzen), agent toolkit ve MCP istemcisi, gerçek DNS kaydı ile anahtar keşfi, şeffaflık kaydı, QUIC, `inert://` uygulamalarında giriş ekranı ve hesaplar, web sitesi, dağıtım paketleri ve imzalı `.app`.
+
+**Sonradan kapsama alınanlar (2026-11-07, kullanıcının gece hedefi):** İlk taslakta kapsam dışıydılar.
+- Normal web, Servo ile (§11.3).
+- Asistan paneli, salt okunur. `inert://` sayfalarını imzalı ağaçtan, web sayfalarını güvenilmez metin olarak okur, hiçbir aksiyon almaz.
+- "Sign in with Claude / GPT" girişi.
+- Mullvad VPN paneli ve Shield reklam/izleyici engelleme.
+- Chrome'dan esinlenen tarayıcı özellikleri: sekme grupları (Inbox, Homeserver, Developer), yer imleri, omnibox tamamlama.
 
 ## 3. Terimler
 
@@ -33,7 +51,7 @@ Servo ve normal web, AI paneli ve kullanıcı uyarlama AI'ı, agent toolkit ve M
 
 ## 4. Mimari
 
-Tek bir Cargo workspace:
+İki Cargo workspace. Ana workspace aşağıdaki crate'leri içerir, `inert-servo-host` ise kendi workspace'inde durur. Böylece Servo'nun bağımlılık ağacı ve birleşen Cargo özellikleri tarayıcıya hiç karışmaz.
 
 | Crate | Görevi | Bağımlılık |
 |---|---|---|
@@ -41,7 +59,10 @@ Tek bir Cargo workspace:
 | `inert-verify` | İmza kontrolü (Ed25519), manifest kuralları, `Screen` ↔ şablon ve `Action` ↔ şema doğrulaması, kontrast kontrolü. | `inert-proto` |
 | `inert-transport` | `Transport` trait'i, TCP + `rustls` implementasyonu, çerçeveleme, zaman aşımları. | `inert-proto` |
 | `inert-server` | Server SDK, `inert-sign` ve `inert dev` komutları. | proto, verify, transport |
-| `inert-browser` | Pencere, çizim, layout, 10 bileşen, tarayıcı arayüzü, güven deposu. | proto, verify, transport |
+| `inert-client` | Tarayıcı ile ekransız test istemcisinin paylaştığı oturum: bağlan, pinle, imzayı ve şablonları doğrula, asset al. | proto, verify, transport |
+| `inert-browser` | Pencere, çizim, layout, 10 bileşen, tarayıcı arayüzü, güven deposu. Servo'ya bağlanmaz. | client, servo-ipc |
+| `inert-servo-ipc` | Tarayıcı ile Servo süreci arasındaki mesajlar (JSON satırları). `unsafe` yok. | — |
+| `inert-servo-host` | Ayrı süreçte Servo: normal web sayfalarını ekran dışında çizer, kareleri paylaşılan belleğe yazar. Ayrı workspace. | servo-ipc, servo |
 | `examples/{bank,shop,notes}` | Örnek uygulamalar. | `inert-server` |
 
 **Kurallar:**
@@ -268,19 +289,20 @@ Tek komutla şunları yapar: kendinden imzalı bir TLS sertifikası ve geliştir
 
 ### 11.1 Katmanlar
 
-| Görev | Aday |
+| Görev | Kullanılan |
 |---|---|
-| Pencere, girdi, IME | `winit` |
+| Pencere, girdi, IME | `winit` (`eframe` üzerinden) |
 | GPU | `wgpu` |
-| 2B çizim | `vello` (1.0 öncesi, bir arayüzün arkasında) |
-| Metin yerleşimi ve düzenleme | `parley` |
-| Layout | `taffy` |
-| Erişilebilirlik | `accesskit` + `accesskit_winit` |
-| Görsel decode | Bellek güvenli `png` ve WebP crate'leri |
+| 2B çizim, metin, layout | `egui` 0.37 (`vello` + `parley` + `taffy` yerine, §17) |
+| Erişilebilirlik | `accesskit` (egui'nin kendi entegrasyonu) |
+| Görsel decode | Bellek güvenli `png` ve `image-webp` |
+| Normal web | Servo 0.7 (ayrı süreç) ve WebKit (`wry`, WKWebView) |
 
 ### 11.2 Süreç ve thread modeli
 
-Tek süreç. Ağ ve protokol ayrı bir thread'de (`tokio`) çalışır, kanal üzerinden ana thread'e sadece doğrulanmış ekranlar iletilir. Çizim ve girdi ana thread'dedir.
+- **Tarayıcı süreci:** `inert://` çekirdeği, renderer ve arayüz. Ağ ve protokol ayrı bir thread'de (`tokio`) çalışır, kanal üzerinden ana thread'e sadece doğrulanmış ekranlar iletilir. Çizim ve girdi ana thread'dedir. Servo bu sürece bağlanmaz, AI anahtarları ve pinler sadece buradadır.
+- **Servo süreci (`inert-servo-host`):** İlk Servo sekmesi açıldığında başlatılır. Tarayıcı, stdin'e JSON satırı komutlar yazar (oluştur, yükle, göster, boyutlandır, girdi, geri/ileri, zoom, script, Shield). Süreç stdout'a olaylar yazar (yükleme, URL, başlık, geçmiş, imleç, engellenen istek, `inert://` yönlendirmesi). Aktif sekmenin kareleri iki yuvalı, bellek eşlemli bir dosyaya yazılır. Tarayıcı dosyayı salt okunur eşler ve kareyi kopyalar. Süreç ölürse sekmeleri düşürülür ve en fazla üç kez yeniden başlatılır, sonra WebKit'e geçilir. Tarayıcı kapanınca stdin kapanır ve süreç kendiliğinden çıkar.
+- **WebKit süreçleri:** WKWebView kendi WebContent ve Networking süreçlerini macOS'un sandbox'ında açar.
 
 ### 11.3 Tarayıcı arayüzü
 
@@ -293,7 +315,14 @@ Adres çubuğu ve güven göstergesi aynı bileşen setiyle ve aynı renderer il
 | Anahtar değişmiş | Tam ekran uyarı, sayfa çizilmez |
 | Protokol hatası | Hata ekranı + kod + "yeniden bağlan" |
 
-`Link.href` başka bir `inert://` alanına gidiyorsa bir onay gösterilir. `https://` için dilimde sadece "unsecured, desteklenmiyor" mesajı çıkar (Servo dilimde yok).
+`Link.href` başka bir `inert://` alanına gidiyorsa bir onay gösterilir. `https://` ve `http://` sayfaları `UNSECURED` (şifresiz bağlantıda `NOT ENCRYPTED`) rozetiyle açılır.
+
+**Motor seçimi:**
+1. Varsayılan motor Servo'dur (ayarlardan WebKit seçilebilir).
+2. Inbox grubundaki sekmeler, "Inbox sekmeleri WebKit kullansın" ayarı açıkken (varsayılan) WebKit ile açılır, çünkü Gmail ve WhatsApp Web Servo'da tam çalışmıyor.
+3. Her sayfa, site güvenliği panelinden diğer motorla yeniden açılabilir. Seçim sekme bazındadır.
+4. Servo süreci başlatılamazsa ya da tekrar tekrar çökerse sekmeler WebKit ile açılır.
+5. Servo'daki bir sayfa `inert://` linkine gittiğinde Servo gezinmeyi reddeder ve link güvenli motorda açılır.
 
 ### 11.4 Renderer
 
@@ -391,11 +420,11 @@ Tüm veriler sahte ve bellekte. Gerçek bir servise bağlantı yok. Ürün görs
 - §15.1'deki on saldırı senaryosunun hepsi geçiyor.
 - Her fuzz hedefi yerelde 30 dakika çöküş olmadan çalışıyor.
 - `inert-proto` ve `inert-verify` `unsafe` kod içermiyor ve I/O bağımlılığı yok.
-- Banka örneği açıkken tarayıcının bellek kullanımı ölçülüp raporlanıyor. Hedef 150 MB'ın altı, ama bu bir kabul şartı değil, ilk ölçüm.
+- Banka örneği açıkken tarayıcının bellek kullanımı ölçülüp raporlanıyor. Hedef **tarayıcı süreci** için 150 MB'ın altı. Normal web motorlarının süreçleri (Servo süreci, WebKit süreçleri) ayrı ölçülür ve raporlanır. Bu hedef bir kabul şartı değil, ilk ölçüm (sonuçlar §18'de).
 
 ## 17. Plan aşamasında netleşecek noktalar
 
-- `vello` ile `parley`'in mevcut sürümlerinin dilim için yeterli olup olmadığı. Değilse aynı arayüzün arkasında alternatif bir renderer.
+- ~~`vello` ile `parley`'in mevcut sürümlerinin dilim için yeterli olup olmadığı.~~ Karar: `egui` (§11.1).
 - CBOR crate'inin seçimi (`minicbor` ya da benzeri) ve katı mod için ne kadar özel kod gerekeceği.
 - WebP decode için bellek güvenli bir crate'in olgunluğu. Yetersizse dilimde sadece PNG.
 
@@ -417,9 +446,9 @@ Spec'ten bilinçli sapmalar ve eklemeler. Her biri kodda tek bir sınırın arka
 
 **Tarayıcı çizim katmanı:** §11.1'deki `vello` + `parley` + `taffy` yerine `egui` + `eframe` (wgpu) kullanıldı (§17'nin izin verdiği alternatif). Erişilebilirlik (AccessKit), IME, metin düzenleme ve ekran okuyucu desteği kutudan çıkıyor. Tarayıcının kendi arayüzü ve `inert://` renderer'ı aynı katmanla çiziliyor.
 
-**Normal web motoru (güncellendi, 2026-11-07 sabah): Servo varsayılan, WebKit seçenek.** Servo 0.7 tarayıcının içine gömülü. `SoftwareRenderingContext` ile ekran dışında çiziyor, her yeni kare egui'de doku olarak gösteriliyor. Fare, tekerlek ve klavye girdisi Servo'ya iletiliyor. `inert://` linkleri Servo'dan güvenli motora devrediliyor. Inbox grubundaki sekmeler (Gmail, WhatsApp) uyumluluk için varsayılan olarak WebKit (WKWebView) ile açılıyor; bu bir ayar. Her web sayfası, site güvenliği panelinden diğer motorla yeniden açılabilir. Shield, Servo sekmelerinde Brave'in `adblock` motoruyla istekleri yakalayıp engelliyor; WebKit sekmelerinde WebKit'in kendi içerik engelleyicisi kullanılıyor.
+**Normal web motoru (güncellendi, 2026-11-07 sabah): Servo varsayılan, WebKit seçenek.** Servo 0.7, `inert-servo-host` adında ayrı bir süreçte çalışıyor (§11.2). `SoftwareRenderingContext` ile ekran dışında çiziyor, kareler paylaşılan bellekten egui'de doku olarak gösteriliyor. Fare, tekerlek ve klavye girdisi Servo'ya iletiliyor. `inert://` linkleri Servo'dan güvenli motora devrediliyor. Inbox grubundaki sekmeler (Gmail, WhatsApp) uyumluluk için varsayılan olarak WebKit (WKWebView) ile açılıyor; bu bir ayar. Her web sayfası, site güvenliği panelinden diğer motorla yeniden açılabilir. Shield, Servo sekmelerinde Brave'in `adblock` motoruyla istekleri yakalayıp engelliyor; WebKit sekmelerinde WebKit'in kendi içerik engelleyicisi kullanılıyor.
 
-**epaint yaması:** Servo, `vello_cpu`'yu çok iş parçacıklı özellikle kullanıyor. Cargo özellikleri birleştirdiği için egui'nin glif rasterleştirmesi de çok iş parçacıklı moda geçip çöküyordu. `vendor/epaint` içinde iki satırlık bir yama, egui için tek iş parçacığını açıkça seçiyor (`vendor/epaint/INERT_PATCH.md`).
+**epaint yaması (kaldırıldı):** Servo tarayıcıya gömülüyken `vello_cpu`'nun çok iş parçacıklı özelliği Cargo'nun özellik birleştirmesiyle egui'ye de geçiyor ve glif rasterleştirmesini çökertiyordu. Geçici olarak `vendor/epaint` yaması kullanıldı. Servo ayrı bir süreç ve ayrı bir workspace'e taşınınca bağımlılık ağaçları ayrıldı ve yama silindi.
 
 **Giriş:** "Sign in with Claude / GPT" ekranı sadece sağlayıcıyı soruyor. Üçüncü taraf uygulamalar için bu sağlayıcıların OAuth girişi kullanılmadığı için anahtar bir API key olarak alınıyor ve macOS Keychain'de saklanıyor. Anahtar atlanabilir.
 
@@ -427,10 +456,23 @@ Spec'ten bilinçli sapmalar ve eklemeler. Her biri kodda tek bir sınırın arka
 
 **Reklam engelleme:** EasyList ve EasyPrivacy, Brave'in `adblock` crate'i ile WebKit content-blocker kurallarına çevriliyor (yaklaşık 131 bin kural), WebKit'te bir kez derleniyor ve sonraki açılışlarda önbellekten kullanılıyor.
 
-**Ölçümler (release, macOS):**
-- Servo eklenmeden önce: tarayıcı süreci kullanımda 64–95 MB, binary 19 MB.
-- Servo ile: UI sürücüsü turu boyunca medyan 167 MB, en fazla 281 MB (Servo aynı süreçte, yazılım çizim ve Servo sekmeleri için bellekteki reklam engelleme motoru dahil). Binary 108 MB. §16'daki 150 MB hedefi Servo açıkken aşılıyor; bu bir kabul şartı değildi. Servo'yu ayrı bir sürece almak hem belleği hem izolasyonu iyileştirecek bir sonraki adım.
+**Ölçümler (release, macOS, 2026-11-07 sabah, Servo ayrı süreçte):**
 
-**UI testleri:** `crates/inert-browser/src/drive.rs`, egui'nin girdi akışına gerçek fare ve klavye olayları enjekte ediyor (`App::raw_input_hook`). 49 kontrol var: giriş, omnibox tamamlama, banka transferi (limit dışı tutar dahil), mağaza sepeti, not ekleme ve kaydetme, yer imleri, sekme grupları, sağ tık menüsü, kısayollar, Servo'da tıklama ve yazma, motor değiştirme, Inbox'ın WebKit'te açılması, VPN, Shield, asistan, geçmiş. Hepsi geçiyor (`docs/test-results/ui-driver.json`). Bu testler 4 gerçek hata buldu ve düzeltildi.
+Fiziksel ayak izi (`footprint`, Activity Monitor'daki "Bellek") ana ölçü. RSS, macOS'un paylaşılan framework sayfalarını da saydığı için ayrıca veriliyor.
+
+| Durum (25 sn sonra) | Tarayıcı süreci | Servo süreci |
+|---|---|---|
+| Banka açık (§16 kriteri) | **70 MB** (RSS 136) | çalışmıyor |
+| Servo sekmesi: example.com | 79 MB (RSS 147) | 120 MB (RSS 128) |
+| Servo sekmesi: wikipedia.org | 83 MB (RSS 151) | 155 MB (RSS 153) |
+| 49 kontrollük UI turu boyunca (uygulama içi ekran görüntüleri ve WebKit sekmeleri dahil) | medyan 187, en fazla 213 MB | medyan 87, en fazla 208 MB |
+
+- Binary: `inert-browser` 19 MB, `inert-servo-host` 95 MB.
+- §16: banka açıkken tarayıcı süreci 150 MB hedefinin altında. Normal web açıkken de tarayıcı süreci 85 MB'ın altında kalıyor, motorun belleği kendi sürecinde.
+- Önceki ölçüm (Servo tarayıcıya gömülüyken, RSS): UI turu boyunca medyan 167, en fazla 281 MB, binary 108 MB.
+- Çökme izolasyonu: Servo süreci `kill -9` ile öldürüldüğünde tarayıcı açık kalıyor, sekmeleri düşüyor ve yeni bir Servo süreci başlıyor (elle denendi, 2026-11-07).
+- Ham veriler: `docs/test-results/memory-ui-driver.csv`.
+
+**UI testleri:** `crates/inert-browser/src/drive.rs`, egui'nin girdi akışına gerçek fare ve klavye olayları enjekte ediyor (`App::raw_input_hook`). 49 kontrol var: giriş, omnibox tamamlama, banka transferi (limit dışı tutar dahil), mağaza sepeti, not ekleme ve kaydetme, yer imleri, sekme grupları, sağ tık menüsü, kısayollar, Servo'da tıklama ve yazma, motor değiştirme, Inbox'ın WebKit'te açılması, VPN, Shield, asistan, geçmiş. Hepsi geçiyor (`docs/test-results/ui-driver.json`), Servo ayrı süreçteyken tekrar koşuldu. Bu testler 4 gerçek hata buldu ve düzeltildi.
 
 **Fuzzing (2026-11-07):** Dört hedef (`cbor_decode`, `message_decode`, `manifest_verify`, `screen_action_verify`) paralel olarak her biri 30 dakika çalıştı (§16). Toplam yaklaşık 213 milyon girdi denendi, hiç çökme ya da artifact yok. İlk 10 dakikalık koşu (78 milyon girdi) da temizdi.

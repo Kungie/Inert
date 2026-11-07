@@ -8,8 +8,9 @@
   screen against the signed template before drawing it. A hacked server can
   show wrong data, but it cannot add a password field.
 - Everything else on the web opens in the same browser as **unsecured** tabs,
-  rendered by **Servo** (the Rust web engine) by default, or by the system
-  WebKit for Inbox tabs and on demand, with ad & tracker blocking in both.
+  rendered by **Servo** (the Rust web engine) in its own process by default,
+  or by the system WebKit for Inbox tabs and on demand, with ad & tracker
+  blocking in both. The browser process never links Servo.
 
 ![Inert Bank in the Inert browser](docs/screenshots/04-bank-overview.png)
 
@@ -23,6 +24,8 @@
 | `crates/inert-client` | Client session shared by the browser and tests: dial, pin, verify, fetch assets. |
 | `crates/inert-server` | Server SDK, `inert-sign` (keygen / build / check) and the dev runner. |
 | `crates/inert-browser` | The browser (egui + wgpu, WebKit web views, Mullvad VPN, Shield, assistant). |
+| `crates/inert-servo-ipc` | Messages between the browser and the Servo process (JSON lines). |
+| `crates/inert-servo-host` | Servo in its own process; frames go through shared memory. A separate Cargo workspace. |
 | `examples/{bank,shop,notes}` | Three demo sites with fake data. |
 | `spec/vectors` | Language-independent conformance vectors. |
 | `fuzz` | cargo-fuzz targets for the decoder and verifier. |
@@ -35,13 +38,21 @@ scripts/demo-sites.sh
 ```
 
 ```bash
-cargo run --release -p inert-browser
+scripts/build.sh --release
 ```
+
+```bash
+target/release/inert-browser
+```
+
+`scripts/build.sh` builds the browser and the Servo helper (`inert-servo-host`,
+its own workspace) into the same `target/` folder. Without the helper, web
+pages open in WebKit.
 
 The first launch asks for one thing: your AI provider (Claude or GPT) and,
 optionally, your API key (stored in the macOS Keychain).
 
-`cargo run -p inert-browser -- --demo` starts with a throwaway demo profile.
+`target/release/inert-browser --demo` starts with a throwaway demo profile.
 `scripts/walkthrough.sh <dir>` runs the scripted feature tour and screenshots it.
 
 ## Tests

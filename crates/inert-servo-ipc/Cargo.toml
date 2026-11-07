@@ -1,0 +1,9 @@
+[package]
+name = "inert-servo-ipc"
+description = "Messages between the Inert browser and its out-of-process Servo host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }

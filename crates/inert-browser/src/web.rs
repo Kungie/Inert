@@ -144,14 +144,14 @@ pub fn js(t: &WebTab, script: &str) {
         let _ = v.evaluate_script(script);
     }
     if let Some(s) = &t.sv {
-        s.view.evaluate_javascript(script, |_| {});
+        s.eval(script);
     }
 }
 
 /// Reads the page's visible text (for the AI panel). Treated as untrusted.
 pub fn read_text(t: &WebTab, tab: u64, tx: &Sender<Event>, ctx: &egui::Context) {
     if let Some(s) = &t.sv {
-        crate::servo_web::read_text(s, tab, tx, ctx);
+        crate::servo_web::read_text(s, tab);
         return;
     }
     if let Some(v) = &t.view {

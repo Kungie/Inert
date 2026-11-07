@@ -10,7 +10,7 @@ export INERT_SHOT_RECT="${INERT_SHOT_RECT:-40,40,1440,900}"
 mkdir -p "$OUT"
 rm -f "$OUT"/*.ready "$OUT"/DONE "$OUT"/results.json
 BIN="${BIN:-./target/debug/inert-browser}"
-[ "$BIN" = "./target/debug/inert-browser" ] && cargo build -q -p inert-browser
+[ "$BIN" = "./target/debug/inert-browser" ] && scripts/build.sh
 "$BIN" --demo --drive "$OUT" 2>"$OUT/driver.log" &
 PID=$!
 while kill -0 $PID 2>/dev/null; do

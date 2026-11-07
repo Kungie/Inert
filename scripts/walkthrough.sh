@@ -10,7 +10,7 @@ export INERT_SHOT_RECT="${INERT_SHOT_RECT:-40,40,1440,900}"
 mkdir -p "$OUT"
 rm -f "$OUT"/*.ready "$OUT"/DONE
 BIN="${BIN:-./target/debug/inert-browser}"
-[ "$BIN" = "./target/debug/inert-browser" ] && cargo build -q -p inert-browser
+[ "$BIN" = "./target/debug/inert-browser" ] && scripts/build.sh
 "$BIN" --demo --shot "$OUT" &
 PID=$!
 echo "t_s,browser_rss_mb,webkit_rss_mb,last_screen" > "$OUT/memory.csv"

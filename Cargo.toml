@@ -1,12 +1,15 @@
 [workspace]
 resolver = "3"
-exclude = ["fuzz"]
+# inert-servo-host is its own workspace: Servo must never share a dependency
+# graph (or unified features) with the browser.
+exclude = ["fuzz", "crates/inert-servo-host"]
 members = [
     "crates/inert-proto",
     "crates/inert-verify",
     "crates/inert-transport",
     "crates/inert-server",
     "crates/inert-client",
+    "crates/inert-servo-ipc",
     "crates/inert-browser",
     "examples/bank",
     "examples/shop",
@@ -26,6 +29,7 @@ inert-verify = { path = "crates/inert-verify" }
 inert-transport = { path = "crates/inert-transport" }
 inert-server = { path = "crates/inert-server" }
 inert-client = { path = "crates/inert-client" }
+inert-servo-ipc = { path = "crates/inert-servo-ipc" }
 
 thiserror = "2"
 anyhow = "1"
@@ -57,7 +61,3 @@ panic = "unwind"
 
 [profile.dev.package."*"]
 opt-level = 2
-
-# epaint with single-threaded glyph rasterization (see vendor/epaint/INERT_PATCH.md).
-[patch.crates-io]
-epaint = { path = "vendor/epaint" }

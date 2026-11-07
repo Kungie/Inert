@@ -1005,8 +1005,7 @@ impl Browser {
         ui.label(theme::serif_text(&h, 24.0));
         ui.label(theme::body(&d));
         if let Some(h) = &self.servo {
-            let n = h.blocker.blocked.get();
-            let ready = h.blocker.engine.borrow().is_some();
+            let (n, ready) = h.shield();
             ui.label(theme::body(&if ready { format!("Servo tabs: {n} requests blocked this session.") } else { "Servo tabs: loading the blocking engine…".to_owned() }));
         }
         ui.add_space(6.0);

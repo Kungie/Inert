@@ -1,251 +1,251 @@
 {
-  "passed": 49,
-  "total": 49,
   "checks": [
     {
       "check": "signin.visible",
-      "pass": true,
-      "note": "(30 ms)"
+      "note": "(30 ms)",
+      "pass": true
     },
     {
       "check": "signin.claude_selected",
-      "pass": true,
-      "note": "(36 ms)"
+      "note": "(34 ms)",
+      "pass": true
     },
     {
       "check": "signin.done_with_claude",
-      "pass": true,
-      "note": "(7 ms)"
+      "note": "(7 ms)",
+      "pass": true
     },
     {
       "check": "omnibox.focused",
-      "pass": true,
-      "note": "(9 ms)"
+      "note": "(5 ms)",
+      "pass": true
     },
     {
       "check": "omnibox.inline_completion",
-      "pass": true,
-      "note": "(0 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "omnibox.suggestions",
-      "pass": true,
-      "note": "(0 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "omnibox.escape_restores",
-      "pass": true,
-      "note": "(34 ms)"
+      "note": "(31 ms)",
+      "pass": true
     },
     {
       "check": "bank.overview_verified",
-      "pass": true,
-      "note": "(40 ms)"
+      "note": "(33 ms)",
+      "pass": true
     },
     {
       "check": "bank.secured_badge",
-      "pass": true,
-      "note": "(0 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "bank.transfer_screen",
-      "pass": true,
-      "note": "(37 ms)"
+      "note": "(33 ms)",
+      "pass": true
     },
     {
       "check": "bank.over_limit_refused_locally",
-      "pass": true,
-      "note": "(2 ms)"
+      "note": "(1 ms)",
+      "pass": true
     },
     {
       "check": "bank.transfer_accepted",
-      "pass": true,
-      "note": "(2 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "shop.catalog",
-      "pass": true,
-      "note": "(43 ms)"
+      "note": "(34 ms)",
+      "pass": true
     },
     {
       "check": "shop.product",
-      "pass": true,
-      "note": "(2 ms)"
+      "note": "(1 ms)",
+      "pass": true
     },
     {
       "check": "shop.cart_has_line",
-      "pass": true,
-      "note": "(2 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "shop.remove_line",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "notes.list",
-      "pass": true,
-      "note": "(2 ms)"
+      "note": "(1 ms)",
+      "pass": true
     },
     {
       "check": "notes.added",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "notes.opened",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "notes.saved_done",
-      "pass": true,
-      "note": "(0 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "notes.back_button",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "bookmark.star_adds",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "bookmark.cmd_d_removes",
-      "pass": true,
-      "note": "(0 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "groups.inbox_expands",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "groups.inbox_collapses",
-      "pass": true,
-      "note": "(35 ms)"
+      "note": "(31 ms)",
+      "pass": true
     },
     {
       "check": "menu.opens",
-      "pass": true,
-      "note": "(34 ms)"
+      "note": "(31 ms)",
+      "pass": true
     },
     {
       "check": "groups.new_group_rename",
-      "pass": true,
-      "note": "(2 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "groups.renamed",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "tabs.pin_from_context_menu",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "tabs.cmd_t_new_tab",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "web.servo_renders_page",
-      "pass": true,
-      "note": "(271 ms)"
+      "note": "(236 ms)",
+      "pass": true
     },
     {
       "check": "web.switch_to_webkit",
-      "pass": true,
-      "note": "(95 ms)"
+      "note": "(53 ms)",
+      "pass": true
     },
     {
       "check": "web.back_to_new_tab",
-      "pass": true,
-      "note": "(32 ms)"
+      "note": "(31 ms)",
+      "pass": true
     },
     {
       "check": "servo.page_ready",
-      "pass": true,
-      "note": "(40 ms)"
+      "note": "(6 ms)",
+      "pass": true
     },
     {
       "check": "servo.click_follows_link",
-      "pass": true,
-      "note": "(34 ms)"
+      "note": "(31 ms)",
+      "pass": true
     },
     {
       "check": "servo.form_ready",
-      "pass": true,
-      "note": "(22 ms)"
+      "note": "(5 ms)",
+      "pass": true
     },
     {
       "check": "servo.typing_reaches_page",
-      "pass": true,
-      "note": "(36 ms)"
+      "note": "(26 ms)",
+      "pass": true
     },
     {
       "check": "inbox.uses_webkit",
-      "pass": true,
-      "note": "(39 ms)"
+      "note": "(19 ms)",
+      "pass": true
     },
     {
       "check": "tabs.cmd_w_closes",
-      "pass": true,
-      "note": "(21 ms)"
+      "note": "(17 ms)",
+      "pass": true
     },
     {
       "check": "tabs.cmd_shift_t_reopens",
-      "pass": true,
-      "note": "(0 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "vpn.panel",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(1 ms)",
+      "pass": true
     },
     {
       "check": "vpn.closes",
-      "pass": true,
-      "note": "(30 ms)"
+      "note": "(32 ms)",
+      "pass": true
     },
     {
       "check": "shield.panel",
-      "pass": true,
-      "note": "(33 ms)"
+      "note": "(33 ms)",
+      "pass": true
     },
     {
       "check": "bank.back_on_tab",
-      "pass": true,
-      "note": "(0 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "assistant.cmd_j",
-      "pass": true,
-      "note": "(32 ms)"
+      "note": "(31 ms)",
+      "pass": true
     },
     {
       "check": "assistant.answers",
-      "pass": true,
-      "note": "(1 ms)"
+      "note": "(1 ms)",
+      "pass": true
     },
     {
       "check": "history.cmd_y",
-      "pass": true,
-      "note": "(6 ms)"
+      "note": "(2 ms)",
+      "pass": true
     },
     {
       "check": "history.has_entries",
-      "pass": true,
-      "note": "(0 ms)"
+      "note": "(0 ms)",
+      "pass": true
     },
     {
       "check": "bank.reload_reverifies",
-      "pass": true,
-      "note": "(4 ms)"
+      "note": "(1 ms)",
+      "pass": true
     }
-  ]
+  ],
+  "passed": 49,
+  "total": 49
 }
