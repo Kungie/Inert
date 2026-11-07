@@ -1,0 +1,24 @@
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+let ver;
+for (let i = 0; i < 50; i++) { try { ver = await (await fetch("http://127.0.0.1:9333/json/version")).json(); break; } catch { await sleep(200); } }
+const ws = new WebSocket(ver.webSocketDebuggerUrl);
+await new Promise(r => ws.onopen = r);
+let id = 0; const pending = new Map();
+ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id && pending.has(d.id)) { pending.get(d.id)(d); pending.delete(d.id); } };
+const send = (method, params = {}, sessionId) => new Promise(r => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params, sessionId })); });
+const { result: { targetId } } = await send("Target.createTarget", { url: "about:blank" });
+const { result: { sessionId } } = await send("Target.attachToTarget", { targetId, flatten: true });
+const go = async (url) => { await send("Page.navigate", { url }, sessionId); await sleep(1500); };
+const ev = async (expr) => (await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true }, sessionId)).result;
+await send("Page.enable", {}, sessionId);
+await go("http://127.0.0.1:8767/a.html");
+await go("http://127.0.0.1:8767/b.html");
+await go("http://127.0.0.1:8767/a.html");
+await go("chrome://bookmarks/");
+console.log("bookmark:", JSON.stringify(await ev("chrome.bookmarks.create({parentId: '1', title: 'Inert Test Mark', url: 'https://example.com/inert'}).then(b => b.title)")));
+await go("chrome://password-manager/passwords");
+console.log("password:", JSON.stringify(await ev("new Promise((res) => chrome.passwordsPrivate.addPassword({url: 'https://login.example.com/signin', username: 'ada', password: 'hunter2-real', note: '', useAccountStore: false}, () => res(chrome.runtime.lastError ? chrome.runtime.lastError.message : 'ok')))")));
+await sleep(1500);
+await send("Browser.close");
+await sleep(2000);
+process.exit(0);

@@ -138,7 +138,7 @@ impl Browser {
         }
         let nb = p.bookmarks.len() - before;
         if nb > 0 {
-            summary.push(format!("{nb} bookmarks"));
+            summary.push(plural(nb, "bookmark"));
         }
         // History: per-URL counts add up; the visit timeline merges by time.
         let nh = r.history.len();
@@ -163,7 +163,7 @@ impl Browser {
             p.visits.drain(..len - 20_000);
         }
         if nh > 0 {
-            summary.push(format!("History: {nh} sites, {nv} visits"));
+            summary.push(format!("History: {}, {}", plural(nh, "site"), plural(nv, "visit")));
         }
         // Passwords into the Keychain; the profile keeps only who and where.
         let mut np = 0;
@@ -183,7 +183,7 @@ impl Browser {
             }
         }
         if np > 0 {
-            summary.push(format!("{np} saved passwords (in the Keychain)"));
+            summary.push(format!("{} (in the Keychain)", plural(np, "saved password")));
         }
         // Habits.
         let mut habits = Vec::new();
@@ -208,7 +208,7 @@ impl Browser {
         if nc > 0 {
             crate::cookies::import(self, &r.cookies);
             let sites: std::collections::BTreeSet<String> = r.cookies.iter().map(|(_, c)| crate::cookies::site_of(&c.domain)).collect();
-            summary.push(format!("Signed in on {} sites ({nc} cookies)", sites.len()));
+            summary.push(format!("Signed in on {} ({})", plural(sites.len(), "site"), plural(nc, "cookie")));
         }
         for u in startup {
             if !self.tabs.iter().any(|t| t.url() == u) {
@@ -245,6 +245,11 @@ impl Browser {
         ui.add_space(16.0);
         self.import_panel(ui, false);
     }
+}
+
+/// "1 site", "2 sites".
+fn plural(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
 pub fn big(ui: &mut Ui, text: &str, primary: bool) -> egui::Response {

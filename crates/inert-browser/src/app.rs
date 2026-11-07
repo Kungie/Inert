@@ -322,6 +322,11 @@ impl Browser {
                 }
                 Err(e) => tracing::warn!("demo import fixture: {e}"),
             }
+            // Tests: import a profile written by a real Chrome started with
+            // --use-mock-keychain (its key is known; no Keychain involved).
+            if let (Ok(dir), Ok(key)) = (std::env::var("INERT_IMPORT_DIR"), std::env::var("INERT_IMPORT_KEY")) {
+                b.import.sources = vec![crate::import::Source { browser: "Chrome".into(), dir: dir.into(), profile: "real Chrome test profile".into(), keychain: (String::new(), String::new()), demo_key: Some(key) }];
+            }
         }
         // Restore without activating, so collapsed groups stay collapsed.
         let session = b.profile.session.clone();

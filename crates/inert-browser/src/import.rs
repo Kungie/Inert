@@ -282,8 +282,10 @@ pub fn run(src: &Source, what: What) -> Imported {
                 }
             }
             if what.cookies {
-                let version = query(&d.join("Cookies"), "SELECT value FROM meta WHERE key = 'version'").ok().and_then(|v| v.first().map(|x| n(x, "value"))).unwrap_or(0);
-                match query(&d.join("Cookies"), COOKIES_SQL) {
+                // Newer Chrome keeps cookies under Network/.
+                let cookies_db = if d.join("Network/Cookies").exists() { d.join("Network/Cookies") } else { d.join("Cookies") };
+                let version = query(&cookies_db, "SELECT value FROM meta WHERE key = 'version'").ok().and_then(|v| v.first().map(|x| n(x, "value"))).unwrap_or(0);
+                match query(&cookies_db, COOKIES_SQL) {
                     Ok(rows) => {
                         let now = crate::profile::now() as i64;
                         for v in rows {
@@ -437,6 +439,30 @@ mod tests {
             assert!(rows.is_ok(), "{p}: {:?}", rows.err());
             assert!(version >= 18, "{p}: unexpected schema version {version}");
         }
+    }
+
+    /// A profile written by a real Chrome (INERT_REAL_PROFILE = its "Default"
+    /// folder), started with --use-mock-keychain so its key is known
+    /// (INERT_REAL_KEY) and the user's Keychain is never involved.
+    #[test]
+    #[ignore]
+    fn real_chrome_profile() {
+        let dir = PathBuf::from(std::env::var("INERT_REAL_PROFILE").expect("set INERT_REAL_PROFILE"));
+        let key = std::env::var("INERT_REAL_KEY").expect("set INERT_REAL_KEY");
+        let src = Source { browser: "Chrome".into(), dir, profile: "real".into(), keychain: (String::new(), String::new()), demo_key: Some(key) };
+        let r = run(&src, What::default());
+        println!("errors: {:?}", r.errors);
+        println!("bookmarks: {:?}", r.bookmarks.iter().map(|b| (&b.title, &b.url)).collect::<Vec<_>>());
+        println!("history: {:?}", r.history.iter().map(|h| (&h.title, &h.url, h.visits)).collect::<Vec<_>>());
+        println!("visits: {}", r.visits.len());
+        println!("logins: {:?}", r.logins.iter().map(|l| (&l.origin, &l.username, l.password.len())).collect::<Vec<_>>());
+        println!("cookies: {:?}", r.cookies.iter().map(|(u, c)| (u, &c.name, &c.value, c.http_only, &c.same_site)).collect::<Vec<_>>());
+        println!("search: {:?}", r.search);
+        assert!(r.bookmarks.iter().any(|b| b.title == "Inert Test Mark" && b.url == "https://example.com/inert"));
+        assert!(r.history.iter().any(|h| h.title == "Alpha page" && h.visits >= 2));
+        assert!(r.visits.len() >= 3);
+        assert!(r.logins.iter().any(|l| l.origin == "https://login.example.com" && l.username == "ada" && l.password == "hunter2-real"));
+        assert!(r.cookies.iter().any(|(_, c)| c.name == "sid" && c.value == "hello123" && c.http_only));
     }
 
     #[test]

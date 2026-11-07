@@ -405,6 +405,26 @@ impl Driver {
                 Pause(4000),
                 Shot(s("r02-ddg-dark")),
             ]
+        } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("import-real") {
+            // Onboarding import from a profile a real Chrome wrote (see INERT_IMPORT_DIR).
+            vec![
+                Pause(1200),
+                Click(s("signin:claude")),
+                Click(s("signin:skip")),
+                expect("import.step", 2000, |b| b.signin.import_step),
+                Click(s("import:go")),
+                expect("import.done", 10000, |b| !b.import.summary.is_empty() && !b.import.running && b.import.errors.is_empty()),
+                expect("import.real_bookmark", 1000, |b| b.profile.bookmarks.iter().any(|x| x.title == "Inert Test Mark")),
+                expect("import.real_history", 1000, |b| b.profile.history.iter().any(|h| h.title == "Alpha page" && h.visits >= 2)),
+                expect("import.real_password", 1000, |b| b.profile.logins.iter().any(|l| l.username == "ada") && crate::passwords::get("https://login.example.com", "ada", true).as_deref() == Some("hunter2-real")),
+                expect("import.real_cookie", 1000, |b| b.import.summary.iter().any(|l| l.contains("Signed in on 1 site (1 cookie)"))),
+                Pause(300),
+                Shot(s("i1-real-chrome-import")),
+                Click(s("import:continue")),
+                expect("signin.done", 2000, |b| b.profile.onboarded),
+                Pause(400),
+                Shot(s("i2-bookmarks-bar")),
+            ]
         } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("vpn") {
             // The VPN panel in whatever state INERT_DEMO_VPN sets; with
             // logged-out it also signs in with a (demo) account number.
