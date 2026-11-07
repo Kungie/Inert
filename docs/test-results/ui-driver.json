@@ -7,7 +7,7 @@
     },
     {
       "check": "signin.claude_selected",
-      "note": "(31 ms)",
+      "note": "(32 ms)",
       "pass": true
     },
     {
@@ -32,12 +32,12 @@
     },
     {
       "check": "omnibox.escape_restores",
-      "note": "(0 ms)",
+      "note": "(31 ms)",
       "pass": true
     },
     {
       "check": "bank.overview_verified",
-      "note": "(2 ms)",
+      "note": "(34 ms)",
       "pass": true
     },
     {
@@ -47,12 +47,12 @@
     },
     {
       "check": "bank.transfer_screen",
-      "note": "(1 ms)",
+      "note": "(33 ms)",
       "pass": true
     },
     {
       "check": "bank.over_limit_refused_locally",
-      "note": "(0 ms)",
+      "note": "(1 ms)",
       "pass": true
     },
     {
@@ -87,7 +87,7 @@
     },
     {
       "check": "notes.added",
-      "note": "(1 ms)",
+      "note": "(0 ms)",
       "pass": true
     },
     {
@@ -127,12 +127,12 @@
     },
     {
       "check": "menu.opens",
-      "note": "(1 ms)",
+      "note": "(0 ms)",
       "pass": true
     },
     {
       "check": "groups.new_group_rename",
-      "note": "(1 ms)",
+      "note": "(0 ms)",
       "pass": true
     },
     {
@@ -152,12 +152,12 @@
     },
     {
       "check": "web.servo_renders_page",
-      "note": "(240 ms)",
+      "note": "(261 ms)",
       "pass": true
     },
     {
       "check": "web.switch_to_webkit",
-      "note": "(52 ms)",
+      "note": "(51 ms)",
       "pass": true
     },
     {
@@ -187,7 +187,7 @@
     },
     {
       "check": "inbox.uses_webkit",
-      "note": "(21 ms)",
+      "note": "(19 ms)",
       "pass": true
     },
     {
@@ -197,7 +197,7 @@
     },
     {
       "check": "tabs.cmd_shift_t_reopens",
-      "note": "(2 ms)",
+      "note": "(0 ms)",
       "pass": true
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "check": "assistant.cmd_j",
-      "note": "(1 ms)",
+      "note": "(0 ms)",
       "pass": true
     },
     {
@@ -232,7 +232,7 @@
     },
     {
       "check": "history.cmd_y",
-      "note": "(1 ms)",
+      "note": "(2 ms)",
       "pass": true
     },
     {
@@ -242,7 +242,7 @@
     },
     {
       "check": "bank.reload_reverifies",
-      "note": "(1 ms)",
+      "note": "(2 ms)",
       "pass": true
     }
   ],

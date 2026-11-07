@@ -69,6 +69,12 @@ memory while they run; `SHOTS=1` saves documentation screenshots too:
 scripts/ui-test.sh target/ui-test
 ```
 
+Memory with only Inert Bank open (spec §16 baseline):
+
+```bash
+scripts/memory-bank.sh target/memory-bank
+```
+
 Design check: counts screenshot pixels against the Yön A (Stencil) palette.
 
 ```bash

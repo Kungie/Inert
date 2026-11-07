@@ -460,9 +460,10 @@ Spec'ten bilinçli sapmalar ve eklemeler. Her biri kodda tek bir sınırın arka
 
 Ana ölçü fiziksel ayak izi (`footprint`), yani Activity Monitor'daki "Bellek". RSS ayrıca veriliyor, çünkü macOS'un paylaşılan framework sayfalarını da sayıyor. `scripts/ui-test.sh` 49 kontrolü koşarken iki süreci de sürekli örnekliyor (`docs/test-results/memory-ui-driver.csv`).
 
-| 49 kontrollük UI turu (3 koşu) | Medyan | En fazla |
+| Durum | Medyan | En fazla |
 |---|---|---|
-| Tarayıcı süreci, ayak izi | **93–95 MB** | **98–103 MB** |
+| **Sadece banka açık**, pencere sürekli çiziliyor, 30 sn (`scripts/memory-bank.sh`, §16 kriteri) | **73–74 MB** | **74 MB** |
+| 49 kontrollük UI turu, tarayıcı süreci, ayak izi (4 koşu) | **80–95 MB** | **98–105 MB** |
 | Tarayıcı süreci, RSS | 126 MB | 140 MB |
 | Servo süreci, ayak izi | 131 MB | 177 MB |
 | Tarayıcı, testin ekran görüntüleri açıkken (`SHOTS=1`) | 139 MB | 160 MB |
@@ -473,7 +474,7 @@ Ana ölçü fiziksel ayak izi (`footprint`), yani Activity Monitor'daki "Bellek"
   1. Servo aynı süreçteydi. Ayrı sürece taşındı.
   2. macOS'un bellek ayırıcısı, serbest bırakılan büyük blokları (sayfa kareleri, çözülen görseller) kendi önbelleğinde kirli tutuyordu. Bu yaklaşık 40 MB ediyordu. Önbellek sadece süreç başlarken kapatılabildiği için tarayıcı ilk açılışta `MallocLargeCache=0` ile kendini bir kez yeniden çalıştırıyor (aynı PID, birkaç ms). Servo süreci ayarı devralıyor.
   3. Testin uygulama içi ekran görüntüleri, egui-wgpu'nun yakalama dokusu ve okuma tamponlarıyla yaklaşık 36 MB GPU belleği tutuyordu. Bu testin kendi yükü, tarayıcıya ait değil. Ekran görüntüleri artık isteğe bağlı (`SHOTS=1`).
-- **Geçersiz ölçüm, kaldırıldı:** Önceki "banka açıkken 70 MB" ölçümü ekran kilitliyken yapıldı. Ekran kilitliyken normal açılan bir pencere hiç çizilmiyor (10 saniyede 0 kare), yani o ölçüm çizim belleğini içermiyordu. Turu süren UI sürücüsü pencereyi gerçekten çizdiriyor, bu yüzden yukarıdaki sayılar esas alınır.
+- **Geçersiz ölçüm, değiştirildi:** Önceki "banka açıkken 70 MB" ölçümü ekran kilitliyken yapıldı. Ekran kilitliyken normal açılan bir pencere hiç çizilmiyor (10 saniyede 0 kare), yani o ölçüm çizim belleğini içermiyordu. Yeni banka ölçümü UI sürücüsüyle yapılıyor. Sürücü pencereyi saniyede yaklaşık 33 kez çizdiriyor, kare sayacı da bunu doğruluyor: 30 saniyelik beklemede 1563'ten 2427'ye çıktı.
 - Önceki ölçüm (Servo tarayıcıya gömülüyken, RSS): tur boyunca medyan 167, en fazla 281 MB, binary 108 MB.
 - **Çökme izolasyonu:** Servo süreci `kill -9` ile öldürüldüğünde tarayıcı açık kalıyor, Servo sekmeleri düşüyor ve yeni bir Servo süreci başlıyor (elle denendi, 2026-11-07).
 

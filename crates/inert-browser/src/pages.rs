@@ -134,7 +134,7 @@ impl Browser {
         // Footer, Stencil style.
         let f = rect.shrink2(vec2(72.0, 36.0));
         ui.painter().text(pos2(f.left(), f.bottom()), egui::Align2::LEFT_BOTTOM, "© 2026 INERT", FontId::new(10.5, mono()), DIM);
-        ui.painter().text(pos2(f.right(), f.bottom()), egui::Align2::RIGHT_BOTTOM, "RUST · WEBKIT · TLS 1.3 + ML-KEM", FontId::new(10.5, mono()), DIM);
+        ui.painter().text(pos2(f.right(), f.bottom()), egui::Align2::RIGHT_BOTTOM, "RUST · SERVO · TLS 1.3 + ML-KEM", FontId::new(10.5, mono()), DIM);
     }
 
     // ------------------------------------------------------------------ pages

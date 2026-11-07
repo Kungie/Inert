@@ -137,6 +137,7 @@ impl Driver {
             Type(s("h")),
             expect("omnibox.inline_completion", 2000, |b| b.omni.text == "github.com"),
             expect("omnibox.suggestions", 2000, |b| b.omni.sugg.iter().any(|x| x.target.contains("github.com"))),
+            Pause(500), // let the dropdown finish fading in
             Shot(s("d02-omnibox")),
             Press(Key::Escape, Modifiers::NONE),
             expect("omnibox.escape_restores", 2000, |b| !b.omni.editing),
@@ -284,6 +285,22 @@ impl Driver {
             Press(Key::R, cmd),
             expect("bank.reload_reverifies", 15000, |b| inert_on(b, "overview")),
         ];
+        // INERT_DRIVE_SCENARIO=bank-idle: sign in, open Inert Bank, then stay
+        // on it for 30 s with the window drawing (memory baseline, spec §16).
+        let steps = if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("bank-idle") {
+            vec![
+                Pause(1200),
+                Click(s("signin:claude")),
+                Click(s("signin:skip")),
+                expect("signin.done_with_claude", 2000, |b| b.profile.onboarded),
+                Click(s("tab:Inert Bank")),
+                expect("bank.overview_verified", 15000, |b| inert_on(b, "overview")),
+                Pause(30000),
+                expect("bank.still_verified", 1000, |b| inert_on(b, "overview")),
+            ]
+        } else {
+            steps
+        };
         Driver { out, steps, i: 0, started: Instant::now(), queue: VecDeque::new(), results: Vec::new(), shot_until: None, pending_mods: Modifiers::NONE, finished: false }
     }
 

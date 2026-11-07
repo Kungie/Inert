@@ -462,8 +462,11 @@ impl Browser {
         p.rect_filled(rect, 4.0, if focused { BG } else { RAISED });
         p.rect_stroke(rect, 4.0, Stroke::new(1.0, if focused { LINE_STRONG } else { LINE }), egui::StrokeKind::Inside);
 
-        // Security badge.
-        let (label, color, icon) = match self.security() {
+        // Security badge. While the user types something else, it stops
+        // describing the current page (like Chrome's search icon).
+        let current = crate::app::display_url(&self.active_tab().map(|t| t.url()).unwrap_or_default());
+        let typing_other = self.omni.editing && !self.omni.text.is_empty() && self.omni.text != current;
+        let (label, color, icon) = if typing_other { ("SEARCH", MUTED, Icon::Search) } else { match self.security() {
             Security::Secured { dev: true } => ("SECURED · DEV", SECURE, Icon::Lock),
             Security::Secured { dev: false } => ("SECURED", SECURE, Icon::Lock),
             Security::Connecting => ("VERIFYING", MUTED, Icon::Lock),
@@ -473,7 +476,7 @@ impl Browser {
             Security::Unencrypted("Servo") => ("NOT ENCRYPTED · SERVO", DANGER, Icon::Unlock),
             Security::Unencrypted(_) => ("NOT ENCRYPTED · WEBKIT", DANGER, Icon::Unlock),
             Security::Internal => ("INERT", MUTED, Icon::Spark),
-        };
+        } };
         let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::new(10.0, mono()), color);
         let bw = galley.size().x + 30.0;
         let badge = Rect::from_min_size(rect.min + vec2(4.0, 4.0), vec2(bw, rect.height() - 8.0));
@@ -503,6 +506,8 @@ impl Browser {
             .text_color(FG)
             .hint_text(RichText::new("Search or enter an address — inert:// sites are verified").color(DIM))
             .desired_width(text_rect.width())
+            .min_size(vec2(0.0, text_rect.height()))
+            .vertical_align(Align::Center)
             .show(&mut child);
         let resp = out.response.clone();
         if resp.gained_focus() {
