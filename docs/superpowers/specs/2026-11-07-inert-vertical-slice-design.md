@@ -398,3 +398,33 @@ Tüm veriler sahte ve bellekte. Gerçek bir servise bağlantı yok. Ürün görs
 - `vello` ile `parley`'in mevcut sürümlerinin dilim için yeterli olup olmadığı. Değilse aynı arayüzün arkasında alternatif bir renderer.
 - CBOR crate'inin seçimi (`minicbor` ya da benzeri) ve katı mod için ne kadar özel kod gerekeceği.
 - WebP decode için bellek güvenli bir crate'in olgunluğu. Yetersizse dilimde sadece PNG.
+
+---
+
+## 18. Uygulama notları (2026-11-07, ilk implementasyon)
+
+Spec'ten bilinçli sapmalar ve eklemeler. Her biri kodda tek bir sınırın arkasında duruyor, geri dönmek mümkün.
+
+**Protokol eklemeleri (geriye uyumlu küçük alanlar):**
+- `Manifest.name`: tarayıcıda gösterilen uygulama adı.
+- `ScreenDef.title`: sekme başlığı ve erişilebilirlik için ekran adı.
+- `Input` / `Select` / `Toggle` üzerinde isteğe bağlı `init`: form alanının başlangıç değeri (literal ya da üst seviye bir slot'a bind). Verifier, `init`'in alan tipine uyduğunu kontrol eder.
+- Dev trust dosyası (`~/Library/Application Support/Inert/dev-trust/<host>.toml`) TLS dev CA'sını, manifest anahtarını ve bağlanılacak adresi birlikte taşır.
+
+**Crate yapısı:** `inert-client` adında altıncı bir crate eklendi. Tarayıcı ile ekransız test istemcisi aynı oturum kodunu (pin, imza, şablon kontrolü, asset hash kontrolü) paylaşıyor.
+
+**Hata davranışı:** Geçersiz bir `open` mesajı sunucuda `fatal screen_invalid` ile, ekran handler'ının hatası `fatal internal` ile sonlanır. Sunucu, şablona uymayan bir ekranı göndermeden önce kendisi yakalar ve `internal` döner.
+
+**Tarayıcı çizim katmanı:** §11.1'deki `vello` + `parley` + `taffy` yerine `egui` + `eframe` (wgpu) kullanıldı (§17'nin izin verdiği alternatif). Erişilebilirlik (AccessKit), IME, metin düzenleme ve ekran okuyucu desteği kutudan çıkıyor. Tarayıcının kendi arayüzü ve `inert://` renderer'ı aynı katmanla çiziliyor.
+
+**Normal web motoru: Servo yerine sistem WebKit'i (WKWebView, `wry` ile).** Gerekçe: Inbox grubunun amacı Gmail ve WhatsApp Web gibi uygulamaları çalıştırmak, bunlar Servo 0.7'de çalışmıyor. Servo'yu derlemek de SpiderMonkey yüzünden ağır. Web içeriği WebKit'in kendi sandbox'lı süreçlerinde çalışıyor ve Inert çekirdeğine, pin'lere ya da AI anahtarlarına erişemiyor. Motor `web.rs`'in arkasında. Servo, uyumluluğu yeterli olduğunda aynı arayüzün arkasına eklenebilir.
+
+**Giriş:** "Sign in with Claude / GPT" ekranı sadece sağlayıcıyı soruyor. Üçüncü taraf uygulamalar için bu sağlayıcıların OAuth girişi kullanılmadığı için anahtar bir API key olarak alınıyor ve macOS Keychain'de saklanıyor. Anahtar atlanabilir.
+
+**VPN:** Mullvad uygulamasının kendi WireGuard tüneli, resmi `mullvad` CLI'ı üzerinden yönetiliyor. Tünel tarayıcıya değil, bütün Mac'e uygulanıyor ve arayüzde de bu şekilde anlatılıyor. Hesap numarası hiçbir zaman arayüze okunmuyor.
+
+**Reklam engelleme:** EasyList ve EasyPrivacy, Brave'in `adblock` crate'i ile WebKit content-blocker kurallarına çevriliyor (yaklaşık 131 bin kural), WebKit'te bir kez derleniyor ve sonraki açılışlarda önbellekten kullanılıyor.
+
+**Ölçümler (release, macOS, 1100×880 pencere):**
+- Tarayıcı süreci açılışta en fazla 136 MB, kullanımda 64–95 MB. WebKit web süreçleri bunun dışında.
+- `inert-browser` release binary'si 19 MB (dört gömülü font dahil).
