@@ -1,0 +1,12 @@
+# Rust
+/target/
+**/target/
+
+# Signing keys and dev trust files — never commit
+*.key
+*.pem
+dev-trust*.toml
+.inert-dev/
+
+# macOS
+.DS_Store
