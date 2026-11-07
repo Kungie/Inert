@@ -16,6 +16,9 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The cookie query the import runs (also checked against real Chromium files).
+pub const COOKIES_SQL: &str = "SELECT host_key, name, path, expires_utc, is_secure, is_httponly, samesite, value, hex(encrypted_value) AS enc FROM cookies";
+
 /// Seconds between 1601-01-01 (Chrome's epoch) and 1970-01-01.
 const EPOCH_DELTA: i64 = 11_644_473_600;
 
@@ -280,7 +283,7 @@ pub fn run(src: &Source, what: What) -> Imported {
             }
             if what.cookies {
                 let version = query(&d.join("Cookies"), "SELECT value FROM meta WHERE key = 'version'").ok().and_then(|v| v.first().map(|x| n(x, "value"))).unwrap_or(0);
-                match query(&d.join("Cookies"), "SELECT host_key, name, path, expires_utc, is_secure, is_httponly, samesite, value, hex(encrypted_value) AS enc FROM cookies") {
+                match query(&d.join("Cookies"), COOKIES_SQL) {
                     Ok(rows) => {
                         let now = crate::profile::now() as i64;
                         for v in rows {
@@ -418,6 +421,23 @@ fn sha2_prefix(host: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs the import's cookie query, with `LIMIT 0` (no values are read),
+    /// on real Chromium-format files listed in INERT_REAL_COOKIES
+    /// (colon-separated), and reports each file's schema version.
+    #[test]
+    #[ignore]
+    fn real_chromium_cookie_schema() {
+        let paths = std::env::var("INERT_REAL_COOKIES").expect("set INERT_REAL_COOKIES");
+        for p in paths.split(':').filter(|p| !p.is_empty()) {
+            let path = Path::new(p);
+            let version = query(path, "SELECT value FROM meta WHERE key = 'version'").unwrap().first().map(|x| n(x, "value")).unwrap_or(0);
+            let rows = query(path, &format!("{COOKIES_SQL} LIMIT 0"));
+            println!("{p}: schema version {version}, import query {}", if rows.is_ok() { "OK" } else { "FAILED" });
+            assert!(rows.is_ok(), "{p}: {:?}", rows.err());
+            assert!(version >= 18, "{p}: unexpected schema version {version}");
+        }
+    }
 
     #[test]
     fn imports_a_chrome_profile() {
