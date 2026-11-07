@@ -1050,19 +1050,19 @@ impl Browser {
 
     fn pop_vpn(&mut self, ui: &mut Ui) {
         let st = self.vpn.status.clone();
+        // Header: the icon sits on the label's line (it used to float above it).
         ui.horizontal(|ui| {
-            icons::paint(ui.painter(), Rect::from_min_size(ui.cursor().min, Vec2::splat(16.0)), Icon::Vpn, if st.connected() { OK } else { MUTED });
-            ui.add_space(20.0);
+            let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+            icons::paint(ui.painter(), r, Icon::Vpn, if st.connected() { OK } else { MUTED });
             ui.label(theme::label("Native VPN · Mullvad"));
         });
         ui.add_space(8.0);
         if !st.installed {
-            ui.label(theme::serif_text("Mullvad isn't installed", 22.0));
-            ui.label(theme::body("Inert's VPN uses the Mullvad app's WireGuard tunnel. Install it from mullvad.net, sign in there once, then come back."));
-            if ui.button("Open mullvad.net").clicked() {
-                self.add_tab("https://mullvad.net/download", None, true, None);
-                self.popover = Popover::None;
-            }
+            self.vpn_setup(ui);
+            return;
+        }
+        if st.logged_in == Some(false) {
+            self.vpn_login(ui);
             return;
         }
         let headline = if st.connected() { format!("{}, {}", st.city, st.country) } else if st.busy() { "Connecting…".into() } else { "Not connected".into() };
@@ -1119,6 +1119,104 @@ impl Browser {
             ui.label(theme::muted(&format!("Mullvad account active until {}", st.expiry.split(' ').next().unwrap_or(""))));
         }
         ui.label(theme::muted("Tunnels all traffic on this Mac through Mullvad (WireGuard)."));
+        ui.add_space(6.0);
+        ui.separator();
+        if self.vpn.confirm_logout {
+            ui.label(theme::body("Log out of Mullvad? The VPN disconnects and this Mac is removed from your account. You'll need your account number to sign back in."));
+            ui.horizontal(|ui| {
+                let b = ui.add(egui::Button::new(RichText::new("LOG OUT").font(FontId::new(11.5, mono())).color(DANGER).extra_letter_spacing(1.2)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, DANGER)).corner_radius(16).min_size(vec2(110.0, 32.0)));
+                crate::drive::reg("vpn:logout-confirm", b.rect);
+                if b.clicked() {
+                    self.vpn.confirm_logout = false;
+                    self.vpn.status.state = "disconnecting".into();
+                    vpn::exec(vpn::Cmd::Logout, self.demo, self.tx.clone(), self.ctx.clone());
+                }
+                if ui.button("Cancel").clicked() {
+                    self.vpn.confirm_logout = false;
+                }
+            });
+        } else {
+            let r = ui.horizontal(|ui| {
+                let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
+                if resp.hovered() {
+                    ui.painter().rect_filled(r, 8.0, HOVER);
+                }
+                icons::paint(ui.painter(), Rect::from_center_size(pos2(r.left() + 12.0, r.center().y), Vec2::splat(13.0)), Icon::Logout, MUTED);
+                ui.painter().text(pos2(r.left() + 28.0, r.center().y), egui::Align2::LEFT_CENTER, "Log out of Mullvad", FontId::new(13.0, sans()), FG);
+                resp
+            }).inner;
+            crate::drive::reg("vpn:logout", r.rect);
+            if r.clicked() {
+                self.vpn.confirm_logout = true;
+            }
+        }
+    }
+
+    /// Mullvad isn't installed: how to set it up.
+    fn vpn_setup(&mut self, ui: &mut Ui) {
+        ui.label(theme::serif_text("Set up the VPN", 24.0));
+        ui.label(theme::body("Inert's VPN is Mullvad's own WireGuard tunnel, dressed in Inert. Three steps:"));
+        ui.add_space(6.0);
+        for (n, t) in [("1", "Install the Mullvad app from mullvad.net."), ("2", "Open it once so its background service starts."), ("3", "Come back here and type your account number.")] {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(n).font(FontId::new(13.0, pixel())).color(ACCENT));
+                ui.label(theme::body(t));
+            });
+        }
+        ui.add_space(8.0);
+        let b = ui.add(egui::Button::new(RichText::new("DOWNLOAD MULLVAD →").font(FontId::new(12.0, mono())).color(BG).extra_letter_spacing(1.2)).fill(OK).corner_radius(18).min_size(vec2(ui.available_width(), 38.0)));
+        if b.clicked() {
+            self.add_tab("https://mullvad.net/download", None, true, None);
+            self.popover = Popover::None;
+        }
+    }
+
+    /// Mullvad is installed but signed out: the account number is all it takes.
+    fn vpn_login(&mut self, ui: &mut Ui) {
+        ui.label(theme::serif_text("Sign in to Mullvad", 24.0));
+        ui.label(theme::body("Type your 16-digit Mullvad account number. That's all — no email, no password."));
+        ui.add_space(8.0);
+        ui.label(theme::label("Account number"));
+        let busy = self.vpn.login_busy;
+        let r = ui.add_enabled(
+            !busy,
+            egui::TextEdit::singleline(&mut self.vpn.account_input)
+                .password(!self.vpn.show_account)
+                .hint_text("0000 0000 0000 0000")
+                .font(FontId::new(16.0, mono()))
+                .desired_width(ui.available_width())
+                .margin(vec2(12.0, 10.0)),
+        );
+        crate::drive::reg("vpn:account", r.rect);
+        let mut show = self.vpn.show_account;
+        if ui.checkbox(&mut show, "Show number").changed() {
+            self.vpn.show_account = show;
+        }
+        if let Some(e) = &self.vpn.login_error {
+            ui.label(RichText::new(e).font(FontId::new(12.0, mono())).color(DANGER));
+        }
+        ui.add_space(6.0);
+        let label = if busy { "SIGNING IN…" } else { "LOG IN →" };
+        let b = ui.add_enabled(!busy, egui::Button::new(RichText::new(label).font(FontId::new(12.0, mono())).color(BG).extra_letter_spacing(1.4)).fill(OK).corner_radius(18).min_size(vec2(ui.available_width(), 40.0)));
+        crate::drive::reg("vpn:login", b.rect);
+        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if (b.clicked() || enter) && !busy {
+            match vpn::clean_account(&self.vpn.account_input) {
+                Some(n) => {
+                    self.vpn.account_input.clear();
+                    self.vpn.login_error = None;
+                    self.vpn.login_busy = true;
+                    vpn::exec(vpn::Cmd::Login(n), self.demo, self.tx.clone(), self.ctx.clone());
+                }
+                None => self.vpn.login_error = Some("An account number is 16 digits.".into()),
+            }
+        }
+        ui.add_space(8.0);
+        ui.label(theme::muted("The number goes straight to the Mullvad app on this Mac. Inert never shows or stores it."));
+        if ui.add(egui::Label::new(theme::label_c("No account? Get one at mullvad.net →", SECURE)).sense(Sense::click())).clicked() {
+            self.add_tab("https://mullvad.net/account/create", None, true, None);
+            self.popover = Popover::None;
+        }
     }
 
     fn pop_cookies(&mut self, ui: &mut Ui) {

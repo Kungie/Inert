@@ -26,6 +26,7 @@ pub enum Event {
     AiReply(Result<String, String>),
     Vpn(vpn::Status),
     VpnRelays(Vec<vpn::Country>),
+    VpnLogin(Result<(), String>),
     AdblockRules(String, usize),
     AdblockFailed(String),
     Menu(String),
@@ -148,6 +149,12 @@ pub struct VpnState {
     pub open: bool,
     pub filter: String,
     pub reveal_ip: bool,
+    /// The account number being typed (cleared as soon as it is sent).
+    pub account_input: String,
+    pub show_account: bool,
+    pub login_busy: bool,
+    pub login_error: Option<String>,
+    pub confirm_logout: bool,
 }
 
 pub struct AdState {
@@ -700,6 +707,16 @@ impl Browser {
                 }
                 Event::Vpn(s) => self.vpn.status = s,
                 Event::VpnRelays(r) => self.vpn.relays = r,
+                Event::VpnLogin(r) => {
+                    self.vpn.login_busy = false;
+                    match r {
+                        Ok(()) => {
+                            self.vpn.login_error = None;
+                            self.toast("Signed in to Mullvad");
+                        }
+                        Err(e) => self.vpn.login_error = Some(e),
+                    }
+                }
                 Event::AdblockRules(json, n) => {
                     self.ad.state = adblock::State::Compiling(n);
                     // The filter lists are cached now: Servo's blocker can use them too.

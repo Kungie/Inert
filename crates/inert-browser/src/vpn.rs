@@ -19,6 +19,8 @@ pub struct Status {
     pub ip: String,
     pub mullvad_exit: bool,
     pub expiry: String,
+    /// Whether this Mac is signed in to a Mullvad account (`None`: not known yet).
+    pub logged_in: Option<bool>,
 }
 
 impl Status {
@@ -99,11 +101,28 @@ pub fn status() -> Status {
     s
 }
 
-/// Only the expiry date; the account number is never read into the UI.
-pub fn expiry() -> String {
-    run(&["account", "get"])
-        .and_then(|t| t.lines().find(|l| l.trim_start().starts_with("Expires at")).map(|l| l.split_once(':').map(|x| x.1.trim().to_owned()).unwrap_or_default()))
-        .unwrap_or_default()
+/// Signed in or not, and the expiry date. The account number is in the
+/// CLI's output but is dropped right here: it never reaches the UI.
+pub fn account() -> (Option<bool>, String) {
+    let Some(t) = run(&["account", "get"]) else { return (None, String::new()) };
+    account_from(&t)
+}
+
+fn account_from(t: &str) -> (Option<bool>, String) {
+    let expiry = t.lines().find(|l| l.trim_start().starts_with("Expires at")).and_then(|l| l.split_once(':')).map(|x| x.1.trim().to_owned()).unwrap_or_default();
+    if t.contains("Mullvad account:") {
+        (Some(true), expiry)
+    } else if t.to_ascii_lowercase().contains("not logged in") {
+        (Some(false), String::new())
+    } else {
+        (None, expiry)
+    }
+}
+
+/// A Mullvad account number: 16 digits; spaces and dashes are ignored.
+pub fn clean_account(input: &str) -> Option<String> {
+    let d: String = input.chars().filter(|c| !c.is_whitespace() && *c != '-').collect();
+    (d.len() == 16 && d.chars().all(|c| c.is_ascii_digit())).then_some(d)
 }
 
 pub fn relays() -> Vec<Country> {
@@ -141,7 +160,7 @@ pub fn relays() -> Vec<Country> {
 pub fn start_polling(tx: Sender<Event>, ctx: eframe::egui::Context, demo: bool) {
     std::thread::spawn(move || {
         if demo {
-            let s = Status { installed: true, state: "connected".into(), country: "Sweden".into(), city: "Gothenburg".into(), hostname: "se-got-wg-001".into(), ip: "203.0.113.24".into(), mullvad_exit: true, expiry: "2027-01-01".into() };
+            let s = demo_status(std::env::var("INERT_DEMO_VPN").as_deref() != Ok("logged-out"));
             let _ = tx.send(Event::Vpn(s));
             let _ = tx.send(Event::VpnRelays(demo_relays()));
             ctx.request_repaint();
@@ -149,11 +168,17 @@ pub fn start_polling(tx: Sender<Event>, ctx: eframe::egui::Context, demo: bool) 
         }
         let rl = relays();
         let _ = tx.send(Event::VpnRelays(rl));
-        let exp = expiry();
+        let mut acct = account();
         let mut last = Status::default();
+        let mut n = 0u32;
         loop {
+            // The account is checked every 30 s (and after log in / log out).
+            if n % 10 == 0 && n > 0 {
+                acct = account();
+            }
+            n += 1;
             let mut s = status();
-            s.expiry = exp.clone();
+            (s.logged_in, s.expiry) = acct.clone();
             if s != last {
                 last = s.clone();
                 if tx.send(Event::Vpn(s)).is_err() {
@@ -164,6 +189,14 @@ pub fn start_polling(tx: Sender<Event>, ctx: eframe::egui::Context, demo: bool) 
             std::thread::sleep(Duration::from_secs(3));
         }
     });
+}
+
+fn demo_status(logged_in: bool) -> Status {
+    if logged_in {
+        Status { installed: true, state: "connected".into(), country: "Sweden".into(), city: "Gothenburg".into(), hostname: "se-got-wg-001".into(), ip: "203.0.113.24".into(), mullvad_exit: true, expiry: "2027-01-01".into(), logged_in: Some(true) }
+    } else {
+        Status { installed: true, state: "disconnected".into(), ip: "198.51.100.7".into(), logged_in: Some(false), ..Default::default() }
+    }
 }
 
 fn demo_relays() -> Vec<Country> {
@@ -180,6 +213,10 @@ fn demo_relays() -> Vec<Country> {
 pub enum Cmd {
     Connect,
     Disconnect,
+    /// Signs this Mac in with an account number (already checked by `clean_account`).
+    Login(String),
+    /// Signs out: disconnects and removes this device from the account.
+    Logout,
     Location(String, Option<String>),
 }
 
@@ -187,9 +224,38 @@ pub enum Cmd {
 pub fn exec(cmd: Cmd, demo: bool, tx: Sender<Event>, ctx: eframe::egui::Context) {
     std::thread::spawn(move || {
         if demo {
+            // The demo profile pretends: any well-formed number signs in.
+            let s = match cmd {
+                Cmd::Login(_) => demo_status(true),
+                Cmd::Logout => demo_status(false),
+                _ => return,
+            };
+            std::thread::sleep(Duration::from_millis(500));
+            let _ = tx.send(Event::VpnLogin(Ok(())));
+            let _ = tx.send(Event::Vpn(s));
+            ctx.request_repaint();
             return;
         }
         match cmd {
+            Cmd::Login(number) => {
+                // The CLI takes the number as an argument (it has no stdin
+                // mode); it is visible to this user's processes for the
+                // moment the command runs, never logged or stored by Inert.
+                let r = bin().ok_or_else(|| "Mullvad isn't installed".to_owned()).and_then(|b| {
+                    let out = Command::new(b).args(["account", "login", number.as_str()]).output().map_err(|e| e.to_string())?;
+                    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+                    if out.status.success() && !text.to_ascii_lowercase().contains("error") {
+                        Ok(())
+                    } else {
+                        Err(login_error(&text))
+                    }
+                });
+                let _ = tx.send(Event::VpnLogin(r));
+            }
+            Cmd::Logout => {
+                run(&["disconnect"]);
+                run(&["account", "logout"]);
+            }
             Cmd::Connect => {
                 run(&["connect"]);
             }
@@ -207,8 +273,43 @@ pub fn exec(cmd: Cmd, demo: bool, tx: Sender<Event>, ctx: eframe::egui::Context)
         }
         std::thread::sleep(Duration::from_millis(400));
         let mut s = status();
-        s.expiry = expiry();
+        (s.logged_in, s.expiry) = account();
         let _ = tx.send(Event::Vpn(s));
         ctx.request_repaint();
     });
+}
+
+/// A short, number-free message for a failed login.
+fn login_error(cli: &str) -> String {
+    let l = cli.to_ascii_lowercase();
+    if l.contains("invalid") || l.contains("not found") || l.contains("does not exist") {
+        "Mullvad doesn't know that account number.".into()
+    } else if l.contains("too many devices") || l.contains("max") {
+        "This account already has the maximum number of devices. Remove one at mullvad.net.".into()
+    } else if l.contains("network") || l.contains("connect") || l.contains("timed out") {
+        "Couldn't reach Mullvad. Check your connection and try again.".into()
+    } else {
+        "Mullvad couldn't sign in with that number.".into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_numbers() {
+        assert_eq!(clean_account("1234 5678 9012 3456").as_deref(), Some("1234567890123456"));
+        assert_eq!(clean_account("1234-5678-9012-3456").as_deref(), Some("1234567890123456"));
+        assert!(clean_account("1234").is_none());
+        assert!(clean_account("abcd5678901234567").is_none());
+    }
+
+    #[test]
+    fn account_output_never_keeps_the_number() {
+        let (on, exp) = account_from("Mullvad account:    0000111122223333\nExpires at:         2026-12-01 10:00:00 +01:00\nDevice name:        Demo Fox\n");
+        assert_eq!(on, Some(true));
+        assert_eq!(exp, "2026-12-01 10:00:00 +01:00");
+        assert_eq!(account_from("Not logged in on any account\n").0, Some(false));
+    }
 }
