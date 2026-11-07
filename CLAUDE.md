@@ -89,6 +89,8 @@ Her biri kendi spec → plan → kod döngüsüyle ilerler.
 - TLS kütüphane açıkları: çözmez. `rustls` ve doğrulanmış kripto ile azaltılır.
 - Linux kernel RCE'leri: çözmez. Protokol OS'un üstünde çalışır.
 
+Gece raporu (görsel özet): https://claude.ai/artifact/BERyRh213X8xgAk2CSKnMD
+
 ## Tarayıcıda olanlar (2026-11-07)
 - Stencil tarzı koyu arayüz, egui + wgpu, dört Geist fontu gömülü.
 - Giriş: sadece AI sağlayıcı (Claude / GPT) + isteğe bağlı API key (Keychain).
