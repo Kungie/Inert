@@ -417,7 +417,9 @@ Spec'ten bilinçli sapmalar ve eklemeler. Her biri kodda tek bir sınırın arka
 
 **Tarayıcı çizim katmanı:** §11.1'deki `vello` + `parley` + `taffy` yerine `egui` + `eframe` (wgpu) kullanıldı (§17'nin izin verdiği alternatif). Erişilebilirlik (AccessKit), IME, metin düzenleme ve ekran okuyucu desteği kutudan çıkıyor. Tarayıcının kendi arayüzü ve `inert://` renderer'ı aynı katmanla çiziliyor.
 
-**Normal web motoru: Servo yerine sistem WebKit'i (WKWebView, `wry` ile).** Gerekçe: Inbox grubunun amacı Gmail ve WhatsApp Web gibi uygulamaları çalıştırmak, bunlar Servo 0.7'de çalışmıyor. Servo'yu derlemek de SpiderMonkey yüzünden ağır. Web içeriği WebKit'in kendi sandbox'lı süreçlerinde çalışıyor ve Inert çekirdeğine, pin'lere ya da AI anahtarlarına erişemiyor. Motor `web.rs`'in arkasında. Servo, uyumluluğu yeterli olduğunda aynı arayüzün arkasına eklenebilir.
+**Normal web motoru (güncellendi, 2026-11-07 sabah): Servo varsayılan, WebKit seçenek.** Servo 0.7 tarayıcının içine gömülü. `SoftwareRenderingContext` ile ekran dışında çiziyor, her yeni kare egui'de doku olarak gösteriliyor. Fare, tekerlek ve klavye girdisi Servo'ya iletiliyor. `inert://` linkleri Servo'dan güvenli motora devrediliyor. Inbox grubundaki sekmeler (Gmail, WhatsApp) uyumluluk için varsayılan olarak WebKit (WKWebView) ile açılıyor; bu bir ayar. Her web sayfası, site güvenliği panelinden diğer motorla yeniden açılabilir. Shield, Servo sekmelerinde Brave'in `adblock` motoruyla istekleri yakalayıp engelliyor; WebKit sekmelerinde WebKit'in kendi içerik engelleyicisi kullanılıyor.
+
+**epaint yaması:** Servo, `vello_cpu`'yu çok iş parçacıklı özellikle kullanıyor. Cargo özellikleri birleştirdiği için egui'nin glif rasterleştirmesi de çok iş parçacıklı moda geçip çöküyordu. `vendor/epaint` içinde iki satırlık bir yama, egui için tek iş parçacığını açıkça seçiyor (`vendor/epaint/INERT_PATCH.md`).
 
 **Giriş:** "Sign in with Claude / GPT" ekranı sadece sağlayıcıyı soruyor. Üçüncü taraf uygulamalar için bu sağlayıcıların OAuth girişi kullanılmadığı için anahtar bir API key olarak alınıyor ve macOS Keychain'de saklanıyor. Anahtar atlanabilir.
 
@@ -425,8 +427,10 @@ Spec'ten bilinçli sapmalar ve eklemeler. Her biri kodda tek bir sınırın arka
 
 **Reklam engelleme:** EasyList ve EasyPrivacy, Brave'in `adblock` crate'i ile WebKit content-blocker kurallarına çevriliyor (yaklaşık 131 bin kural), WebKit'te bir kez derleniyor ve sonraki açılışlarda önbellekten kullanılıyor.
 
-**Ölçümler (release, macOS, 1100×880 pencere):**
-- Tarayıcı süreci açılışta en fazla 136 MB, kullanımda 64–95 MB. WebKit web süreçleri bunun dışında.
-- `inert-browser` release binary'si 19 MB (dört gömülü font dahil).
+**Ölçümler (release, macOS):**
+- Servo eklenmeden önce: tarayıcı süreci kullanımda 64–95 MB, binary 19 MB.
+- Servo ile: UI sürücüsü turu boyunca medyan 167 MB, en fazla 281 MB (Servo aynı süreçte, yazılım çizim ve Servo sekmeleri için bellekteki reklam engelleme motoru dahil). Binary 108 MB. §16'daki 150 MB hedefi Servo açıkken aşılıyor; bu bir kabul şartı değildi. Servo'yu ayrı bir sürece almak hem belleği hem izolasyonu iyileştirecek bir sonraki adım.
+
+**UI testleri:** `crates/inert-browser/src/drive.rs`, egui'nin girdi akışına gerçek fare ve klavye olayları enjekte ediyor (`App::raw_input_hook`). 49 kontrol var: giriş, omnibox tamamlama, banka transferi (limit dışı tutar dahil), mağaza sepeti, not ekleme ve kaydetme, yer imleri, sekme grupları, sağ tık menüsü, kısayollar, Servo'da tıklama ve yazma, motor değiştirme, Inbox'ın WebKit'te açılması, VPN, Shield, asistan, geçmiş. Hepsi geçiyor (`docs/test-results/ui-driver.json`). Bu testler 4 gerçek hata buldu ve düzeltildi.
 
 **Fuzzing (2026-11-07):** Dört hedef (`cbor_decode`, `message_decode`, `manifest_verify`, `screen_action_verify`) paralel olarak her biri 30 dakika çalıştı (§16). Toplam yaklaşık 213 milyon girdi denendi, hiç çökme ya da artifact yok. İlk 10 dakikalık koşu (78 milyon girdi) da temizdi.

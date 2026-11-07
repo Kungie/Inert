@@ -7,8 +7,9 @@
   The browser pins the site's key, verifies the signature, then checks every
   screen against the signed template before drawing it. A hacked server can
   show wrong data, but it cannot add a password field.
-- Everything else on the web opens in the same browser as **unsecured** tabs
-  (system WebKit, sandboxed), with a native ad & tracker blocker.
+- Everything else on the web opens in the same browser as **unsecured** tabs,
+  rendered by **Servo** (the Rust web engine) by default, or by the system
+  WebKit for Inbox tabs and on demand, with ad & tracker blocking in both.
 
 ![Inert Bank in the Inert browser](docs/screenshots/04-bank-overview.png)
 
@@ -47,6 +48,13 @@ optionally, your API key (stored in the macOS Keychain).
 
 ```bash
 cargo test --workspace
+```
+
+UI tests that drive the real browser with injected mouse and keyboard events
+(49 checks, demo sites must be running):
+
+```bash
+scripts/ui-test.sh target/ui-test
 ```
 
 Includes end-to-end tests over real TLS for all ten attack scenarios in the

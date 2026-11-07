@@ -28,7 +28,7 @@ Durum: dikey dilim implement edildi (2026-11-07 gecesi): protokol crate'leri, Ru
 4. **İstemci AI'ı yalnızca kullanıcı için uyarlar:** font, kontrast, sade düzen, koyu mod. Kural: AI neyin nasıl göründüğüne karar verir, ne olduğuna asla karar vermez. İçerik ve aksiyon eklenemez, gizlenemez, değiştirilemez (prompt injection ve AI phishing'e karşı).
 5. **Adoption'ı agent'lar yapar.** Uygulamaları agent'lar yazar ya da mevcut sitelerden port eder. Bu yüzden spec küçük, katı ve makine tarafından doğrulanabilir olmalı. Güvensiz olan şey ifade bile edilememeli.
 6. **İki tür tüketici:** insanlar (renderer ile) ve AI agent'ları (bileşen ağacını ve aksiyonları doğrudan okur).
-7. **Kendi tarayıcımız da olacak (2026-11-07).** Rust ile yazılmış, küçük, hafif, az RAM kullanan, futuristik, minimal ve AI destekli bir tarayıcı. `inert://` siteleri **secured**, normal web siteleri **unsecured** olarak gösterilir. Normal web içeriği güvenilmez veri sayılır: tarayıcının AI'ı bu sayfalardaki metni talimat olarak almaz (prompt injection), bu sayfalarda onaysız aksiyon almaz. Normal web motoru Inert çekirdeğinden ve token'lardan ayrı, izole bir süreçte çalışır. Normal web motoru olarak Servo seçilmişti. İlk implementasyonda Gmail ve WhatsApp Web uyumluluğu için **sistem WebKit'i (WKWebView, `wry`)** kullanıldı. Servo hedef olarak kalıyor ve `web.rs` sınırının arkasına eklenebilir (spec §18). Eren'e sabah danışılacak.
+7. **Kendi tarayıcımız da olacak (2026-11-07).** Rust ile yazılmış, küçük, hafif, az RAM kullanan, futuristik, minimal ve AI destekli bir tarayıcı. `inert://` siteleri **secured**, normal web siteleri **unsecured** olarak gösterilir. Normal web içeriği güvenilmez veri sayılır: tarayıcının AI'ı bu sayfalardaki metni talimat olarak almaz (prompt injection), bu sayfalarda onaysız aksiyon almaz. Normal web motoru Inert çekirdeğinden ve token'lardan ayrı, izole bir süreçte çalışır. **Normal web motoru: Servo (varsayılan)**, gömülü ve ekran dışında çiziyor. Inbox sekmeleri uyumluluk için WebKit (WKWebView) kullanıyor (ayar). Her sayfa güvenlik panelinden diğer motorla açılabiliyor. Ayrıntılar spec §18'de.
 8. **Kimlik doğrulama: kullanıcı kendi AI token'ını getirir (BYO token).** "Sign in with GPT" ve "Sign in with Claude". AI özellikleri (tasarım üretimi, kullanıcı uyarlaması, agent işlemleri) kullanıcının kendi modeliyle çalışır. Doğrulanmadı: OpenAI ve Anthropic'in üçüncü taraf uygulamalar için OAuth girişi sunup sunmadığı ve koşulları. Sunmuyorsa API key girişi yedek yol olur.
 
 ## Mimari
@@ -96,7 +96,8 @@ Gece raporu (görsel özet): https://claude.ai/artifact/BERyRh213X8xgAk2CSKnMD
 - Giriş: sadece AI sağlayıcı (Claude / GPT) + isteğe bağlı API key (Keychain).
 - Sekmeler, sekme grupları (Inbox, Homeserver, Developer + normal gruplar), yer imleri, geçmiş, omnibox (satır içi tamamlama + arama önerileri), kapatılan sekmeyi geri açma, sayfada bul, zoom, indirmeler, memory saver, native menü ve kısayollar.
 - `inert://` siteleri SECURED, normal web UNSECURED / NOT ENCRYPTED rozetiyle.
-- Shield: EasyList + EasyPrivacy, WebKit content blocker.
+- Shield: EasyList + EasyPrivacy. WebKit sekmelerinde WebKit content blocker, Servo sekmelerinde istek yakalama + Brave adblock motoru.
+- UI testleri: `scripts/ui-test.sh` (gerçek girdi olayları, 49 kontrol).
 - VPN: Mullvad (CLI üzerinden), Stencil temalı panel.
 - Asistan: inert:// sayfaları imzalı ağaçtan, web sayfaları güvenilmez metin olarak okunur. Salt okunur.
 - `--demo` profili ve `scripts/walkthrough.sh` ile otomatik ekran görüntüsü turu.
