@@ -335,6 +335,8 @@ fn main() {
                     let frame = Rc::new(Cell::new(true));
                     let d = Rc::new(Delegate { id: view, out: out.clone(), frame: frame.clone(), blocker: blocker.clone() });
                     let wv = WebViewBuilder::new(&servo, ctx.clone()).url(u).delegate(d).build();
+                    // Pages see prefers-color-scheme: dark, like the rest of Inert.
+                    wv.notify_theme_change(servo::Theme::Dark);
                     views.insert(view, Entry { view: wv, frame });
                 }
                 Cmd::Load { view, url } => {
@@ -416,6 +418,52 @@ fn main() {
                 Cmd::LoadFilters => {
                     if blocker.engine.borrow().is_none() && blocker_rx.is_none() {
                         blocker_rx = Some(build_blocker());
+                    }
+                }
+                Cmd::Cookies { req, url } => {
+                    let list = url::Url::parse(&url)
+                        .map(|u| servo.site_data_manager().cookies_for_url(u, servo::CookieSource::HTTP))
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|c| inert_servo_ipc::CookieJson {
+                            name: c.name().to_owned(),
+                            value: String::new(),
+                            domain: c.domain().unwrap_or("").to_owned(),
+                            path: c.path().unwrap_or("/").to_owned(),
+                            expires: c.expires_datetime().map(|t| t.unix_timestamp()),
+                            secure: c.secure().unwrap_or(false),
+                            http_only: c.http_only().unwrap_or(false),
+                            same_site: c.same_site().map(|s| format!("{s:?}")),
+                        })
+                        .collect();
+                    let _ = out.send(Ev::Cookies { req, list });
+                }
+                Cmd::ClearCookies { sites } => {
+                    let all = servo::StorageType::Cookies | servo::StorageType::Local | servo::StorageType::Session;
+                    if sites.is_empty() {
+                        servo.site_data_manager().clear_cookies(None);
+                        let names: Vec<String> = servo.site_data_manager().site_data(all).iter().map(|d| d.name()).collect();
+                        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+                        servo.site_data_manager().clear_site_data(&refs, all);
+                    } else {
+                        let refs: Vec<&str> = sites.iter().map(String::as_str).collect();
+                        servo.site_data_manager().clear_site_data(&refs, all);
+                    }
+                }
+                Cmd::SetCookies { list } => {
+                    for (u, c) in list {
+                        let Ok(u) = url::Url::parse(&u) else { continue };
+                        let mut b = cookie::Cookie::build((c.name, c.value)).domain(c.domain).path(c.path).secure(c.secure).http_only(c.http_only);
+                        if let Some(t) = c.expires.and_then(|t| cookie::time::OffsetDateTime::from_unix_timestamp(t).ok()) {
+                            b = b.expires(t);
+                        }
+                        b = match c.same_site.as_deref() {
+                            Some("Strict") => b.same_site(cookie::SameSite::Strict),
+                            Some("None") => b.same_site(cookie::SameSite::None),
+                            Some("Lax") => b.same_site(cookie::SameSite::Lax),
+                            _ => b,
+                        };
+                        servo.site_data_manager().set_cookie_for_url(u, b.build().into_owned(), None);
                     }
                 }
                 Cmd::Quit => break 'main,

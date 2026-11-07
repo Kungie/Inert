@@ -9,6 +9,7 @@ mod ai;
 mod app;
 mod art;
 mod chrome;
+mod cookies;
 mod drive;
 mod icons;
 mod inert_tab;
@@ -23,6 +24,7 @@ mod shot;
 mod theme;
 mod vpn;
 mod web;
+mod when;
 
 use eframe::egui;
 

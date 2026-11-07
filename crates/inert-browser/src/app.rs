@@ -30,6 +30,10 @@ pub enum Event {
     AdblockFailed(String),
     Menu(String),
     ServoUrl { tab: u64, url: String },
+    ServoCookies { req: u64, list: Vec<inert_servo_ipc::CookieJson> },
+    /// The cookie-banner script's answer for a tab: what it clicked, if anything.
+    Consent { tab: u64, what: String },
+    WkCookies(Vec<inert_servo_ipc::CookieJson>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -169,6 +173,7 @@ pub enum Popover {
     Vpn,
     Shield,
     Menu,
+    Cookies,
     GroupAdd(u64),
 }
 
@@ -184,6 +189,8 @@ pub struct Browser {
     pub tx: Sender<Event>,
     pub rx: Receiver<Event>,
     pub omni: Omni,
+    /// The new tab page's own search box.
+    pub ntp: Omni,
     pub ai: AiState,
     pub vpn: VpnState,
     pub ad: AdState,
@@ -210,6 +217,9 @@ pub struct Browser {
     pub last_relief: Instant,
     /// Tabs closing in the strip (animation only).
     pub closing: Vec<crate::chrome::Ghost>,
+    pub cookie: crate::cookies::State,
+    /// Imported cookies waiting for the Servo process to start.
+    pub pending_servo_cookies: Vec<(String, inert_servo_ipc::CookieJson)>,
 }
 
 impl Browser {
@@ -217,6 +227,8 @@ impl Browser {
         let ctx = cc.egui_ctx.clone();
         theme::install_fonts(&ctx);
         theme::install_style(&ctx);
+        // A dark window: WebKit views inherit it, so pages see prefers-color-scheme: dark.
+        ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
         if demo {
             // Demo mode always starts from a clean, fake profile (safe for screenshots).
             let _ = std::fs::remove_dir_all(Profile::dir(true));
@@ -237,6 +249,7 @@ impl Browser {
             tx,
             rx,
             omni: Omni::default(),
+            ntp: Omni::default(),
             ai: AiState::default(),
             vpn: VpnState::default(),
             ad: AdState {
@@ -267,6 +280,8 @@ impl Browser {
             servo_restarts: 0,
             last_relief: Instant::now(),
             closing: Vec::new(),
+            cookie: Default::default(),
+            pending_servo_cookies: Vec::new(),
         };
         b.refresh_sites();
         // Restore without activating, so collapsed groups stay collapsed.
@@ -328,7 +343,7 @@ impl Browser {
             self.connect_inert(id, &mut tab, raw);
             return Kind::Inert(tab);
         }
-        Kind::Web(WebTab::new(url, title.unwrap_or("")))
+        Kind::Web(WebTab::new(&crate::profile::dark_web(url), title.unwrap_or("")))
     }
 
     fn connect_inert(&mut self, id: u64, t: &mut InertTab, raw: Vec<(String, String)>) {
@@ -439,7 +454,7 @@ impl Browser {
 
     /// Navigates the active tab (or `id`) to `url`.
     pub fn navigate(&mut self, id: u64, url: &str) {
-        let url = url.trim().to_owned();
+        let url = crate::profile::dark_web(url.trim());
         // Same kind web→web: reuse the web view.
         let old = self.tab(id).map(|t| t.url()).unwrap_or_default();
         if let Some(t) = self.tab_mut(id) {
@@ -636,6 +651,7 @@ impl Browser {
                     if !started {
                         self.profile.record_visit(&url, &title);
                         self.dirty = true;
+                        self.after_web_load(tab, &url);
                     }
                     if tab == self.active && !self.omni.editing {
                         self.omni.text = url;
@@ -670,6 +686,8 @@ impl Browser {
                 Event::Remote(q, list) => {
                     if q == self.omni.typed {
                         self.omni.remote = list;
+                    } else if q == self.ntp.typed {
+                        self.ntp.remote = list;
                     }
                 }
                 Event::AiReply(r) => {
@@ -694,6 +712,11 @@ impl Browser {
                 }
                 Event::AdblockFailed(e) => self.ad.state = adblock::State::Failed(e),
                 Event::Menu(id) => self.on_menu(&id),
+                Event::ServoCookies { req, list } => self.on_servo_cookies(req, list),
+                Event::WkCookies(list) => self.on_wk_cookies(list),
+                Event::Consent { tab, what } => {
+                    self.cookie.consent.insert(tab, what);
+                }
                 Event::ServoUrl { tab, url } => {
                     if let Some(Kind::Web(w)) = self.tab_mut(tab).map(|t| &mut t.kind) {
                         w.url = url.clone();
@@ -999,7 +1022,12 @@ impl Browser {
         }
         if need_servo && self.servo.is_none() && self.servo_error.is_none() {
             match crate::servo_web::Host::new(&self.ctx, Profile::dir(self.demo), self.tx.clone()) {
-                Ok(h) => self.servo = Some(h),
+                Ok(h) => {
+                    if !self.pending_servo_cookies.is_empty() {
+                        h.set_cookies(std::mem::take(&mut self.pending_servo_cookies));
+                    }
+                    self.servo = Some(h)
+                }
                 Err(e) => self.servo_error = Some(e),
             }
         }
@@ -1158,5 +1186,12 @@ impl Browser {
             Failure::Protocol { code, .. } => *code,
             _ => None,
         }
+    }
+}
+
+impl Browser {
+    /// Deletes every cookie and site data in both engines (filled in by `cookies.rs`).
+    pub fn clear_all_cookies(&mut self) {
+        crate::cookies::clear_all(self);
     }
 }

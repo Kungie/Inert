@@ -32,6 +32,12 @@ pub enum Cmd {
     Adblock { on: bool },
     /// The filter lists were (re)cached: rebuild the blocking engine.
     LoadFilters,
+    /// Cookies Servo would send to `url` (values are left out).
+    Cookies { req: u64, url: String },
+    /// Deletes cookies and site storage for these sites (eTLD+1); empty = all.
+    ClearCookies { sites: Vec<String> },
+    /// Adds cookies (the Chrome import): (url the cookie belongs to, cookie).
+    SetCookies { list: Vec<(String, CookieJson)> },
     Quit,
 }
 
@@ -65,5 +71,23 @@ pub enum Ev {
     Blocked { n: u64 },
     /// The blocking engine is built and in use.
     ShieldReady,
+    Cookies { req: u64, list: Vec<CookieJson> },
     Log { msg: String },
+}
+
+/// A cookie as both sides see it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CookieJson {
+    pub name: String,
+    #[serde(default)]
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    /// Unix seconds; `None` for a session cookie.
+    pub expires: Option<i64>,
+    pub secure: bool,
+    pub http_only: bool,
+    /// "Strict", "Lax" or "None".
+    #[serde(default)]
+    pub same_site: Option<String>,
 }

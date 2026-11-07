@@ -46,7 +46,8 @@ impl SearchEngine {
     pub fn search_url(self, q: &str) -> String {
         let q = url::form_urlencoded::byte_serialize(q.as_bytes()).collect::<String>();
         match self {
-            SearchEngine::DuckDuckGo => format!("https://duckduckgo.com/?q={q}"),
+            // kae=d: DuckDuckGo's dark theme.
+            SearchEngine::DuckDuckGo => format!("https://duckduckgo.com/?q={q}&kae=d"),
             SearchEngine::Google => format!("https://www.google.com/search?q={q}"),
             SearchEngine::Brave => format!("https://search.brave.com/search?q={q}"),
         }
@@ -97,6 +98,12 @@ pub struct Settings {
     /// Inbox tabs (mail, chat) use WebKit for compatibility.
     #[serde(default = "yes")]
     pub inbox_webkit: bool,
+    /// Cookies extension: reject cookie banners automatically.
+    #[serde(default = "yes")]
+    pub cookie_banners: bool,
+    /// Cookies extension: sites (eTLD+1) whose cookies are deleted after every load.
+    #[serde(default)]
+    pub cookie_block: Vec<String>,
 }
 
 impl Default for Settings {
@@ -112,6 +119,8 @@ impl Default for Settings {
             vpn_last_location: None,
             web_engine: Engine::Servo,
             inbox_webkit: true,
+            cookie_banners: true,
+            cookie_block: Vec::new(),
         }
     }
 }
@@ -128,6 +137,14 @@ pub struct HistoryEntry {
     pub title: String,
     pub visits: u32,
     pub last: u64,
+}
+
+/// One visit, for the history page's timeline.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Visit {
+    pub url: String,
+    pub title: String,
+    pub t: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +189,9 @@ pub struct Profile {
     pub settings: Settings,
     pub bookmarks: Vec<Bookmark>,
     pub history: Vec<HistoryEntry>,
+    /// Every visit, newest last (capped). `history` keeps per-URL counts.
+    #[serde(default)]
+    pub visits: Vec<Visit>,
     pub groups: Vec<GroupDef>,
     pub session: Vec<SavedTab>,
     pub active: usize,
@@ -265,10 +285,45 @@ impl Profile {
         } else {
             self.history.push(HistoryEntry { url: url.into(), title: title.into(), visits: 1, last: t });
         }
+        // A title arriving right after the load updates that visit instead of adding one.
+        match self.visits.last_mut() {
+            Some(v) if v.url == url && t.saturating_sub(v.t) < 60 => {
+                if !title.is_empty() {
+                    v.title = title.to_owned();
+                }
+            }
+            _ => self.visits.push(Visit { url: url.into(), title: title.into(), t }),
+        }
+        if self.visits.len() > 20_000 {
+            self.visits.drain(..5_000);
+        }
         if self.history.len() > 5000 {
             self.history.sort_by(|a, b| b.last.cmp(&a.last));
             self.history.truncate(4000);
         }
+    }
+
+    /// Forgets visits since `since` (0 = everything).
+    pub fn clear_history_since(&mut self, since: u64) {
+        self.visits.retain(|v| v.t < since);
+        if since == 0 {
+            self.history.clear();
+        } else {
+            // Recount from what is left.
+            self.history.retain(|h| h.last < since || self.visits.iter().any(|v| v.url == h.url));
+            for h in &mut self.history {
+                if h.last >= since {
+                    if let Some(v) = self.visits.iter().rev().find(|v| v.url == h.url) {
+                        h.last = v.t;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn forget_url(&mut self, url: &str) {
+        self.visits.retain(|v| v.url != url);
+        self.history.retain(|h| h.url != url);
     }
 
     pub fn is_bookmarked(&self, url: &str) -> bool {
@@ -318,5 +373,29 @@ pub fn presets(kind: GroupKind) -> &'static [(&'static str, &'static str)] {
             ("Inert Bank (dev)", "inert://bank.example"),
         ],
         GroupKind::Normal => &[],
+    }
+}
+
+/// DuckDuckGo starts in its dark theme (`kae=d`) unless the URL picks one.
+pub fn dark_web(url: &str) -> String {
+    let Ok(mut u) = url::Url::parse(url) else { return url.to_owned() };
+    let ddg = matches!(u.host_str(), Some("duckduckgo.com" | "www.duckduckgo.com" | "start.duckduckgo.com"));
+    if ddg && !u.query_pairs().any(|(k, _)| k == "kae") {
+        u.query_pairs_mut().append_pair("kae", "d");
+        return u.to_string();
+    }
+    url.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn duckduckgo_dark() {
+        assert_eq!(dark_web("https://duckduckgo.com/"), "https://duckduckgo.com/?kae=d");
+        assert_eq!(dark_web("https://duckduckgo.com/?q=rust"), "https://duckduckgo.com/?q=rust&kae=d");
+        assert_eq!(dark_web("https://duckduckgo.com/?q=rust&kae=-1"), "https://duckduckgo.com/?q=rust&kae=-1");
+        assert_eq!(dark_web("https://example.com/"), "https://example.com/");
+        assert!(SearchEngine::DuckDuckGo.search_url("a b").ends_with("&kae=d"));
     }
 }

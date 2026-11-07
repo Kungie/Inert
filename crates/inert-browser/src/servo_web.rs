@@ -31,6 +31,8 @@ struct Shared {
     cursor: HashMap<u64, String>,
     history: HashMap<u64, (bool, bool)>,
     /// Pending `read_text` requests: req → tab.
+    /// Consent checks: req → tab.
+    consents: HashMap<u64, u64>,
     reads: HashMap<u64, u64>,
     blocked: u64,
     shield_ready: bool,
@@ -117,6 +119,24 @@ impl Host {
     }
 
     /// (requests blocked this session, engine ready)
+    /// Asks for the cookies Servo would send to `url`; the answer arrives as
+    /// `Event::ServoCookies` with the returned request id.
+    pub fn cookies(&self, url: &str) -> u64 {
+        let req = self.inner.next_req.get() + 1;
+        self.inner.next_req.set(req);
+        self.inner.send(&Cmd::Cookies { req, url: url.to_owned() });
+        req
+    }
+
+    /// Deletes cookies and site storage for these sites; empty = everything.
+    pub fn clear_cookies(&self, sites: Vec<String>) {
+        self.inner.send(&Cmd::ClearCookies { sites });
+    }
+
+    pub fn set_cookies(&self, list: Vec<(String, inert_servo_ipc::CookieJson)>) {
+        self.inner.send(&Cmd::SetCookies { list });
+    }
+
     pub fn shield(&self) -> (u64, bool) {
         self.inner.shared.lock().map(|s| (s.blocked, s.shield_ready)).unwrap_or((0, false))
     }
@@ -184,6 +204,11 @@ fn reader(stdout: std::process::ChildStdout, shared: Arc<Mutex<Shared>>, tx: Sen
             }
             Ev::Navigate { view, url } => send(Event::Navigate { tab: view, url }),
             Ev::Eval { req, text } => {
+                let consent = shared.lock().ok().and_then(|mut s| s.consents.remove(&req));
+                if let Some(tab) = consent {
+                    send(Event::Consent { tab, what: text });
+                    continue;
+                }
                 let tab = shared.lock().ok().and_then(|mut s| s.reads.remove(&req));
                 if let Some(tab) = tab {
                     send(Event::PageText { tab, text });
@@ -199,6 +224,7 @@ fn reader(stdout: std::process::ChildStdout, shared: Arc<Mutex<Shared>>, tx: Sen
                     s.shield_ready = true;
                 }
             }
+            Ev::Cookies { req, list } => send(Event::ServoCookies { req, list }),
             Ev::Log { msg } => tracing::debug!("servo-host: {msg}"),
         }
         ectx.request_repaint();
@@ -258,6 +284,16 @@ pub fn create(host: &Host, tab: u64, url: &str) -> Result<View, String> {
     url::Url::parse(url).map_err(|e| e.to_string())?;
     host.inner.send(&Cmd::Create { view: tab, url: url.to_owned() });
     Ok(View { id: tab, inner: host.inner.clone() })
+}
+
+/// Asks what the cookie-banner script did on this page (`Event::Consent`).
+pub fn read_consent(v: &View, tab: u64) {
+    let req = v.inner.next_req.get() + 1000;
+    v.inner.next_req.set(req + 1);
+    if let Ok(mut s) = v.inner.shared.lock() {
+        s.consents.insert(req, tab);
+    }
+    v.inner.send(&Cmd::Eval { view: v.id, req, script: crate::cookies::CONSENT_QUERY.into() });
 }
 
 /// Reads the page's visible text for the assistant (untrusted).

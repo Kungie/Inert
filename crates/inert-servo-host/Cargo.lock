@@ -2808,6 +2808,7 @@ name = "inert-servo-host"
 version = "0.1.0"
 dependencies = [
  "adblock",
+ "cookie 0.18.2",
  "dirs",
  "dpi",
  "http",

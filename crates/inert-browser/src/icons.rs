@@ -32,6 +32,10 @@ pub enum Icon {
     Layers,
     Folder,
     Check,
+    Cookie,
+    Key,
+    Import,
+    Logout,
 }
 
 fn s(c: Color32) -> Stroke {
@@ -184,6 +188,37 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, c: Color32) {
         }
         Icon::Check => {
             p.add(egui::Shape::line(vec![at(-5.0, 0.5), at(-1.5, 4.0), at(5.5, -4.0)], Stroke::new(1.8, c)));
+        }
+        Icon::Cookie => {
+            // A round cookie with a bite out of its top right, and chips.
+            let pts: Vec<Pos2> = (0..=28).map(|i| {
+                let a = -0.35 + i as f32 / 28.0 * (std::f32::consts::TAU - 1.25);
+                at(6.0 * a.cos(), 6.0 * a.sin())
+            }).collect();
+            let (first, last) = (pts[0], *pts.last().unwrap());
+            p.add(egui::Shape::line(pts, s(c)));
+            p.add(egui::Shape::line(vec![last, at(2.2, -2.2), first], s(c)));
+            for (x, y) in [(-2.5, -1.5), (1.0, 2.5), (-1.5, 3.0), (3.0, 0.5)] {
+                p.circle_filled(at(x, y), 0.9 * u, c);
+            }
+        }
+        Icon::Key => {
+            p.circle_stroke(at(-3.0, 0.0), 3.0 * u, s(c));
+            line(at(0.0, 0.0), at(6.0, 0.0));
+            line(at(4.0, 0.0), at(4.0, 2.5));
+            line(at(6.0, 0.0), at(6.0, 2.5));
+        }
+        Icon::Import => {
+            line(at(0.0, -6.0), at(0.0, 2.0));
+            line(at(0.0, 2.0), at(-3.0, -1.0));
+            line(at(0.0, 2.0), at(3.0, -1.0));
+            p.add(egui::Shape::line(vec![at(-6.0, 1.0), at(-6.0, 5.5), at(6.0, 5.5), at(6.0, 1.0)], s(c)));
+        }
+        Icon::Logout => {
+            p.add(egui::Shape::line(vec![at(1.0, -5.5), at(-5.5, -5.5), at(-5.5, 5.5), at(1.0, 5.5)], s(c)));
+            line(at(-1.5, 0.0), at(6.0, 0.0));
+            line(at(6.0, 0.0), at(3.0, -3.0));
+            line(at(6.0, 0.0), at(3.0, 3.0));
         }
         Icon::Folder => {
             p.add(egui::Shape::closed_line(vec![at(-6.0, -4.0), at(-2.0, -4.0), at(-0.5, -2.5), at(6.0, -2.5), at(6.0, 5.0), at(-6.0, 5.0)], s(c)));

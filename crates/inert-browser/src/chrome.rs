@@ -128,6 +128,7 @@ impl Browser {
         });
         self.popovers(&ctx);
         self.omnibox_dropdown(&ctx);
+        self.ntp_dropdown(&ctx);
         self.rename_modal(&ctx);
         self.toast_overlay(&ctx);
     }
@@ -528,7 +529,7 @@ impl Browser {
                 self.reload();
             }
             ui.add_space(6.0);
-            let right_w = 4.0 * 32.0 + 8.0;
+            let right_w = 5.0 * 32.0 + 8.0;
             let w = (ui.available_width() - right_w).max(200.0);
             self.omnibox(ui, w);
             ui.add_space(6.0);
@@ -540,6 +541,12 @@ impl Browser {
                 let title = self.active_tab().map(|t| t.title()).unwrap_or_default();
                 self.profile.toggle_bookmark(&url, &title);
                 self.dirty = true;
+            }
+            let rc = icons::button_c(ui, Icon::Cookie, 30.0, "Cookies — see and delete this site's cookies", if self.profile.settings.cookie_banners { FG } else { MUTED }, true);
+            crate::drive::reg("cookies", rc.rect);
+            if rc.clicked() {
+                self.cookies_refresh();
+                self.open_popover(Popover::Cookies, rc.rect);
             }
             let (shield_c, tip) = match (&self.ad.state, self.profile.settings.adblock) {
                 (_, false) => (MUTED, "Shield is off".to_owned()),
@@ -752,7 +759,7 @@ impl Browser {
         self.omni.remote.get(i - self.omni.sugg.len()).map(|q| omnibox::Suggestion { kind: SKind::Remote, title: q.clone(), target: q.clone() })
     }
 
-    fn accept_suggestion(&mut self, s: omnibox::Suggestion) {
+    pub fn accept_suggestion(&mut self, s: omnibox::Suggestion) {
         match s.kind {
             SKind::OpenTab => {
                 if let Ok(id) = s.target.parse::<u64>() {
@@ -780,63 +787,35 @@ impl Browser {
         }
         let t = ctx.animate_bool_with_time(Id::unique("omni-dd-anim"), true, 0.14);
         let Some(r) = ctx.data(|d| d.get_temp::<Rect>(Id::unique("omni-rect"))) else { return };
-        let mut rows: Vec<omnibox::Suggestion> = self.omni.sugg.clone();
-        rows.extend(self.omni.remote.iter().map(|q| omnibox::Suggestion { kind: SKind::Remote, title: q.clone(), target: q.clone() }));
-        let mut clicked = None;
-        let area = egui::Area::new(Id::unique("omni-dropdown")).fixed_pos(pos2(r.left(), r.bottom() + 6.0 - 6.0 * (1.0 - ease(t)))).order(egui::Order::Foreground).show(ctx, |ui| {
-            ui.multiply_opacity(t);
-            egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(14).inner_margin(6.0).show(ui, |ui| {
-                ui.set_width(r.width() - 12.0);
-                ui.spacing_mut().item_spacing.y = 0.0;
-                for (i, s) in rows.iter().enumerate() {
-                    let sel = i == self.omni.sel;
-                    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
-                    if sel || resp.hovered() {
-                        ui.painter().rect_filled(rect, 9.0, if sel { HOVER } else { RAISED });
-                    }
-                    let (icon, c) = match s.kind {
-                        SKind::Url => (Icon::Globe, FG),
-                        SKind::Search | SKind::Remote => (Icon::Search, MUTED),
-                        SKind::History => (Icon::History, MUTED),
-                        SKind::Bookmark => (Icon::Star, ACCENT),
-                        SKind::OpenTab => (Icon::Tab, EDGE),
-                        SKind::Inert => (Icon::Lock, SECURE),
-                        SKind::Ai => (Icon::Spark, ACCENT),
-                    };
-                    icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 16.0, rect.center().y), Vec2::splat(14.0)), icon, c);
-                    let tag = match s.kind {
-                        SKind::Url => "",
-                        SKind::Search => "SEARCH",
-                        SKind::Remote => "SUGGESTED",
-                        SKind::History => "HISTORY",
-                        SKind::Bookmark => "BOOKMARK",
-                        SKind::OpenTab => "OPEN TAB",
-                        SKind::Inert => "SECURED",
-                        SKind::Ai => "ASSISTANT",
-                    };
-                    let mut job = egui::text::LayoutJob::single_section(s.title.clone(), egui::TextFormat::simple(FontId::new(13.0, sans()), FG));
-                    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 160.0);
-                    let g = ui.fonts_mut(|f| f.layout_job(job));
-                    ui.painter().galley(pos2(rect.left() + 34.0, rect.center().y - g.size().y / 2.0), g, FG);
-                    if matches!(s.kind, SKind::History | SKind::Bookmark | SKind::Inert) {
-                        let short = omnibox::strip(&s.target);
-                        let gw = ui.painter().layout_no_wrap(short.to_owned(), FontId::new(11.0, mono()), DIM);
-                        let _ = gw;
-                    }
-                    ui.painter().text(pos2(rect.right() - 10.0, rect.center().y), egui::Align2::RIGHT_CENTER, tag, FontId::new(9.5, mono()), DIM);
-                    if resp.clicked() {
-                        clicked = Some(s.clone());
-                    }
-                }
-            });
-        });
-        ctx.data_mut(|d| d.insert_temp(Id::unique("omni-dd"), area.response.rect));
-        self.overlay_rects.push(area.response.rect);
+        let rows = rows_of(&self.omni);
+        let (area, clicked) = suggestion_popup(ctx, "omni-dropdown", r, &rows, self.omni.sel, t);
+        ctx.data_mut(|d| d.insert_temp(Id::unique("omni-dd"), area));
+        self.overlay_rects.push(area);
         if let Some(s) = clicked {
             self.omni.editing = false;
             self.omni.sugg.clear();
             self.omni.remote.clear();
             ctx.memory_mut(|m| m.surrender_focus(Id::unique("omnibox")));
+            self.accept_suggestion(s);
+        }
+    }
+
+    /// Suggestions under the new tab page's own search box.
+    pub fn ntp_dropdown(&mut self, ctx: &egui::Context) {
+        let on_ntp = matches!(self.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::NewTab)));
+        if !on_ntp || !self.ntp.editing || (self.ntp.sugg.is_empty() && self.ntp.remote.is_empty()) {
+            ctx.data_mut(|d| d.remove::<Rect>(Id::unique("ntp-dd")));
+            ctx.animate_bool_with_time(Id::unique("ntp-dd-anim"), false, 0.0);
+            return;
+        }
+        let t = ctx.animate_bool_with_time(Id::unique("ntp-dd-anim"), true, 0.14);
+        let Some(r) = ctx.data(|d| d.get_temp::<Rect>(Id::unique("ntp-rect"))) else { return };
+        let rows = rows_of(&self.ntp);
+        let (area, clicked) = suggestion_popup(ctx, "ntp-dropdown", r, &rows, self.ntp.sel, t);
+        ctx.data_mut(|d| d.insert_temp(Id::unique("ntp-dd"), area));
+        if let Some(s) = clicked {
+            self.ntp = Default::default();
+            ctx.memory_mut(|m| m.surrender_focus(Id::unique("ntp-search")));
             self.accept_suggestion(s);
         }
     }
@@ -951,6 +930,7 @@ impl Browser {
                     Popover::Security => self.pop_security(ui),
                     Popover::Vpn => self.pop_vpn(ui),
                     Popover::Shield => self.pop_shield(ui),
+                    Popover::Cookies => self.pop_cookies(ui),
                     Popover::Menu => self.pop_menu(ui),
                     Popover::GroupAdd(g) => self.pop_group_add(ui, g),
                     Popover::None => {}
@@ -1139,6 +1119,93 @@ impl Browser {
             ui.label(theme::muted(&format!("Mullvad account active until {}", st.expiry.split(' ').next().unwrap_or(""))));
         }
         ui.label(theme::muted("Tunnels all traffic on this Mac through Mullvad (WireGuard)."));
+    }
+
+    fn pop_cookies(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+            icons::paint(ui.painter(), r, Icon::Cookie, ACCENT);
+            ui.label(theme::label("Cookies · extension"));
+        });
+        ui.add_space(6.0);
+        let id = self.active;
+        let web = matches!(self.tab(id).map(|t| &t.kind), Some(Kind::Web(_)));
+        if !web {
+            ui.label(theme::serif_text("No cookies here", 24.0));
+            ui.label(theme::body("inert:// sites and Inert's own pages don't use cookies: there is no script to set them, and sessions are part of the signed protocol."));
+        } else {
+            let host = self.cookie.host.clone();
+            let site = crate::cookies::site_of(&host);
+            ui.label(theme::serif_text(&host, 24.0));
+            let n = self.cookie.list.len();
+            let consent = self.cookie.consent.get(&id).cloned().unwrap_or_default();
+            ui.label(theme::muted(&if self.cookie.loading { "Reading cookies…".to_owned() } else { format!("{n} cookie{} for this site", if n == 1 { "" } else { "s" }) }));
+            if consent == "rejected" {
+                ui.label(theme::label_c("✓ Cookie banner rejected automatically", OK));
+            }
+            ui.add_space(6.0);
+            let servo = matches!(self.tab(id).map(|t| &t.kind), Some(Kind::Web(w)) if w.sv.is_some());
+            let list = self.cookie.list.clone();
+            let mut del = None;
+            egui::ScrollArea::vertical().max_height(210.0).show(ui, |ui| {
+                for c in &list {
+                    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::hover());
+                    if resp.hovered() {
+                        ui.painter().rect_filled(rect, 8.0, HOVER);
+                    }
+                    let mut job = egui::text::LayoutJob::single_section(c.name.clone(), egui::TextFormat::simple(FontId::new(12.0, mono()), FG));
+                    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 40.0);
+                    let g = ui.fonts_mut(|f| f.layout_job(job));
+                    ui.painter().galley(pos2(rect.left() + 8.0, rect.top() + 4.0), g, FG);
+                    let exp = match c.expires {
+                        None => "session".to_owned(),
+                        Some(t) => format!("until {}", crate::when::date(t.max(0) as u64)),
+                    };
+                    let flags = format!("{} · {exp}{}{}", c.domain, if c.secure { " · Secure" } else { "" }, if c.http_only { " · HttpOnly" } else { "" });
+                    ui.painter().text(pos2(rect.left() + 8.0, rect.bottom() - 5.0), egui::Align2::LEFT_BOTTOM, flags, FontId::new(10.5, mono()), DIM);
+                    if !servo && resp.hovered() {
+                        let cr = Rect::from_center_size(pos2(rect.right() - 16.0, rect.center().y), Vec2::splat(20.0));
+                        let x = ui.interact(cr, Id::unique(("cookie-x", &c.name, &c.domain)), Sense::click()).on_hover_text("Delete this cookie");
+                        icons::paint(ui.painter(), cr.shrink(5.0), Icon::Close, if x.hovered() { WHITE } else { MUTED });
+                        if x.clicked() {
+                            del = Some(c.clone());
+                        }
+                    }
+                }
+            });
+            if let Some(c) = del {
+                self.cookie_delete(&c);
+            }
+            ui.add_space(8.0);
+            let b = ui.add(egui::Button::new(RichText::new(format!("DELETE COOKIES FOR {}", site.to_uppercase())).font(FontId::new(11.5, mono())).color(FG).extra_letter_spacing(1.0)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(18).min_size(vec2(ui.available_width(), 36.0)));
+            crate::drive::reg("cookies:clear-site", b.rect);
+            if b.clicked() {
+                self.cookies_clear_site(&site);
+                self.toast(format!("Deleted cookies and site data for {site}"));
+            }
+            ui.add_space(4.0);
+            let mut keep_none = self.profile.settings.cookie_block.contains(&site);
+            let r = ui.checkbox(&mut keep_none, format!("Keep no cookies for {site}"));
+            crate::drive::reg("cookies:block", r.rect);
+            if r.changed() {
+                if keep_none {
+                    self.profile.settings.cookie_block.push(site.clone());
+                    self.cookies_clear_site(&site);
+                } else {
+                    self.profile.settings.cookie_block.retain(|s| *s != site);
+                }
+                self.dirty = true;
+            }
+        }
+        ui.add_space(4.0);
+        let mut on = self.profile.settings.cookie_banners;
+        let r = ui.checkbox(&mut on, "Reject cookie banners automatically");
+        crate::drive::reg("cookies:banners", r.rect);
+        if r.changed() {
+            self.profile.settings.cookie_banners = on;
+            self.dirty = true;
+        }
+        ui.label(theme::muted("Values are never shown. Manage every site's cookies in Settings → Extensions."));
     }
 
     fn pop_shield(&mut self, ui: &mut Ui) {
@@ -1660,4 +1727,59 @@ impl Browser {
     }
 }
 
+/// Local suggestions followed by the search engine's.
+pub fn rows_of(o: &crate::app::Omni) -> Vec<omnibox::Suggestion> {
+    let mut rows: Vec<omnibox::Suggestion> = o.sugg.clone();
+    rows.extend(o.remote.iter().map(|q| omnibox::Suggestion { kind: SKind::Remote, title: q.clone(), target: q.clone() }));
+    rows
+}
 
+/// The suggestion list under a search field (omnibox or new tab page),
+/// fading and sliding in. Returns its rect and the row that was clicked.
+pub fn suggestion_popup(ctx: &egui::Context, key: &str, r: Rect, rows: &[omnibox::Suggestion], selected: usize, t: f32) -> (Rect, Option<omnibox::Suggestion>) {
+    let mut clicked = None;
+    let area = egui::Area::new(Id::unique(key)).fixed_pos(pos2(r.left(), r.bottom() + 6.0 - 6.0 * (1.0 - ease(t)))).order(egui::Order::Foreground).show(ctx, |ui| {
+        ui.multiply_opacity(t);
+        egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(14).inner_margin(6.0).show(ui, |ui| {
+            ui.set_width(r.width() - 12.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (i, s) in rows.iter().enumerate() {
+                let sel = i == selected;
+                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
+                crate::drive::reg(format!("{key}:{i}"), rect);
+                if sel || resp.hovered() {
+                    ui.painter().rect_filled(rect, 9.0, if sel { HOVER } else { RAISED });
+                }
+                let (icon, c) = match s.kind {
+                    SKind::Url => (Icon::Globe, FG),
+                    SKind::Search | SKind::Remote => (Icon::Search, MUTED),
+                    SKind::History => (Icon::History, MUTED),
+                    SKind::Bookmark => (Icon::Star, ACCENT),
+                    SKind::OpenTab => (Icon::Tab, EDGE),
+                    SKind::Inert => (Icon::Lock, SECURE),
+                    SKind::Ai => (Icon::Spark, ACCENT),
+                };
+                icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 16.0, rect.center().y), Vec2::splat(14.0)), icon, c);
+                let tag = match s.kind {
+                    SKind::Url => "",
+                    SKind::Search => "SEARCH",
+                    SKind::Remote => "SUGGESTED",
+                    SKind::History => "HISTORY",
+                    SKind::Bookmark => "BOOKMARK",
+                    SKind::OpenTab => "OPEN TAB",
+                    SKind::Inert => "SECURED",
+                    SKind::Ai => "ASSISTANT",
+                };
+                let mut job = egui::text::LayoutJob::single_section(s.title.clone(), egui::TextFormat::simple(FontId::new(13.0, sans()), FG));
+                job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 160.0);
+                let g = ui.fonts_mut(|f| f.layout_job(job));
+                ui.painter().galley(pos2(rect.left() + 34.0, rect.center().y - g.size().y / 2.0), g, FG);
+                ui.painter().text(pos2(rect.right() - 10.0, rect.center().y), egui::Align2::RIGHT_CENTER, tag, FontId::new(9.5, mono()), DIM);
+                if resp.clicked() {
+                    clicked = Some(s.clone());
+                }
+            }
+        });
+    });
+    (area.response.rect, clicked)
+}

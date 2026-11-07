@@ -18,6 +18,52 @@ fn ghost(ui: &mut Ui, text: &str, w: f32) -> egui::Response {
     ui.add(egui::Button::new(RichText::new(text).font(FontId::new(12.0, mono())).color(FG).extra_letter_spacing(1.4)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(2).min_size(vec2(w, 46.0)))
 }
 
+/// A rounded panel for page content.
+fn card(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE)).corner_radius(16).inner_margin(egui::Margin::symmetric(18, 14)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        add(ui);
+    });
+}
+
+/// A history row: time, icon, title, host; hover shows a remove button.
+/// Returns the row's response and whether remove was clicked.
+fn row(ui: &mut Ui, time: &str, title: &str, url: &str, removable: bool) -> (egui::Response, bool) {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+    let hov = ui.ctx().animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.1);
+    let p = ui.painter();
+    if hov > 0.0 {
+        p.rect_filled(rect, 10.0, HOVER.gamma_multiply(hov));
+    }
+    let mut x = rect.left() + 10.0;
+    if !time.is_empty() {
+        p.text(pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, time, FontId::new(11.5, mono()), DIM);
+        x += 54.0;
+    }
+    let inert = url.starts_with("inert://");
+    icons::paint(p, Rect::from_center_size(pos2(x + 7.0, rect.center().y), Vec2::splat(13.0)), if inert { Icon::Lock } else { Icon::Globe }, if inert { SECURE } else { DIM });
+    x += 24.0;
+    let host = crate::omnibox::strip(url).split('/').next().unwrap_or("").to_owned();
+    let hg = ui.painter().layout_no_wrap(host, FontId::new(11.5, mono()), DIM);
+    let mut job = egui::text::LayoutJob::single_section(title.to_owned(), egui::TextFormat::simple(FontId::new(13.5, sans()), FG));
+    job.wrap = egui::text::TextWrapping::truncate_at_width((rect.right() - x - hg.size().x - 70.0).max(40.0));
+    let g = ui.fonts_mut(|f| f.layout_job(job));
+    let tw = g.size().x;
+    ui.painter().galley(pos2(x, rect.center().y - g.size().y / 2.0), g, FG);
+    ui.painter().galley(pos2(x + tw + 12.0, rect.center().y - hg.size().y / 2.0), hg, DIM);
+    let mut removed = false;
+    if removable && resp.hovered() || removable && ui.rect_contains_pointer(rect) {
+        let cr = Rect::from_center_size(pos2(rect.right() - 18.0, rect.center().y), Vec2::splat(22.0));
+        let c = ui.interact(cr, resp.id.with("x"), Sense::click()).on_hover_text("Remove from history");
+        if c.hovered() {
+            ui.painter().circle_filled(cr.center(), 11.0, LINE);
+        }
+        icons::paint(ui.painter(), cr.shrink(6.0), Icon::Close, if c.hovered() { WHITE } else { MUTED });
+        removed = c.clicked();
+    }
+    (resp.on_hover_text(url), removed)
+}
+
 fn section(ui: &mut Ui, n: &str, title: &str) {
     ui.add_space(28.0);
     ui.label(theme::label(&format!("{n} — {title}")));
@@ -171,15 +217,7 @@ impl Browser {
         ui.add_space(12.0);
         ui.label(RichText::new("Where to?").font(FontId::new(64.0, serif())).color(WHITE).extra_letter_spacing(-2.0));
         ui.add_space(22.0);
-        // Search box that hands off to the omnibox.
-        let (r, resp) = ui.allocate_exact_size(vec2(w.min(640.0), 48.0), Sense::click());
-        ui.painter().rect_filled(r, 4.0, RAISED);
-        ui.painter().rect_stroke(r, 4.0, Stroke::new(1.0, if resp.hovered() { LINE_STRONG } else { LINE }), egui::StrokeKind::Inside);
-        icons::paint(ui.painter(), Rect::from_center_size(pos2(r.left() + 22.0, r.center().y), Vec2::splat(16.0)), Icon::Search, MUTED);
-        ui.painter().text(pos2(r.left() + 44.0, r.center().y), egui::Align2::LEFT_CENTER, format!("Search {} or type an address", self.profile.settings.search.name()), FontId::new(15.0, sans()), DIM);
-        if resp.clicked() {
-            self.omni.focus = true;
-        }
+        self.ntp_search(ui, w.min(680.0));
 
         section(ui, "01", "Secured sites");
         let sites = self.sites.clone();
@@ -255,53 +293,258 @@ impl Browser {
         }
     }
 
+    /// The new tab page's search box: a real field with its own suggestions
+    /// (it no longer hands off to the address bar).
+    fn ntp_search(&mut self, ui: &mut Ui, w: f32) {
+        let id = Id::unique("ntp-search");
+        let (r, bg) = ui.allocate_exact_size(vec2(w, 54.0), Sense::click());
+        crate::drive::reg("ntp:search", r);
+        let ctx = ui.ctx().clone();
+        let focused = ui.memory(|m| m.has_focus(id));
+        let f = ctx.animate_bool_with_time(Id::unique("ntp-focus"), focused, 0.16);
+        let hov = ctx.animate_bool_with_time(Id::unique("ntp-hover"), ui.rect_contains_pointer(r), 0.12);
+        let rad = r.height() / 2.0;
+        let p = ui.painter();
+        if f > 0.0 {
+            p.rect_stroke(r.expand(1.5), rad + 1.5, Stroke::new(3.0, ACCENT.gamma_multiply(0.22 * f)), egui::StrokeKind::Outside);
+        }
+        p.rect_filled(r, rad, RAISED.lerp_to_gamma(HOVER, hov * (1.0 - f)).lerp_to_gamma(BG, f));
+        p.rect_stroke(r, rad, Stroke::new(1.0, LINE.lerp_to_gamma(LINE_STRONG, hov).lerp_to_gamma(ACCENT.gamma_multiply(0.75), f)), egui::StrokeKind::Inside);
+        icons::paint(p, Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), Vec2::splat(16.0)), Icon::Search, if focused { FG } else { MUTED });
+        if bg.clicked() {
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+        let font = FontId::new(16.0, sans());
+        let row_h = ui.fonts_mut(|fo| fo.row_height(&font));
+        let tr = Rect::from_min_max(pos2(r.left() + 50.0, r.center().y - row_h / 2.0), pos2(r.right() - 22.0, r.center().y + row_h / 2.0));
+        let before = self.ntp.text.clone();
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tr).layout(Layout::left_to_right(Align::Center)));
+        let out = egui::TextEdit::singleline(&mut self.ntp.text)
+            .id(id)
+            .frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .font(font)
+            .text_color(FG)
+            .hint_text(RichText::new(format!("Search {} or type an address", self.profile.settings.search.name())).color(DIM))
+            .desired_width(tr.width())
+            .show(&mut child);
+        let resp = out.response.clone();
+        let has = ui.memory(|m| m.has_focus(id));
+        if resp.gained_focus() {
+            self.ntp.editing = true;
+        }
+        if has {
+            let (down, up, tab) = ui.input_mut(|i| (i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown), i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp), i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)));
+            let n = self.ntp.sugg.len() + self.ntp.remote.len();
+            if down && n > 0 {
+                self.ntp.sel = (self.ntp.sel + 1).min(n - 1);
+            }
+            if up {
+                self.ntp.sel = self.ntp.sel.saturating_sub(1);
+            }
+            if tab {
+                let len = self.ntp.text.chars().count();
+                let mut st = out.state.clone();
+                st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(len))));
+                st.store(ui.ctx(), id);
+            }
+        }
+        if self.ntp.text != before && has {
+            self.ntp.editing = true;
+            self.ntp.sel = 0;
+            let cursor_end = out.cursor_range.map(|c| c.primary.index.0).unwrap_or(0) == self.ntp.text.chars().count();
+            let grew = self.ntp.text.len() > before.len() && self.ntp.text.starts_with(before.as_str());
+            let typed = self.ntp.text.clone();
+            self.ntp.typed = typed.clone();
+            if grew && cursor_end {
+                if let Some(full) = crate::omnibox::inline_completion(&self.profile, &typed) {
+                    let (tl, fl) = (typed.chars().count(), full.chars().count());
+                    self.ntp.text = full;
+                    let mut st = out.state.clone();
+                    st.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(fl), egui::text::CCursor::new(tl))));
+                    st.store(ui.ctx(), id);
+                }
+            }
+            let tabs: Vec<(u64, String, String)> = self.tabs.iter().filter(|t| t.id != self.active).map(|t| (t.id, t.title(), t.url())).collect();
+            let ai = self.profile.settings.provider.map(|p| p.name());
+            self.ntp.sugg = crate::omnibox::local(&self.profile, &tabs, &self.sites, &typed, ai);
+            self.ntp.remote.clear();
+            if self.profile.settings.remote_suggestions && typed.trim().len() >= 2 && !typed.contains("://") && !self.demo {
+                crate::omnibox::remote(self.profile.settings.search, typed, self.tx.clone(), self.ctx.clone());
+            }
+        }
+        let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if enter {
+            let rows = crate::chrome::rows_of(&self.ntp);
+            let choice = if self.ntp.sel == 0 { None } else { rows.get(self.ntp.sel).cloned() };
+            let text = self.ntp.text.clone();
+            self.ntp = Default::default();
+            match choice {
+                Some(s) => self.accept_suggestion(s),
+                None if !text.trim().is_empty() => self.open_url_from_omnibox(&text),
+                None => {}
+            }
+        } else if resp.lost_focus() {
+            let in_dd = ctx.data(|d| d.get_temp::<Rect>(Id::unique("ntp-dd"))).zip(ctx.pointer_latest_pos()).is_some_and(|(r, p)| r.contains(p));
+            if !in_dd {
+                self.ntp.editing = false;
+            }
+        }
+        if has && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.ntp = Default::default();
+            ui.memory_mut(|m| m.surrender_focus(id));
+        }
+        ctx.data_mut(|d| d.insert_temp(Id::unique("ntp-rect"), r));
+    }
+
     fn history_page(&mut self, ui: &mut Ui) {
         ui.add_space(48.0);
         ui.label(theme::label("History"));
         ui.label(theme::serif_text("Where you've been.", 44.0));
-        ui.add_space(12.0);
+        ui.add_space(16.0);
         let key = Id::unique("hist-filter");
         let mut q: String = ui.ctx().data(|d| d.get_temp(key)).unwrap_or_default();
+        let clear_key = Id::unique("hist-clear-open");
+        let mut clear_open: bool = ui.ctx().data(|d| d.get_temp(clear_key)).unwrap_or(false);
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut q).hint_text("Search history").desired_width(360.0));
-            if ui.button("Clear browsing history").clicked() {
-                self.profile.history.clear();
-                self.dirty = true;
+            let r = ui.add(egui::TextEdit::singleline(&mut q).hint_text("Search history").desired_width(380.0).margin(vec2(14.0, 9.0)));
+            crate::drive::reg("history:search", r.rect);
+            let b = ui.add(egui::Button::new(RichText::new("Clear browsing data…").font(FontId::new(13.0, sans()))).corner_radius(16).min_size(vec2(0.0, 34.0)));
+            crate::drive::reg("history:clear", b.rect);
+            if b.clicked() {
+                clear_open = !clear_open;
             }
         });
         ui.ctx().data_mut(|d| d.insert_temp(key, q.clone()));
-        ui.add_space(12.0);
-        let mut items = self.profile.history.clone();
-        items.sort_by(|a, b| b.last.cmp(&a.last));
-        let ql = q.to_lowercase();
-        let mut remove = None;
-        let mut open = None;
-        for h in items.iter().filter(|h| ql.is_empty() || h.url.to_lowercase().contains(&ql) || h.title.to_lowercase().contains(&ql)).take(300) {
-            ui.horizontal(|ui| {
-                let inert = h.url.starts_with("inert://");
-                let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                icons::paint(ui.painter(), r, if inert { Icon::Lock } else { Icon::Globe }, if inert { SECURE } else { DIM });
-                let t = if h.title.is_empty() { h.url.clone() } else { h.title.clone() };
-                if ui.add(egui::Label::new(theme::body(&t)).sense(Sense::click()).truncate()).clicked() {
-                    open = Some(h.url.clone());
-                }
-                ui.label(theme::mono_text(crate::omnibox::strip(&h.url), 11.0).color(DIM));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if icons::button(ui, Icon::Close, 20.0, "Remove").clicked() {
-                        remove = Some(h.url.clone());
+        if clear_open {
+            ui.add_space(12.0);
+            clear_open = self.clear_data_card(ui);
+        }
+        ui.ctx().data_mut(|d| d.insert_temp(clear_key, clear_open));
+
+        // Recently closed tabs, like Chrome's history page.
+        if !self.closed.is_empty() && q.is_empty() {
+            ui.add_space(18.0);
+            let mut reopen = None;
+            card(ui, |ui| {
+                ui.label(theme::label("Recently closed"));
+                ui.add_space(4.0);
+                for (i, c) in self.closed.iter().enumerate().rev().take(6) {
+                    if row(ui, "", &c.title, &c.url, false).0.clicked() {
+                        reopen = Some(i);
                     }
-                    ui.label(theme::mono_text(&format!("×{}", h.visits), 11.0).color(DIM));
-                });
+                }
+            });
+            if let Some(i) = reopen {
+                let c = self.closed.remove(i);
+                let id = self.add_tab(&c.url, c.group, true, Some(&c.title));
+                let _ = id;
+            }
+        }
+
+        // The timeline, grouped by day.
+        let ql = q.to_lowercase();
+        let now = crate::profile::now();
+        let mut open = None;
+        let mut remove = None;
+        let mut shown = 0;
+        let mut day: Option<(i32, u32, u32)> = None;
+        let visits: Vec<crate::profile::Visit> = self.profile.visits.iter().rev().filter(|v| ql.is_empty() || v.url.to_lowercase().contains(&ql) || v.title.to_lowercase().contains(&ql)).take(400).cloned().collect();
+        if visits.is_empty() {
+            ui.add_space(24.0);
+            ui.label(theme::muted(if q.is_empty() { "Pages you visit show up here." } else { "No history matches that search." }));
+        }
+        let mut i = 0;
+        while i < visits.len() {
+            let k = crate::when::day_key(visits[i].t);
+            let start = i;
+            while i < visits.len() && crate::when::day_key(visits[i].t) == k {
+                i += 1;
+            }
+            day = Some(k);
+            ui.add_space(18.0);
+            card(ui, |ui| {
+                ui.label(theme::label(&crate::when::day_label(visits[start].t, now)));
+                ui.add_space(4.0);
+                for v in &visits[start..i] {
+                    let title = if v.title.is_empty() { crate::omnibox::strip(&v.url).to_owned() } else { v.title.clone() };
+                    let (resp, x) = row(ui, &crate::when::clock(v.t), &title, &v.url, true);
+                    if shown == 0 {
+                        crate::drive::reg("history:first", resp.rect);
+                    }
+                    shown += 1;
+                    if x {
+                        remove = Some(v.url.clone());
+                    } else if resp.clicked() {
+                        open = Some(v.url.clone());
+                    }
+                }
             });
         }
+        let _ = day;
         if let Some(u) = remove {
-            self.profile.history.retain(|h| h.url != u);
+            self.profile.forget_url(&u);
             self.dirty = true;
         }
         if let Some(u) = open {
             let id = self.active;
             self.navigate(id, &u);
         }
+    }
+
+    /// Chrome's "Clear browsing data": a time range and what to clear.
+    /// Returns whether the card stays open.
+    fn clear_data_card(&mut self, ui: &mut Ui) -> bool {
+        let rk = Id::unique("clear-range");
+        let mut range: usize = ui.ctx().data(|d| d.get_temp(rk)).unwrap_or(1);
+        let ck = Id::unique("clear-cookies");
+        let mut cookies: bool = ui.ctx().data(|d| d.get_temp(ck)).unwrap_or(false);
+        let mut keep = true;
+        card(ui, |ui| {
+            ui.label(theme::label("Clear browsing data"));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                for (i, name) in ["Last hour", "Last 24 hours", "Last 7 days", "All time"].iter().enumerate() {
+                    let b = ui.add(egui::Button::new(RichText::new(*name).font(FontId::new(12.5, sans())).color(if range == i { BG } else { FG })).fill(if range == i { FG } else { RAISED }).corner_radius(14).min_size(vec2(0.0, 28.0)));
+                    crate::drive::reg(format!("clear:{name}"), b.rect);
+                    if b.clicked() {
+                        range = i;
+                    }
+                }
+            });
+            ui.add_space(4.0);
+            ui.label(theme::body("Browsing history and the address bar's suggestions from it."));
+            ui.checkbox(&mut cookies, "Also cookies and site data (signs you out of most sites)");
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let b = ui.add(egui::Button::new(RichText::new("CLEAR DATA").font(FontId::new(12.0, mono())).color(BG).extra_letter_spacing(1.2)).fill(FG).corner_radius(16).min_size(vec2(130.0, 34.0)));
+                crate::drive::reg("clear:go", b.rect);
+                if b.clicked() {
+                    let now = crate::profile::now();
+                    let since = match range {
+                        0 => now.saturating_sub(3600),
+                        1 => now.saturating_sub(86_400),
+                        2 => now.saturating_sub(7 * 86_400),
+                        _ => 0,
+                    };
+                    self.profile.clear_history_since(since);
+                    if cookies {
+                        self.clear_all_cookies();
+                    }
+                    self.dirty = true;
+                    self.toast("Browsing data cleared");
+                    keep = false;
+                }
+                if ui.button("Cancel").clicked() {
+                    keep = false;
+                }
+            });
+        });
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(rk, range);
+            d.insert_temp(ck, cookies);
+        });
+        keep
     }
 
     fn bookmarks_page(&mut self, ui: &mut Ui) {
@@ -476,14 +719,17 @@ impl Browser {
             self.dirty = true;
         }
 
-        section(ui, "04", "VPN");
+        section(ui, "04", "Extensions");
+        self.extensions_settings(ui);
+
+        section(ui, "05", "VPN");
         let s = self.vpn.status.clone();
         ui.label(theme::body(if s.installed { "Mullvad is installed. Open the VPN chip in the tab strip to connect or pick a location." } else { "Install Mullvad VPN to enable the built-in VPN." }));
         if s.installed {
             ui.label(theme::muted(&format!("Status: {}{}", s.state, if s.connected() { format!(" · {}, {}", s.city, s.country) } else { String::new() })));
         }
 
-        section(ui, "05", "Performance");
+        section(ui, "06", "Performance");
         if ui.checkbox(&mut self.profile.settings.memory_saver, "Memory saver: unload web tabs unused for 15 minutes (Inbox tabs stay awake)").changed() {
             self.dirty = true;
         }
@@ -491,7 +737,7 @@ impl Browser {
             self.dirty = true;
         }
 
-        section(ui, "06", "About");
+        section(ui, "07", "About");
         ui.label(theme::body("Inert Browser 0.1 — Rust, egui + wgpu, WebKit for the unsecured web."));
         ui.label(theme::muted("inert:// protocol v1 · TLS 1.3 with X25519MLKEM768 · Ed25519-signed manifests."));
         ui.label(theme::muted("Typefaces: Geist Serif, Sans, Mono and Pixel by Vercel (SIL Open Font License)."));
@@ -505,6 +751,91 @@ impl Browser {
             self.signin = Default::default();
             self.dirty = true;
         }
+    }
+
+    /// Built-in extensions: Shield and Cookies.
+    fn extensions_settings(&mut self, ui: &mut Ui) {
+        // Keep the cookie list fresh while the page is open.
+        let k = Id::unique("cookies-all-at");
+        let now = ui.input(|i| i.time);
+        let last: f64 = ui.ctx().data(|d| d.get_temp(k)).unwrap_or(-100.0);
+        if now - last > 5.0 {
+            ui.ctx().data_mut(|d| d.insert_temp(k, now));
+            self.cookies_refresh_all();
+        }
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Shield, OK);
+                ui.label(theme::label_c("Shield", OK));
+                ui.label(theme::muted("Ad & tracker blocking — EasyList + EasyPrivacy, both engines."));
+            });
+        });
+        ui.add_space(10.0);
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Cookie, ACCENT);
+                ui.label(theme::label_c("Cookies", ACCENT));
+                ui.label(theme::muted("See, delete and refuse cookies; rejects cookie banners for you."));
+            });
+            ui.add_space(6.0);
+            if ui.checkbox(&mut self.profile.settings.cookie_banners, "Reject cookie banners automatically (clicks “Reject all” / “Only necessary”)").changed() {
+                self.dirty = true;
+            }
+            if !self.profile.settings.cookie_block.is_empty() {
+                ui.add_space(4.0);
+                ui.label(theme::label("Keep no cookies for"));
+                let mut remove = None;
+                for s in &self.profile.settings.cookie_block {
+                    ui.horizontal(|ui| {
+                        ui.label(theme::mono_text(s, 12.0));
+                        if ui.small_button("Allow again").clicked() {
+                            remove = Some(s.clone());
+                        }
+                    });
+                }
+                if let Some(s) = remove {
+                    self.profile.settings.cookie_block.retain(|x| *x != s);
+                    self.dirty = true;
+                }
+            }
+            ui.add_space(8.0);
+            // Sites with cookies (WebKit's store; values are never read).
+            let mut sites: std::collections::BTreeMap<String, usize> = Default::default();
+            for c in &self.cookie.all {
+                *sites.entry(crate::cookies::site_of(&c.domain)).or_default() += 1;
+            }
+            ui.horizontal(|ui| {
+                ui.label(theme::label(&format!("{} sites with cookies", sites.len())));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let b = ui.add(egui::Button::new(RichText::new("Delete all cookies").color(DANGER)).corner_radius(14));
+                    crate::drive::reg("cookies:clear-all", b.rect);
+                    if b.clicked() {
+                        self.clear_all_cookies();
+                        self.toast("Deleted all cookies and site data");
+                    }
+                });
+            });
+            let mut clear = None;
+            egui::ScrollArea::vertical().max_height(240.0).id_salt("cookie-sites").show(ui, |ui| {
+                for (site, n) in &sites {
+                    ui.horizontal(|ui| {
+                        ui.label(theme::mono_text(site, 12.5));
+                        ui.label(theme::muted(&format!("{n} cookie{}", if *n == 1 { "" } else { "s" })));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.small_button("Delete").clicked() {
+                                clear = Some(site.clone());
+                            }
+                        });
+                    });
+                }
+            });
+            if let Some(s) = clear {
+                self.cookies_clear_site(&s);
+            }
+            ui.label(theme::muted("Servo tabs keep their own cookie jar; “Delete all” and per-site deletes clear both."));
+        });
     }
 
     // ------------------------------------------------------------------ failures
