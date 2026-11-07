@@ -104,8 +104,30 @@ impl Browser {
             let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
+        // Right side: VPN chip + assistant.
+        let right = Rect::from_min_max(pos2(full.right() - 205.0, full.top() + 6.0), pos2(full.right() - 10.0, full.bottom()));
+        let mut r = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)));
+        let ai_color = if self.ai.open { ACCENT } else { FG };
+        if icons::button_c(&mut r, Icon::Spark, 28.0, "Assistant  ⌘J", ai_color, true).clicked() {
+            self.ai.open = !self.ai.open;
+        }
+        let st = &self.vpn.status;
+        let cc = self.vpn.relays.iter().find(|c| c.name == st.country).map(|c| c.code.to_uppercase());
+        let txt = match (st.connected(), cc) {
+            (true, Some(cc)) => format!("VPN · {cc}"),
+            _ => st.short(),
+        };
+        let col = if st.connected() { OK } else { MUTED };
+        let chip = egui::Button::new(RichText::new(format!("● {txt}")).font(FontId::new(10.5, mono())).color(col).extra_letter_spacing(1.2)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, if st.connected() { OK.gamma_multiply(0.6) } else { LINE_STRONG })).corner_radius(2).min_size(vec2(0.0, 24.0));
+        let resp = r.add(chip).on_hover_text("Mullvad VPN");
+        if resp.clicked() {
+            self.open_popover(Popover::Vpn, resp.rect);
+        }
+
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(full.left() + LEFT_INSET, full.top() + 6.0), pos2(full.right() - 210.0, full.bottom()))).layout(Layout::left_to_right(Align::Center)));
         let ui = &mut child;
+        let clip = ui.max_rect();
+        ui.set_clip_rect(clip);
         ui.spacing_mut().item_spacing.x = 4.0;
 
         let order = self.visible_order();
@@ -117,8 +139,8 @@ impl Browser {
             })
             .count()
             .max(1);
-        let chip_space = self.profile.groups.len() as f32 * 100.0;
-        let tab_w = ((ui.available_width() - chip_space - 40.0) / n_visible as f32).clamp(56.0, 210.0);
+        let chip_space: f32 = self.profile.groups.iter().map(|g| g.name.len() as f32 * 7.5 + 46.0).sum();
+        let tab_w = ((ui.available_width() - chip_space - 40.0) / n_visible as f32 - 4.0).clamp(30.0, 210.0);
 
         // Pinned tabs.
         let pinned: Vec<u64> = self.tabs.iter().filter(|t| t.pinned).map(|t| t.id).collect();
@@ -146,20 +168,6 @@ impl Browser {
             self.add_tab("about:newtab", None, true, None);
         }
 
-        // Right side: VPN chip + assistant.
-        let right = Rect::from_min_max(pos2(full.right() - 205.0, full.top() + 6.0), pos2(full.right() - 10.0, full.bottom()));
-        let mut r = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)));
-        let ai_color = if self.ai.open { ACCENT } else { FG };
-        if icons::button_c(&mut r, Icon::Spark, 28.0, "Assistant  ⌘J", ai_color, true).clicked() {
-            self.ai.open = !self.ai.open;
-        }
-        let st = &self.vpn.status;
-        let (txt, col) = if st.connected() { (st.short(), OK) } else { (st.short(), MUTED) };
-        let chip = egui::Button::new(RichText::new(format!("● {txt}")).font(FontId::new(10.5, mono())).color(col).extra_letter_spacing(1.2)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, if st.connected() { OK.gamma_multiply(0.6) } else { LINE_STRONG })).corner_radius(2).min_size(vec2(0.0, 24.0));
-        let resp = r.add(chip).on_hover_text("Mullvad VPN");
-        if resp.clicked() {
-            self.open_popover(Popover::Vpn, resp.rect);
-        }
     }
 
     fn group_chip(&mut self, ui: &mut Ui, g: &crate::profile::GroupDef, count: usize, color: Color32) {
@@ -271,7 +279,8 @@ impl Browser {
         if let Some(gc) = group {
             p.line_segment([rect.left_bottom() + vec2(6.0, -1.0), rect.right_bottom() + vec2(-6.0, -1.0)], Stroke::new(2.0, gc));
         }
-        let ic_rect = Rect::from_center_size(pos2(rect.left() + 16.0, rect.center().y), Vec2::splat(14.0));
+        let ic_x = if w < 64.0 { rect.center().x } else { rect.left() + 16.0 };
+        let ic_rect = Rect::from_center_size(pos2(ic_x, rect.center().y), Vec2::splat(14.0));
         if loading {
             let tm = ui.input(|i| i.time) as f32;
             let a = tm * 6.0;
@@ -281,7 +290,8 @@ impl Browser {
         } else {
             icons::paint(&p, ic_rect, icon, icon_c);
         }
-        if !pinned {
+        let compact = w < 64.0;
+        if !pinned && !compact {
             let show_close = active || resp.hovered();
             let text_right = rect.right() - if show_close { 26.0 } else { 8.0 };
             let avail = (text_right - (rect.left() + 30.0)).max(0.0);
@@ -1183,7 +1193,7 @@ impl Browser {
             ui.label(theme::muted("Choose Claude or GPT in Settings to use the assistant."));
             return;
         }
-        let r = ui.add(egui::TextEdit::multiline(&mut self.ai.input).desired_rows(2).desired_width(ui.available_width()).hint_text("Ask anything… (⏎ to send, ⇧⏎ new line)").font(FontId::new(14.0, sans())));
+        let r = ui.add(egui::TextEdit::multiline(&mut self.ai.input).desired_rows(2).desired_width(ui.available_width()).hint_text("Ask anything…  Enter sends · Shift+Enter for a new line").font(FontId::new(14.0, sans())));
         let send = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
         if send && !self.ai.waiting {
             let q = self.ai.input.trim().to_owned();

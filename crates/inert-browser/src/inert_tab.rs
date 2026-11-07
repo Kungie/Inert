@@ -89,6 +89,7 @@ pub struct InertTab {
     pub fwd: Vec<(String, Fields)>,
     pub zoom: f32,
     pub confirm_href: Option<String>,
+    pub last_action: Option<String>,
 }
 
 impl InertTab {
@@ -113,6 +114,7 @@ impl InertTab {
             fwd: Vec::new(),
             zoom: 1.0,
             confirm_href: None,
+            last_action: None,
         }
     }
 
@@ -227,6 +229,19 @@ impl InertTab {
             _ => {}
         });
         self.forms = out;
+    }
+
+    /// What the signed schema allows for a field, in words.
+    pub fn field_hint(&self, field: &str) -> Option<String> {
+        let m = self.manifest.as_ref()?;
+        let t = m.actions.get(self.last_action.as_ref()?)?.fields.get(field)?;
+        Some(match t {
+            FieldType::String { max } => format!("Up to {max} characters."),
+            FieldType::Int { min, max } => format!("A whole number from {min} to {max}."),
+            FieldType::Decimal { min, max, .. } => format!("An amount from {min} to {max}."),
+            FieldType::Enum { .. } | FieldType::Choice { .. } => "Pick one of the offered options.".into(),
+            FieldType::Bool => return None,
+        })
     }
 
     /// Plain-text rendering of the signed screen for the AI panel and agents.

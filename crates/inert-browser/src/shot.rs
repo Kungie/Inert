@@ -211,9 +211,12 @@ pub fn step(b: &mut Browser, ctx: &egui::Context, _frame: &eframe::Frame) {
             }
         }
         12 => {
-            b.omni.editing = false;
-            b.omni.sugg.clear();
-            b.omni.remote.clear();
+            if b.omni.editing {
+                b.omni.editing = false;
+                b.omni.sugg.clear();
+                b.omni.remote.clear();
+                b.omni.text = b.active_tab().map(|t| t.url()).unwrap_or_default();
+            }
             if b.popover != Popover::Vpn && elapsed < Duration::from_millis(300) {
                 let r = egui::Rect::from_min_size(egui::pos2(b.content_rect.right() - 120.0, 8.0), egui::vec2(80.0, 24.0));
                 b.open_popover(Popover::Vpn, r);
@@ -244,6 +247,7 @@ pub fn step(b: &mut Browser, ctx: &egui::Context, _frame: &eframe::Frame) {
         15 => {
             b.ai.open = false;
             if find_tab(b, "about:settings").is_none() {
+                b.inspector = false;
                 b.add_tab("about:settings", None, true, None);
             }
             if settle(1200) {
@@ -252,7 +256,7 @@ pub fn step(b: &mut Browser, ctx: &egui::Context, _frame: &eframe::Frame) {
         }
         16 => {
             // What an impersonation attempt looks like.
-            if find_tab(b, "inert://evil-bank.example").is_none() && elapsed < Duration::from_millis(300) {
+            if !b.tabs.iter().any(|t| matches!(&t.kind, Kind::Inert(it) if it.failure.is_some())) {
                 let id = b.add_tab("about:newtab", None, true, None);
                 let mut t = crate::inert_tab::InertTab::new("bank.example", None, Default::default());
                 t.status = Status::Failed;
@@ -260,13 +264,14 @@ pub fn step(b: &mut Browser, ctx: &egui::Context, _frame: &eframe::Frame) {
                 if let Some(tab) = b.tab_mut(id) {
                     tab.kind = Kind::Inert(Box::new(t));
                 }
+                b.omni.text = "inert://bank.example".into();
             }
             if settle(1200) {
                 mark = Some("17-key-changed");
             }
         }
         17 => {
-            if find_tab(b, "https://example.com").is_none() && elapsed < Duration::from_millis(300) {
+            if find_tab(b, "https://example.com").is_none() {
                 b.add_tab("https://example.com/", None, true, None);
             }
             if settle(4500) {
@@ -280,6 +285,57 @@ pub fn step(b: &mut Browser, ctx: &egui::Context, _frame: &eframe::Frame) {
             }
             if settle(1200) {
                 mark = Some("19-shield");
+            }
+        }
+        19 => {
+            // A real round trip: a valid transfer is accepted and the overview updates.
+            b.popover = Popover::None;
+            if let Some(id) = find_tab(b, "inert://bank.example") {
+                if b.active != id {
+                    b.activate(id);
+                }
+                let on_transfer = inert_ready(b, id, "transfer");
+                let sent = b.ai.input == "__sent__";
+                if on_transfer && !sent {
+                    let mut f = inert_proto::Fields::new();
+                    f.insert("from".into(), inert_proto::Value::text("chk"));
+                    f.insert("to".into(), inert_proto::Value::text("DE89 3704 0044 0532 0130 00"));
+                    f.insert("amount".into(), inert_proto::Decimal::new(12_000, 2).to_value());
+                    f.insert("note".into(), inert_proto::Value::text("Rent, November"));
+                    b.apply_acts(id, vec![crate::render::Act::Submit { action: "transfer".into(), fields: f }]);
+                    b.ai.input = "__sent__".into();
+                }
+                if sent && inert_ready(b, id, "overview") && settle(1500) {
+                    b.ai.input.clear();
+                    mark = Some("20-bank-after-transfer");
+                }
+            }
+            if settle(15000) {
+                b.ai.input.clear();
+                mark = Some("20-bank-after-transfer");
+            }
+        }
+        20 => {
+            if let Some(id) = find_tab(b, "inert://notes.example") {
+                if b.active != id {
+                    b.activate(id);
+                }
+                let sent = b.ai.input == "__sent__";
+                if inert_ready(b, id, "list") && !sent {
+                    let mut f = inert_proto::Fields::new();
+                    f.insert("title".into(), inert_proto::Value::text("Record the morning demo"));
+                    f.insert("category".into(), inert_proto::Value::text("work"));
+                    b.apply_acts(id, vec![crate::render::Act::Submit { action: "add_note".into(), fields: f }]);
+                    b.ai.input = "__sent__".into();
+                }
+                if sent && inert_ready(b, id, "list") && settle(1500) {
+                    b.ai.input.clear();
+                    mark = Some("21-notes-added");
+                }
+            }
+            if settle(15000) {
+                b.ai.input.clear();
+                mark = Some("21-notes-added");
             }
         }
         _ => {

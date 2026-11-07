@@ -38,7 +38,12 @@ fn main() -> eframe::Result {
         .with_title_shown(false)
         .with_transparent(false);
     if shot.is_some() {
-        vp = vp.with_position([40.0, 40.0]).with_always_on_top().with_active(true);
+        // INERT_SHOT_RECT="x,y,w,h" (points) — must match scripts/walkthrough.sh.
+        let r: Vec<f32> = std::env::var("INERT_SHOT_RECT").unwrap_or_else(|_| "40,40,1440,900".into()).split(',').filter_map(|v| v.trim().parse().ok()).collect();
+        if r.len() == 4 {
+            vp = vp.with_position([r[0], r[1]]).with_inner_size([r[2], r[3]]);
+        }
+        vp = vp.with_always_on_top().with_active(true);
     }
     let opts = eframe::NativeOptions { viewport: vp, ..Default::default() };
     eframe::run_native("Inert", opts, Box::new(move |cc| Ok(Box::new(app::Browser::new(cc, demo, shot)))))

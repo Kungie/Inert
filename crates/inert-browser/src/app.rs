@@ -254,19 +254,20 @@ impl Browser {
             sites: Vec::new(),
         };
         b.refresh_sites();
+        // Restore without activating, so collapsed groups stay collapsed.
         let session = b.profile.session.clone();
         for s in &session {
-            let id = b.add_tab(&s.url, s.group, false, Some(&s.title));
-            if let Some(t) = b.tab_mut(id) {
-                t.pinned = s.pinned;
-            }
+            let id = b.profile.new_id();
+            let kind = b.make_kind(id, &s.url, Some(&s.title));
+            b.tabs.push(Tab { id, kind, group: s.group, pinned: s.pinned, back: Vec::new(), fwd: Vec::new() });
         }
         if b.tabs.is_empty() {
             b.add_tab("about:newtab", None, true, None);
         }
-        let idx = b.profile.active.min(b.tabs.len() - 1);
-        b.active = b.tabs[idx].id;
-        b.activate(b.active);
+        let order = b.visible_order();
+        let idx = b.profile.active.min(order.len() - 1);
+        b.active = order[idx];
+        b.omni.text = b.tab(b.active).map(|t| t.url()).unwrap_or_default();
         vpn::start_polling(b.tx.clone(), ctx.clone(), demo);
         if b.profile.settings.adblock {
             b.ad.state = adblock::State::Preparing;
@@ -714,7 +715,12 @@ impl Browser {
                     }
                     inert_client::ActionOutcome::Error { code, field } => match field {
                         Some(f) => {
-                            it.field_errors.insert(f, render::field_message(code).into());
+                            let base = render::field_message(code);
+                            let msg = match (code, it.field_hint(&f)) {
+                                (ErrorCode::FieldInvalid, Some(h)) => format!("{base} {h}"),
+                                _ => base.to_owned(),
+                            };
+                            it.field_errors.insert(f, msg);
                         }
                         None => it.banner = Some(format!("The site refused this action ({}).", code.name())),
                     },
@@ -779,6 +785,7 @@ impl Browser {
                     it.busy = true;
                     it.field_errors.clear();
                     it.banner = None;
+                    it.last_action = Some(action.clone());
                     it.send(InertCmd::Action { screen: scr.screen.clone(), data: scr.data.clone(), action, fields });
                 }
                 Act::Fetch(h) => {

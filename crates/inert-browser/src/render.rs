@@ -45,6 +45,7 @@ struct R<'a> {
     acts: Vec<Act>,
     z: f32,
     busy: bool,
+    in_row: bool,
 }
 
 impl R<'_> {
@@ -76,7 +77,7 @@ pub fn render(ui: &mut Ui, tab: &mut InertTab) -> Vec<Act> {
     let bg = theme::rgb(d.colors.bg);
     let rect = ui.max_rect();
     ui.painter().rect_filled(rect, 0.0, bg);
-    let mut r = R { m: &m, d, data: &s.data, forms: &mut tab.forms, errors: &tab.field_errors, images: &tab.images, acts: Vec::new(), z: tab.zoom, busy: tab.busy };
+    let mut r = R { m: &m, d, data: &s.data, forms: &mut tab.forms, errors: &tab.field_errors, images: &tab.images, acts: Vec::new(), z: tab.zoom, busy: tab.busy, in_row: false };
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let avail = ui.available_width();
@@ -126,9 +127,12 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
                     ui.with_layout(layout, |ui| {
                         ui.spacing_mut().item_spacing.x = g;
                         ui.spacing_mut().item_spacing.y = g * 0.5;
+                        let was = r.in_row;
+                        r.in_row = true;
                         for c in children {
                             node(ui, c, r, item);
                         }
+                        r.in_row = was;
                     });
                 }
             }
@@ -163,7 +167,8 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
             };
             let text = RichText::new(format!("{} →", label.to_uppercase())).font(FontId::new(12.0 * r.z, theme::mono())).color(text_c).extra_letter_spacing(1.4);
             let b = egui::Button::new(text).fill(fill).stroke(stroke).corner_radius(CornerRadius::same(r.d.radius.min(16) as u8)).min_size(vec2(0.0, 40.0 * r.z));
-            let resp = ui.add_enabled(!r.busy, b);
+            let busy = r.busy;
+            let resp = ui.allocate_ui_with_layout(vec2(0.0, 40.0 * r.z), Layout::left_to_right(Align::Center), |ui| ui.add_enabled(!busy, b)).inner;
             if resp.clicked() {
                 submit(r, action, args, item);
             }
@@ -174,7 +179,7 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
                 ui.label(RichText::new(label.to_uppercase()).font(FontId::new(11.0, theme::mono())).color(r.c(r.d.colors.muted)).extra_letter_spacing(1.6));
                 let key = (action.clone(), field.clone());
                 let fg = r.c(r.d.colors.fg);
-                let w = ui.available_width().min(520.0 * r.z).max(200.0);
+                let w = if r.in_row { 300.0 * r.z } else { ui.available_width().min(520.0 * r.z).max(200.0) };
                 let font = FontId::new(r.d.size(TextStyle::Body) as f32 * r.z, family(r.d.font(TextStyle::Body)));
                 let entry = r.forms.entry(key).or_insert(FormValue::Text(String::new()));
                 if let FormValue::Text(t) = entry {
@@ -219,7 +224,7 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
                     let shown = options.iter().find(|o| &o.0 == v).map(|o| o.1.clone()).unwrap_or_else(|| "Choose…".into());
                     egui::ComboBox::from_id_salt((action, field))
                         .selected_text(RichText::new(shown).font(FontId::new(14.0 * r.z, theme::sans())))
-                        .width(ui.available_width().min(520.0 * r.z).max(200.0))
+                        .width(if r.in_row { 200.0 * r.z } else { ui.available_width().min(520.0 * r.z).max(200.0) })
                         .show_ui(ui, |ui| {
                             for (val, lab) in &options {
                                 ui.selectable_value(v, val.clone(), lab);
