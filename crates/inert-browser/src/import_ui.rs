@@ -19,7 +19,9 @@ impl Browser {
             ui.label(theme::body("No Chrome, Brave, Edge, Arc, Vivaldi or Chromium profile was found on this Mac."));
             if onboarding {
                 ui.add_space(18.0);
-                if big(ui, "CONTINUE →", true).clicked() {
+                let b = big(ui, "CONTINUE →", true);
+                crate::drive::reg("import:skip", b.rect);
+                if b.clicked() {
                     self.finish_onboarding();
                 }
             }

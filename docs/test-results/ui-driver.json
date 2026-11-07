@@ -11,13 +11,48 @@
       "pass": true
     },
     {
+      "check": "import.step_after_signin",
+      "note": "(2 ms)",
+      "pass": true
+    },
+    {
+      "check": "import.reads_chrome_profile",
+      "note": "(50 ms)",
+      "pass": true
+    },
+    {
+      "check": "import.bookmarks",
+      "note": "(0 ms)",
+      "pass": true
+    },
+    {
+      "check": "import.history_and_visits",
+      "note": "(31 ms)",
+      "pass": true
+    },
+    {
+      "check": "import.passwords_to_store",
+      "note": "(31 ms)",
+      "pass": true
+    },
+    {
+      "check": "import.habits",
+      "note": "(31 ms)",
+      "pass": true
+    },
+    {
+      "check": "import.cookies",
+      "note": "(30 ms)",
+      "pass": true
+    },
+    {
       "check": "signin.done_with_claude",
-      "note": "(3 ms)",
+      "note": "(35 ms)",
       "pass": true
     },
     {
       "check": "omnibox.focused",
-      "note": "(2 ms)",
+      "note": "(3 ms)",
       "pass": true
     },
     {
@@ -32,12 +67,12 @@
     },
     {
       "check": "omnibox.escape_restores",
-      "note": "(31 ms)",
+      "note": "(32 ms)",
       "pass": true
     },
     {
       "check": "bank.overview_verified",
-      "note": "(34 ms)",
+      "note": "(3 ms)",
       "pass": true
     },
     {
@@ -47,7 +82,7 @@
     },
     {
       "check": "bank.transfer_screen",
-      "note": "(33 ms)",
+      "note": "(1 ms)",
       "pass": true
     },
     {
@@ -62,7 +97,7 @@
     },
     {
       "check": "shop.catalog",
-      "note": "(4 ms)",
+      "note": "(35 ms)",
       "pass": true
     },
     {
@@ -72,7 +107,7 @@
     },
     {
       "check": "shop.cart_has_line",
-      "note": "(0 ms)",
+      "note": "(1 ms)",
       "pass": true
     },
     {
@@ -92,7 +127,7 @@
     },
     {
       "check": "notes.opened",
-      "note": "(1 ms)",
+      "note": "(0 ms)",
       "pass": true
     },
     {
@@ -122,17 +157,17 @@
     },
     {
       "check": "groups.inbox_collapses",
-      "note": "(0 ms)",
+      "note": "(31 ms)",
       "pass": true
     },
     {
       "check": "menu.opens",
-      "note": "(0 ms)",
+      "note": "(1 ms)",
       "pass": true
     },
     {
       "check": "groups.new_group_rename",
-      "note": "(0 ms)",
+      "note": "(1 ms)",
       "pass": true
     },
     {
@@ -151,33 +186,48 @@
       "pass": true
     },
     {
+      "check": "ntp.search_types_in_place",
+      "note": "(1 ms)",
+      "pass": true
+    },
+    {
+      "check": "ntp.escape_clears",
+      "note": "(31 ms)",
+      "pass": true
+    },
+    {
       "check": "web.servo_renders_page",
-      "note": "(261 ms)",
+      "note": "(311 ms)",
+      "pass": true
+    },
+    {
+      "check": "cookies.panel_servo",
+      "note": "(33 ms)",
       "pass": true
     },
     {
       "check": "web.switch_to_webkit",
-      "note": "(51 ms)",
+      "note": "(53 ms)",
       "pass": true
     },
     {
       "check": "web.back_to_new_tab",
-      "note": "(32 ms)",
+      "note": "(1 ms)",
       "pass": true
     },
     {
       "check": "servo.page_ready",
-      "note": "(6 ms)",
+      "note": "(16 ms)",
       "pass": true
     },
     {
       "check": "servo.click_follows_link",
-      "note": "(32 ms)",
+      "note": "(31 ms)",
       "pass": true
     },
     {
       "check": "servo.form_ready",
-      "note": "(4 ms)",
+      "note": "(5 ms)",
       "pass": true
     },
     {
@@ -191,8 +241,13 @@
       "pass": true
     },
     {
+      "check": "cookies.panel_webkit",
+      "note": "(1 ms)",
+      "pass": true
+    },
+    {
       "check": "tabs.cmd_w_closes",
-      "note": "(18 ms)",
+      "note": "(20 ms)",
       "pass": true
     },
     {
@@ -202,7 +257,22 @@
     },
     {
       "check": "vpn.panel",
-      "note": "(1 ms)",
+      "note": "(2 ms)",
+      "pass": true
+    },
+    {
+      "check": "vpn.logout",
+      "note": "(511 ms)",
+      "pass": true
+    },
+    {
+      "check": "vpn.login_rejects_short_number",
+      "note": "(0 ms)",
+      "pass": true
+    },
+    {
+      "check": "vpn.login_with_account_number",
+      "note": "(511 ms)",
       "pass": true
     },
     {
@@ -241,11 +311,51 @@
       "pass": true
     },
     {
+      "check": "history.timeline",
+      "note": "(0 ms)",
+      "pass": true
+    },
+    {
       "check": "bank.reload_reverifies",
-      "note": "(2 ms)",
+      "note": "(1 ms)",
+      "pass": true
+    },
+    {
+      "check": "cookies.banner_rejected",
+      "note": "(33 ms)",
+      "pass": true
+    },
+    {
+      "check": "cookies.banner_rejected_by_text",
+      "note": "(12 ms)",
+      "pass": true
+    },
+    {
+      "check": "passwords.key_in_address_bar",
+      "note": "(11 ms)",
+      "pass": true
+    },
+    {
+      "check": "passwords.panel",
+      "note": "(1 ms)",
+      "pass": true
+    },
+    {
+      "check": "passwords.filled",
+      "note": "(32 ms)",
+      "pass": true
+    },
+    {
+      "check": "search.duckduckgo_dark",
+      "note": "(0 ms)",
+      "pass": true
+    },
+    {
+      "check": "history.clear_all",
+      "note": "(0 ms)",
       "pass": true
     }
   ],
-  "passed": 49,
-  "total": 49
+  "passed": 71,
+  "total": 71
 }

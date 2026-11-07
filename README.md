@@ -62,7 +62,7 @@ cargo test --workspace
 ```
 
 UI tests that drive the real browser with injected mouse and keyboard events
-(49 checks, demo sites must be running). They also sample each process's
+(71 checks, demo sites must be running). They also sample each process's
 memory while they run; `SHOTS=1` saves documentation screenshots too:
 
 ```bash
@@ -101,5 +101,16 @@ security panel and a manifest inspector, **Shield** (EasyList + EasyPrivacy
 compiled into WebKit's content blocker), a **Mullvad VPN** panel, and an
 **assistant** that reads inert:// pages from their signed structure and web
 pages as untrusted text.
+
+Also: Chrome-style tab shapes with grow/shrink animations and groups that
+slide open and closed; a working search box on the new tab page; DuckDuckGo in
+its dark theme by default; a day-by-day history with "Clear browsing data";
+**Cookies**, a built-in extension that lists and deletes a site's cookies,
+keeps none for sites you choose and rejects cookie banners for you; Mullvad
+sign-in with just the account number, and log out; and **import from Chrome**
+(or Brave, Edge, Arc, Vivaldi, Chromium) as step 2 of the first run or at
+`about:import`: bookmarks, history, saved passwords (into the Keychain, filled
+from the key in the address bar), cookies so you stay signed in, search engine,
+bookmarks bar and startup pages.
 
 Typefaces: Geist Serif, Sans, Mono and Pixel by Vercel (SIL OFL).

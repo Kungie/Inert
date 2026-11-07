@@ -97,12 +97,13 @@ Gece raporu (görsel özet): https://claude.ai/artifact/BERyRh213X8xgAk2CSKnMD
 - Sekmeler, sekme grupları (Inbox, Homeserver, Developer + normal gruplar), yer imleri, geçmiş, omnibox (satır içi tamamlama + arama önerileri), kapatılan sekmeyi geri açma, sayfada bul, zoom, indirmeler, memory saver, native menü ve kısayollar.
 - `inert://` siteleri SECURED, normal web UNSECURED / NOT ENCRYPTED rozetiyle.
 - Shield: EasyList + EasyPrivacy. WebKit sekmelerinde WebKit content blocker, Servo sekmelerinde istek yakalama + Brave adblock motoru.
-- UI testleri: `scripts/ui-test.sh` (gerçek girdi olayları, 49 kontrol). Derleme: `scripts/build.sh [--release]` (tarayıcı + Servo süreci).
+- UI testleri: `scripts/ui-test.sh` (gerçek girdi olayları, 71 kontrol). Derleme: `scripts/build.sh [--release]` (tarayıcı + Servo süreci).
 - Bellek (fiziksel ayak izi): sadece banka açıkken 73–74 MB (`scripts/memory-bank.sh`); 49 kontrollük tur boyunca tarayıcı medyan 80–95 MB, en fazla 98–105 MB; Servo süreci medyan 131 MB. `scripts/ui-test.sh` her koşuda ölçer. Servo çökerse tarayıcı açık kalır ve yeniden başlatır.
 - Tasarım kontrolü: `scripts/design-check.py` ekran görüntülerini Yön A paletine karşı sayar.
 - VPN: Mullvad (CLI üzerinden), Stencil temalı panel.
 - Asistan: inert:// sayfaları imzalı ağaçtan, web sayfaları güvenilmez metin olarak okunur. Salt okunur.
 - `--demo` profili ve `scripts/walkthrough.sh` ile otomatik ekran görüntüsü turu.
+- Sabah turu (2026-11-07): Chrome tarzı sekme/omnibox ve animasyonlar, çalışan yeni sekme arama kutusu, DuckDuckGo koyu, geçmiş zaman çizelgesi, Cookies eklentisi, Mullvad hesap numarasıyla giriş ve çıkış, Chrome'dan içe aktarma (yer imleri, geçmiş, şifreler, çerezler, alışkanlıklar). Ayrıntılar spec §18.1.
 
 ## Ertelendi: güvenliği artırmaya gelince düşünülecek
 - Güvenli çalışma ortamı / barındırma platformu (defense in depth): `rustls` + doğrulanmış kripto, her site izole bir microVM'de (Firecracker, gVisor), uzun vade minimal ya da doğrulanmış kernel (seL4).

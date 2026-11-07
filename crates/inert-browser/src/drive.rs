@@ -244,6 +244,8 @@ impl Driver {
             Shot(s("d06-web-servo")),
             Click(s("cookies")),
             expect("cookies.panel_servo", 5000, |b| b.popover == Popover::Cookies && !b.cookie.loading && b.cookie.host == "example.com"),
+            Pause(400),
+            Shot(s("d06c-cookies")),
             Press(Key::Escape, Modifiers::NONE),
             // Engine switch from the site security panel: same page in WebKit.
             Click(s("badge")),
@@ -378,6 +380,30 @@ impl Driver {
                 expect("bank.overview_verified", 15000, |b| inert_on(b, "overview")),
                 Pause(30000),
                 expect("bank.still_verified", 1000, |b| inert_on(b, "overview")),
+            ]
+        } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("real") {
+            // A real (non-demo) run: the actual Mullvad state and a live search.
+            vec![
+                Pause(1500),
+                Click(s("signin:claude")),
+                Click(s("signin:skip")),
+                Pause(300),
+                Shot(s("r00-import")),
+                Click(s("import:skip")),
+                expect("signin.done", 2000, |b| b.profile.onboarded),
+                Click(s("vpn")),
+                expect("vpn.real_state_known", 10000, |b| b.vpn.status.logged_in.is_some()),
+                Pause(500),
+                Shot(s("r01-vpn")),
+                Press(Key::Escape, Modifiers::NONE),
+                Press(Key::T, Modifiers::COMMAND),
+                Click(s("ntp:search")),
+                Type(s("servo web engine")),
+                Press(Key::Enter, Modifiers::NONE),
+                expect("search.ddg_dark_url", 5000, |b| b.active_tab().map(|t| t.url()).is_some_and(|u| u.contains("duckduckgo.com") && u.contains("kae=d"))),
+                expect("search.ddg_loaded", 30000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if !w.loading && w.title.contains("DuckDuckGo"))),
+                Pause(4000),
+                Shot(s("r02-ddg-dark")),
             ]
         } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("look") {
             look_steps()

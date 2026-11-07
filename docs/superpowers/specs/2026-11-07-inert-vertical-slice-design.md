@@ -15,6 +15,7 @@
 | 2026-11-07 | §11.2 | Tek süreç yerine üç süreç sınıfı: tarayıcı, Servo süreci, WebKit'in kendi süreçleri. |
 | 2026-11-07 | §11.3 | `https://` artık açılıyor: Servo varsayılan, Inbox sekmeleri WebKit, motor seçimi kuralları. |
 | 2026-11-07 | §16 | Bellek kriteri süreç bazında tanımlandı ve ölçüldü. |
+| 2026-11-07 | §18.1 | Sabah turu: Chrome tarzı sekme ve omnibox, yeni sekme arama kutusu, geçmiş zaman çizelgesi, Cookies eklentisi, Mullvad giriş/çıkış, Chrome'dan içe aktarma. 71 UI kontrolü. |
 
 ---
 
@@ -492,3 +493,24 @@ Eklenenler:
 **UI testleri:** `crates/inert-browser/src/drive.rs`, egui'nin girdi akışına gerçek fare ve klavye olayları enjekte ediyor (`App::raw_input_hook`). 49 kontrol var: giriş, omnibox tamamlama, banka transferi (limit dışı tutar dahil), mağaza sepeti, not ekleme ve kaydetme, yer imleri, sekme grupları, sağ tık menüsü, kısayollar, Servo'da tıklama ve yazma, motor değiştirme, Inbox'ın WebKit'te açılması, VPN, Shield, asistan, geçmiş. Hepsi geçiyor (`docs/test-results/ui-driver.json`), Servo ayrı süreçteyken tekrar koşuldu. Bu testler 4 gerçek hata buldu ve düzeltildi.
 
 **Fuzzing (2026-11-07):** Dört hedef (`cbor_decode`, `message_decode`, `manifest_verify`, `screen_action_verify`) paralel olarak her biri 30 dakika çalıştı (§16). Toplam yaklaşık 213 milyon girdi denendi, hiç çökme ya da artifact yok. İlk 10 dakikalık koşu (78 milyon girdi) da temizdi.
+
+### 18.1 Sabah turu (2026-11-07)
+
+Kullanıcının dokuz maddelik listesi. Her madde UI sürücüsünde bir kontrolle doğrulanıyor (71/71, `docs/test-results/ui-driver.json`).
+
+| # | İstek | Ne yapıldı |
+|---|---|---|
+| 1 | Sekme ve arama çubuğu yayvan, animasyon, Chrome gibi | Sekmeler 36 px, Chrome'un şekli (yuvarlak üst köşe, alt kıvrımlar, aktif sekme araç çubuğuna akıyor). Yeni sekme genişleyerek açılıyor, kapanan sekme yerinde daralıyor, hover ve genişlik değişimleri yumuşak. Omnibox hap biçiminde, odakta vurgu halkası. Açılır liste ve paneller kayarak ve solarak açılıyor. |
+| 2 | Linkler adres çubuğunda ortada değil, üstte | Metin alanı tam bir satır yüksekliğinde ve iç boşluksuz, hapın tam ortasında. Odak dışında host beyaz, gerisi soluk. |
+| 3 | Grup açılıp kapanırken efekt, daha yuvarlak | Grubun sekmeleri 0,24 sn'de açılıp kapanıyor. Etiket hap biçiminde, kapalıyken dolu (Chrome gibi). Genel köşe yarıçapları 8 (bileşen), 12 (menü), 14 (panel). |
+| 4 | Yeni sekme arama kutusu üstteki bara yazıyor | Kutu artık gerçek bir alan: kendi satır içi tamamlaması, kendi önerileri, ok tuşları ve Enter. Üstteki bar dokunulmadan kalıyor. |
+| 5 | DuckDuckGo varsayılan karanlık | Arama ve duckduckgo.com adresleri `kae=d` ile açılıyor. Pencere koyu, WebKit sayfaları `prefers-color-scheme: dark` görüyor, Servo görünümlerine `Theme::Dark` bildiriliyor. |
+| 6 | Geçmiş | Her ziyaret kaydediliyor (en fazla 20 000). Gün gün kartlar, saatler, arama, satır silme, "Recently closed", zaman aralıklı "Clear browsing data" (isteğe bağlı çerezlerle). |
+| 7 | Çerez yönetimi eklentisi | Yerleşik "Cookies" eklentisi. Bulunulan sitenin çerezleri (değerler gösterilmez), tek tek veya site bazında silme, "bu sitede çerez tutma" listesi, çerez bantlarını otomatik reddetme (OneTrust, Cookiebot, Didomi, … ve metinden "Reject all / Only necessary"). WebKit'te `WKHTTPCookieStore`, Servo'da yardımcı süreçteki `SiteDataManager`. Ayarlarda tüm siteler. |
+| 8 | Mullvad: başlıktaki tik, çıkış, kurulum | Simge etiketle aynı satırda. Kurulum adımları, sadece hesap numarasıyla giriş (16 hane kontrolü, numara arayüzde ve profilde tutulmuyor), onaylı çıkış. Kullanıcının isteğiyle gerçek hesaptan çıkış yapıldı, panel gerçek "Sign in to Mullvad" durumunu gösteriyor. |
+| 9 | Chrome'dan geçişte yer imleri, hesaplar, alışkanlıklar | Girişten sonra 2. adım (atlanabilir) ve `about:import`. Chrome, Brave, Edge, Arc, Vivaldi, Chromium profilleri bulunuyor. Yer imleri, geçmiş ve ziyaretler, kayıtlı şifreler (macOS Keychain'e, adres çubuğundaki anahtarla doldurma), çerezler (oturumlar açık kalıyor), arama motoru, yer imi çubuğu, açılış sayfaları. SQLite dosyaları kopyalanıp sistemin `sqlite3` aracıyla ayrı süreçte okunuyor. Şifre ve çerez anahtarı "Chrome Safe Storage"; macOS önce kullanıcıya soruyor. |
+
+- Bu Mac'te Chrome kurulu değil. İçe aktarıcı, Chrome'un dosya biçimlerinde (aynı tablolar, aynı `v10` şifreleme, sürüm 24 çerez öneki) sahte bir profille test ediliyor (`import.rs` birim testi ve demo profili). Gerçek bir Chrome profiliyle denenmedi.
+- Mullvad girişi gerçek bir hesapla denenmedi (numara kullanıcıda). Çıkış ve oturum kapalı durumun okunması gerçek CLI ile doğrulandı.
+- Bellek, 71 kontrollük turda: tarayıcı medyan 97 MB, en fazla 109 MB; Servo süreci medyan 56 MB, en fazla 185 MB.
+
