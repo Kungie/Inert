@@ -1,0 +1,100 @@
+{
+  "app": "notes.example",
+  "name": "Inert Notes",
+  "version": 1,
+  "entry": "list",
+  "design": {
+    "colors": { "bg": "#000000", "fg": "#e8efec", "muted": "#8fa39b", "accent": "#5dcaa5", "on_accent": "#00201a", "line": "#1d2523" },
+    "fonts": { "display": "geist-pixel", "title": "geist-serif", "body": "geist-sans", "mono": "geist-mono", "label": "geist-mono" },
+    "sizes": { "display": 48, "title": 26, "body": 16, "mono": 13, "label": 11 },
+    "spacing": { "xs": 4, "s": 8, "m": 14, "l": 24, "xl": 48 },
+    "radius": 2
+  },
+  "actions": {
+    "add_note": {
+      "fields": {
+        "title": { "type": "string", "max": 80 },
+        "category": { "type": "enum", "options": [
+          { "value": "work", "label": "Work" },
+          { "value": "personal", "label": "Personal" },
+          { "value": "ideas", "label": "Ideas" }
+        ] }
+      }
+    },
+    "delete_note": { "fields": { "id": { "type": "choice", "from": "notes" } } },
+    "save_note": {
+      "fields": {
+        "id": { "type": "string", "max": 16 },
+        "title": { "type": "string", "max": 80 },
+        "body": { "type": "string", "max": 2000 },
+        "category": { "type": "enum", "options": [
+          { "value": "work", "label": "Work" },
+          { "value": "personal", "label": "Personal" },
+          { "value": "ideas", "label": "Ideas" }
+        ] },
+        "done": { "type": "bool" }
+      }
+    }
+  },
+  "screens": {
+    "list": {
+      "title": "Notes",
+      "params": {},
+      "slots": {
+        "open": { "type": "int", "min": 0, "max": 500 },
+        "notes": { "type": "list", "max": 200, "item": {
+          "id": { "type": "string", "max": 16 },
+          "label": { "type": "string", "max": 80 },
+          "category": { "type": "string", "max": 16 },
+          "status": { "type": "string", "max": 8 }
+        } }
+      },
+      "root": { "type": "stack", "dir": "v", "gap": "l", "align": "stretch", "children": [
+        { "type": "stack", "dir": "h", "gap": "m", "align": "end", "children": [
+          { "type": "text", "style": "display", "text": "NOTES" },
+          { "type": "text", "style": "label", "text": "OPEN" },
+          { "type": "text", "style": "mono", "text": { "bind": "open" } }
+        ] },
+        { "type": "stack", "dir": "h", "gap": "m", "align": "end", "children": [
+          { "type": "input", "action": "add_note", "field": "title", "label": "New note", "kind": "text", "placeholder": "What's on your mind?" },
+          { "type": "select", "action": "add_note", "field": "category", "label": "Category", "init": { "lit": "ideas" } },
+          { "type": "button", "label": "Add", "action": "add_note", "variant": "primary" }
+        ] },
+        { "type": "divider" },
+        { "type": "list", "bind": "notes", "item":
+          { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+            { "type": "text", "style": "mono", "text": { "bind": "item.status" } },
+            { "type": "text", "style": "body", "text": { "bind": "item.label" } },
+            { "type": "text", "style": "label", "text": { "bind": "item.category" } },
+            { "type": "link", "label": "Open →", "to": "note", "params": { "id": { "bind": "item.id" } } },
+            { "type": "button", "label": "Delete", "action": "delete_note", "args": { "id": { "bind": "item.id" } }, "variant": "ghost" }
+          ] }
+        }
+      ] }
+    },
+    "note": {
+      "title": "Note",
+      "params": { "id": { "type": "string", "max": 16 } },
+      "slots": {
+        "id": { "type": "string", "max": 16 },
+        "title": { "type": "string", "max": 80 },
+        "body": { "type": "string", "max": 2000 },
+        "category": { "type": "string", "max": 16 },
+        "done": { "type": "bool" },
+        "updated": { "type": "string", "max": 32 }
+      },
+      "root": { "type": "stack", "dir": "v", "gap": "l", "align": "stretch", "children": [
+        { "type": "link", "label": "← All notes", "to": "list" },
+        { "type": "stack", "dir": "h", "gap": "s", "align": "center", "children": [
+          { "type": "text", "style": "label", "text": "UPDATED" },
+          { "type": "text", "style": "mono", "text": { "bind": "updated" } }
+        ] },
+        { "type": "input", "action": "save_note", "field": "title", "label": "Title", "kind": "text", "init": { "bind": "title" } },
+        { "type": "input", "action": "save_note", "field": "body", "label": "Note", "kind": "multiline", "init": { "bind": "body" } },
+        { "type": "select", "action": "save_note", "field": "category", "label": "Category", "init": { "bind": "category" } },
+        { "type": "toggle", "action": "save_note", "field": "done", "label": "Done", "init": { "bind": "done" } },
+        { "type": "button", "label": "Save", "action": "save_note", "args": { "id": { "bind": "id" } }, "variant": "primary" }
+      ] }
+    }
+  }
+}

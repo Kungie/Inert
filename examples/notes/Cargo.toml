@@ -1,6 +1,14 @@
 [package]
 name = "inert-example-notes"
+description = "Inert demo: notes and tasks"
 version.workspace = true
 edition.workspace = true
+publish = false
+
+[[bin]]
+name = "inert-notes"
+path = "src/main.rs"
 
 [dependencies]
+inert-server.workspace = true
+anyhow.workspace = true

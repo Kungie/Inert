@@ -21,4 +21,5 @@ pub mod val;
 pub use app::{App, Next, Reject, serve, session_over};
 pub use bundle::Bundle;
 pub use inert_proto as proto;
+pub use inert_proto::Fields;
 pub use val::{Data, Params};

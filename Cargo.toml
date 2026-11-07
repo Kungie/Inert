@@ -5,6 +5,7 @@ members = [
     "crates/inert-verify",
     "crates/inert-transport",
     "crates/inert-server",
+    "crates/inert-client",
     "crates/inert-browser",
     "examples/bank",
     "examples/shop",
@@ -23,6 +24,7 @@ inert-proto = { path = "crates/inert-proto" }
 inert-verify = { path = "crates/inert-verify" }
 inert-transport = { path = "crates/inert-transport" }
 inert-server = { path = "crates/inert-server" }
+inert-client = { path = "crates/inert-client" }
 
 thiserror = "2"
 anyhow = "1"

@@ -1,0 +1,130 @@
+{
+  "app": "bank.example",
+  "name": "Inert Bank",
+  "version": 1,
+  "entry": "overview",
+  "design": {
+    "colors": { "bg": "#000000", "fg": "#ededed", "muted": "#9a9a9a", "accent": "#b48cff", "on_accent": "#000000", "line": "#222222" },
+    "fonts": { "display": "geist-serif", "title": "geist-serif", "body": "geist-sans", "mono": "geist-mono", "label": "geist-mono" },
+    "sizes": { "display": 64, "title": 30, "body": 16, "mono": 14, "label": 11 },
+    "spacing": { "xs": 4, "s": 8, "m": 16, "l": 28, "xl": 56 },
+    "radius": 2
+  },
+  "assets": { "logo": "assets/logo.png" },
+  "actions": {
+    "transfer": {
+      "fields": {
+        "from": { "type": "choice", "from": "accounts" },
+        "to": { "type": "string", "max": 34 },
+        "amount": { "type": "decimal", "scale": 2, "min": "0.01", "max": "10000.00" },
+        "note": { "type": "string", "max": 140 }
+      }
+    },
+    "save_settings": {
+      "fields": {
+        "notify": { "type": "bool" },
+        "currency": { "type": "enum", "options": [
+          { "value": "eur", "label": "Euro (EUR)" },
+          { "value": "usd", "label": "US Dollar (USD)" },
+          { "value": "try", "label": "Turkish Lira (TRY)" }
+        ] }
+      }
+    }
+  },
+  "screens": {
+    "overview": {
+      "title": "Overview",
+      "params": {},
+      "slots": {
+        "holder": { "type": "string", "max": 64 },
+        "total": { "type": "decimal", "scale": 2, "min": "-100000000.00", "max": "100000000.00" },
+        "currency": { "type": "string", "max": 8 },
+        "accounts": { "type": "list", "max": 10, "item": {
+          "id": { "type": "string", "max": 16 },
+          "label": { "type": "string", "max": 40 },
+          "balance": { "type": "decimal", "scale": 2, "min": "-100000000.00", "max": "100000000.00" }
+        } },
+        "transactions": { "type": "list", "max": 50, "item": {
+          "label": { "type": "string", "max": 60 },
+          "date": { "type": "string", "max": 16 },
+          "amount": { "type": "decimal", "scale": 2, "min": "-100000000.00", "max": "100000000.00" }
+        } }
+      },
+      "root": { "type": "stack", "dir": "v", "gap": "l", "align": "stretch", "children": [
+        { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+          { "type": "image", "src": { "asset": "logo" }, "alt": "Inert Bank logo", "width": 36, "height": 36 },
+          { "type": "text", "style": "label", "text": "INERT BANK — DEMO DATA" }
+        ] },
+        { "type": "stack", "dir": "v", "gap": "s", "align": "start", "children": [
+          { "type": "text", "style": "label", "text": "TOTAL BALANCE" },
+          { "type": "stack", "dir": "h", "gap": "m", "align": "end", "children": [
+            { "type": "text", "style": "display", "text": { "bind": "total" } },
+            { "type": "text", "style": "mono", "text": { "bind": "currency" } }
+          ] },
+          { "type": "text", "style": "body", "text": { "bind": "holder" } }
+        ] },
+        { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+          { "type": "link", "label": "Send money →", "to": "transfer" },
+          { "type": "link", "label": "Settings →", "to": "settings" }
+        ] },
+        { "type": "divider" },
+        { "type": "text", "style": "label", "text": "ACCOUNTS" },
+        { "type": "list", "bind": "accounts", "item":
+          { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+            { "type": "text", "style": "body", "text": { "bind": "item.label" } },
+            { "type": "text", "style": "mono", "text": { "bind": "item.balance" } }
+          ] }
+        },
+        { "type": "divider" },
+        { "type": "text", "style": "label", "text": "RECENT ACTIVITY" },
+        { "type": "list", "bind": "transactions", "item":
+          { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+            { "type": "text", "style": "mono", "text": { "bind": "item.date" } },
+            { "type": "text", "style": "body", "text": { "bind": "item.label" } },
+            { "type": "text", "style": "mono", "text": { "bind": "item.amount" } }
+          ] }
+        }
+      ] }
+    },
+    "transfer": {
+      "title": "Send money",
+      "params": {},
+      "slots": {
+        "accounts": { "type": "list", "max": 10, "item": {
+          "id": { "type": "string", "max": 16 },
+          "label": { "type": "string", "max": 40 }
+        } },
+        "limit": { "type": "decimal", "scale": 2, "min": "0.00", "max": "10000.00" }
+      },
+      "root": { "type": "stack", "dir": "v", "gap": "l", "align": "stretch", "children": [
+        { "type": "link", "label": "← Overview", "to": "overview" },
+        { "type": "text", "style": "title", "text": "Send money" },
+        { "type": "text", "style": "body", "text": "Every field below is declared in the signed manifest. A compromised server could not add a password field here — the browser would refuse to draw it." },
+        { "type": "select", "action": "transfer", "field": "from", "label": "From account" },
+        { "type": "input", "action": "transfer", "field": "to", "label": "Recipient IBAN", "kind": "text", "placeholder": "DE00 0000 0000 0000 0000 00" },
+        { "type": "input", "action": "transfer", "field": "amount", "label": "Amount", "kind": "number", "placeholder": "0.00" },
+        { "type": "stack", "dir": "h", "gap": "s", "align": "center", "children": [
+          { "type": "text", "style": "label", "text": "LIMIT PER TRANSFER" },
+          { "type": "text", "style": "mono", "text": { "bind": "limit" } }
+        ] },
+        { "type": "input", "action": "transfer", "field": "note", "label": "Note (optional)", "kind": "text" },
+        { "type": "button", "label": "Send", "action": "transfer", "variant": "primary" }
+      ] }
+    },
+    "settings": {
+      "title": "Settings",
+      "params": {},
+      "slots": {
+        "notify": { "type": "bool" },
+        "currency": { "type": "string", "max": 8 }
+      },
+      "root": { "type": "stack", "dir": "v", "gap": "l", "align": "stretch", "children": [
+        { "type": "link", "label": "← Overview", "to": "overview" },
+        { "type": "text", "style": "title", "text": "Settings" },
+        { "type": "toggle", "action": "save_settings", "field": "notify", "label": "Notify me about every transfer", "init": { "bind": "notify" } },
+        { "type": "select", "action": "save_settings", "field": "currency", "label": "Display currency", "init": { "bind": "currency" } },
+        { "type": "button", "label": "Save settings", "action": "save_settings", "variant": "primary" }
+      ] }
+    }
+  }
+}

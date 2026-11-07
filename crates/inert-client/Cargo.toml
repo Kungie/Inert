@@ -1,0 +1,21 @@
+[package]
+name = "inert-client"
+description = "Inert client session: dial, verify the signed manifest against the pin, validate every screen, fetch assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+inert-proto.workspace = true
+inert-verify.workspace = true
+inert-transport.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+sha2.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+inert-server.workspace = true
+ed25519-dalek.workspace = true
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

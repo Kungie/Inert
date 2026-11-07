@@ -1,6 +1,15 @@
 [package]
 name = "inert-example-shop"
+description = "Inert demo: a small store with a cart and dynamic product images"
 version.workspace = true
 edition.workspace = true
+publish = false
+
+[[bin]]
+name = "inert-shop"
+path = "src/main.rs"
 
 [dependencies]
+inert-server.workspace = true
+anyhow.workspace = true
+png.workspace = true

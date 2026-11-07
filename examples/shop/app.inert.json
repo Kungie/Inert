@@ -1,0 +1,166 @@
+{
+  "app": "shop.example",
+  "name": "Inert Supply",
+  "version": 1,
+  "entry": "catalog",
+  "design": {
+    "colors": { "bg": "#050505", "fg": "#f0ede6", "muted": "#a09a90", "accent": "#ffb547", "on_accent": "#1a1000", "line": "#262420" },
+    "fonts": { "display": "geist-serif", "title": "geist-serif", "body": "geist-sans", "mono": "geist-mono", "label": "geist-mono" },
+    "sizes": { "display": 56, "title": 26, "body": 16, "mono": 14, "label": 11 },
+    "spacing": { "xs": 4, "s": 8, "m": 16, "l": 28, "xl": 48 },
+    "radius": 2
+  },
+  "actions": {
+    "add_to_cart": {
+      "fields": {
+        "product": { "type": "string", "max": 16 },
+        "size": { "type": "enum", "options": [
+          { "value": "s", "label": "Small" },
+          { "value": "m", "label": "Medium" },
+          { "value": "l", "label": "Large" }
+        ] },
+        "qty": { "type": "int", "min": 1, "max": 9 }
+      }
+    },
+    "remove_line": { "fields": { "line": { "type": "choice", "from": "lines" } } },
+    "place_order": {
+      "fields": {
+        "name": { "type": "string", "max": 64 },
+        "address": { "type": "string", "max": 240 },
+        "shipping": { "type": "enum", "options": [
+          { "value": "standard", "label": "Standard — free, 3–5 days" },
+          { "value": "express", "label": "Express — 9.00, next day" }
+        ] }
+      }
+    }
+  },
+  "screens": {
+    "catalog": {
+      "title": "Catalog",
+      "params": {},
+      "slots": {
+        "count": { "type": "int", "min": 0, "max": 999 },
+        "products": { "type": "list", "max": 24, "item": {
+          "id": { "type": "string", "max": 16 },
+          "name": { "type": "string", "max": 48 },
+          "price": { "type": "decimal", "scale": 2, "min": "0.00", "max": "10000.00" },
+          "image": { "type": "image" }
+        } }
+      },
+      "root": { "type": "stack", "dir": "v", "gap": "l", "align": "stretch", "children": [
+        { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+          { "type": "text", "style": "label", "text": "INERT SUPPLY — DEMO STORE" },
+          { "type": "text", "style": "label", "text": "CART" },
+          { "type": "text", "style": "mono", "text": { "bind": "count" } },
+          { "type": "link", "label": "View cart →", "to": "cart" }
+        ] },
+        { "type": "text", "style": "display", "text": "Objects for quiet desks." },
+        { "type": "text", "style": "body", "text": "Product photos below are dynamic images: hashed, size-limited and decoded by a memory-safe decoder in the browser." },
+        { "type": "list", "bind": "products", "item":
+          { "type": "stack", "dir": "h", "gap": "l", "align": "center", "children": [
+            { "type": "image", "src": { "bind": "item.image" }, "alt": "Product photo", "width": 120, "height": 120 },
+            { "type": "stack", "dir": "v", "gap": "s", "align": "start", "children": [
+              { "type": "text", "style": "title", "text": { "bind": "item.name" } },
+              { "type": "text", "style": "mono", "text": { "bind": "item.price" } },
+              { "type": "link", "label": "View →", "to": "product", "params": { "id": { "bind": "item.id" } } }
+            ] }
+          ] }
+        }
+      ] }
+    },
+    "product": {
+      "title": "Product",
+      "params": { "id": { "type": "string", "max": 16 } },
+      "slots": {
+        "id": { "type": "string", "max": 16 },
+        "name": { "type": "string", "max": 48 },
+        "price": { "type": "decimal", "scale": 2, "min": "0.00", "max": "10000.00" },
+        "description": { "type": "string", "max": 400 },
+        "image": { "type": "image" }
+      },
+      "root": { "type": "stack", "dir": "v", "gap": "l", "align": "stretch", "children": [
+        { "type": "link", "label": "← Catalog", "to": "catalog" },
+        { "type": "stack", "dir": "h", "gap": "l", "align": "start", "children": [
+          { "type": "image", "src": { "bind": "image" }, "alt": "Product photo", "width": 280, "height": 280 },
+          { "type": "stack", "dir": "v", "gap": "m", "align": "stretch", "children": [
+            { "type": "text", "style": "title", "text": { "bind": "name" } },
+            { "type": "text", "style": "mono", "text": { "bind": "price" } },
+            { "type": "text", "style": "body", "text": { "bind": "description" } },
+            { "type": "select", "action": "add_to_cart", "field": "size", "label": "Size", "init": { "lit": "m" } },
+            { "type": "input", "action": "add_to_cart", "field": "qty", "label": "Quantity", "kind": "number", "init": { "lit": 1 } },
+            { "type": "button", "label": "Add to cart", "action": "add_to_cart", "args": { "product": { "bind": "id" } }, "variant": "primary" }
+          ] }
+        ] }
+      ] }
+    },
+    "cart": {
+      "title": "Cart",
+      "params": {},
+      "slots": {
+        "total": { "type": "decimal", "scale": 2, "min": "0.00", "max": "1000000.00" },
+        "lines": { "type": "list", "max": 50, "item": {
+          "id": { "type": "string", "max": 16 },
+          "label": { "type": "string", "max": 64 },
+          "qty": { "type": "int", "min": 1, "max": 9 },
+          "line_total": { "type": "decimal", "scale": 2, "min": "0.00", "max": "100000.00" }
+        } }
+      },
+      "root": { "type": "stack", "dir": "v", "gap": "l", "align": "stretch", "children": [
+        { "type": "link", "label": "← Keep shopping", "to": "catalog" },
+        { "type": "text", "style": "title", "text": "Your cart" },
+        { "type": "list", "bind": "lines", "item":
+          { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+            { "type": "text", "style": "body", "text": { "bind": "item.label" } },
+            { "type": "text", "style": "mono", "text": { "bind": "item.qty" } },
+            { "type": "text", "style": "mono", "text": { "bind": "item.line_total" } },
+            { "type": "button", "label": "Remove", "action": "remove_line", "args": { "line": { "bind": "item.id" } }, "variant": "ghost" }
+          ] }
+        },
+        { "type": "divider" },
+        { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+          { "type": "text", "style": "label", "text": "TOTAL" },
+          { "type": "text", "style": "title", "text": { "bind": "total" } }
+        ] },
+        { "type": "link", "label": "Checkout →", "to": "checkout" }
+      ] }
+    },
+    "checkout": {
+      "title": "Checkout",
+      "params": {},
+      "slots": { "total": { "type": "decimal", "scale": 2, "min": "0.00", "max": "1000000.00" } },
+      "root": { "type": "stack", "dir": "v", "gap": "l", "align": "stretch", "children": [
+        { "type": "link", "label": "← Cart", "to": "cart" },
+        { "type": "text", "style": "title", "text": "Checkout" },
+        { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+          { "type": "text", "style": "label", "text": "TO PAY" },
+          { "type": "text", "style": "mono", "text": { "bind": "total" } }
+        ] },
+        { "type": "input", "action": "place_order", "field": "name", "label": "Full name", "kind": "text" },
+        { "type": "input", "action": "place_order", "field": "address", "label": "Shipping address", "kind": "multiline" },
+        { "type": "select", "action": "place_order", "field": "shipping", "label": "Shipping", "init": { "lit": "standard" } },
+        { "type": "text", "style": "body", "text": "Demo store: no payment is taken and nothing ships." },
+        { "type": "button", "label": "Place order", "action": "place_order", "variant": "primary" }
+      ] }
+    },
+    "receipt": {
+      "title": "Thank you",
+      "params": {},
+      "slots": {
+        "order": { "type": "string", "max": 24 },
+        "total": { "type": "decimal", "scale": 2, "min": "0.00", "max": "1000000.00" }
+      },
+      "root": { "type": "stack", "dir": "v", "gap": "l", "align": "stretch", "children": [
+        { "type": "text", "style": "display", "text": "Thank you." },
+        { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+          { "type": "text", "style": "label", "text": "ORDER" },
+          { "type": "text", "style": "mono", "text": { "bind": "order" } }
+        ] },
+        { "type": "stack", "dir": "h", "gap": "m", "align": "center", "children": [
+          { "type": "text", "style": "label", "text": "TOTAL" },
+          { "type": "text", "style": "mono", "text": { "bind": "total" } }
+        ] },
+        { "type": "link", "label": "Back to the catalog →", "to": "catalog" }
+      ] }
+    }
+  }
+}

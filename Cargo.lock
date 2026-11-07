@@ -458,16 +458,45 @@ name = "inert-browser"
 version = "0.1.0"
 
 [[package]]
+name = "inert-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ed25519-dalek",
+ "inert-proto",
+ "inert-server",
+ "inert-transport",
+ "inert-verify",
+ "rand 0.8.8",
+ "sha2",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "inert-example-bank"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "inert-server",
+]
 
 [[package]]
 name = "inert-example-notes"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "inert-server",
+]
 
 [[package]]
 name = "inert-example-shop"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "inert-server",
+ "png",
+]
 
 [[package]]
 name = "inert-proto"

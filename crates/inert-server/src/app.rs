@@ -84,6 +84,11 @@ impl<S: Send + 'static> App<S> {
         Ok(hash)
     }
 
+    /// Direct access to the shared state (setup, tests).
+    pub fn state(&self) -> std::sync::MutexGuard<'_, S> {
+        lock(&self.state)
+    }
+
     pub fn bundle(&self) -> Arc<Bundle> {
         self.bundle.read().unwrap().clone()
     }
