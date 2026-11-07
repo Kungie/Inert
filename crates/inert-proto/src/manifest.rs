@@ -274,9 +274,9 @@ pub enum Node {
     Stack { dir: Dir, gap: Spacing, align: Align, children: Vec<Node> },
     Text { style: TextStyle, text: TextSrc },
     Button { label: String, action: String, args: BTreeMap<String, ArgSrc>, variant: Variant },
-    Input { action: String, field: String, label: String, kind: InputKind, placeholder: Option<String> },
-    Select { action: String, field: String, label: String },
-    Toggle { action: String, field: String, label: String },
+    Input { action: String, field: String, label: String, kind: InputKind, placeholder: Option<String>, init: Option<ArgSrc> },
+    Select { action: String, field: String, label: String, init: Option<ArgSrc> },
+    Toggle { action: String, field: String, label: String, init: Option<ArgSrc> },
     List { bind: String, item: Box<Node> },
     Divider,
     Image { src: ImageSrc, alt: String, width: u64, height: u64 },
@@ -370,6 +370,14 @@ fn dec_args(o: &mut Obj, field: &str) -> Result<BTreeMap<String, ArgSrc>, Decode
     Ok(out)
 }
 
+fn dec_init(o: &mut Obj) -> Result<Option<ArgSrc>, DecodeError> {
+    let p = o.sub("init");
+    match o.opt("init") {
+        None => Ok(None),
+        Some(v) => Ok(Some(dec_arg(v, &p)?)),
+    }
+}
+
 fn dir_name(d: Dir) -> &'static str {
     match d {
         Dir::V => "v",
@@ -411,7 +419,10 @@ impl Node {
                     Variant::Ghost => "ghost",
                 })));
             }
-            Node::Input { action, field, label, kind, placeholder } => {
+            Node::Input { action, field, label, kind, placeholder, init } => {
+                if let Some(i) = init {
+                    e.push(("init", enc_arg(i)));
+                }
                 e.push(("action", Value::text(action.clone())));
                 e.push(("field", Value::text(field.clone())));
                 e.push(("label", Value::text(label.clone())));
@@ -424,7 +435,10 @@ impl Node {
                     e.push(("placeholder", Value::text(p.clone())));
                 }
             }
-            Node::Select { action, field, label } | Node::Toggle { action, field, label } => {
+            Node::Select { action, field, label, init } | Node::Toggle { action, field, label, init } => {
+                if let Some(i) = init {
+                    e.push(("init", enc_arg(i)));
+                }
                 e.push(("action", Value::text(action.clone())));
                 e.push(("field", Value::text(field.clone())));
                 e.push(("label", Value::text(label.clone())));
@@ -514,13 +528,15 @@ impl Node {
                     other => return Err(bad(&o.sub("kind"), format!("unknown input kind {other:?}"))),
                 };
                 let placeholder = o.opt_text("placeholder")?;
-                Node::Input { action, field, label, kind, placeholder }
+                let init = dec_init(&mut o)?;
+                Node::Input { action, field, label, kind, placeholder, init }
             }
             "select" | "toggle" => {
                 let action = o.text("action")?;
                 let field = o.text("field")?;
                 let label = o.text("label")?;
-                if ty == "select" { Node::Select { action, field, label } } else { Node::Toggle { action, field, label } }
+                let init = dec_init(&mut o)?;
+                if ty == "select" { Node::Select { action, field, label, init } } else { Node::Toggle { action, field, label, init } }
             }
             "list" => {
                 let bind = o.text("bind")?;

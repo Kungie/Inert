@@ -305,7 +305,7 @@ fn check_screen_def<'m>(m: &'m Manifest, name: &str, s: &'m ScreenDef, triggered
                     }
                     buttons.push((action.as_str(), args, np.clone()));
                 }
-                Node::Input { action, field, label, kind, placeholder } => {
+                Node::Input { action, field, label, kind, placeholder, init } => {
                     check_label(label, &np)?;
                     if let Some(ph) = placeholder {
                         check_label(ph, &np)?;
@@ -318,11 +318,13 @@ fn check_screen_def<'m>(m: &'m Manifest, name: &str, s: &'m ScreenDef, triggered
                     if !ok {
                         return Err(err(&np, format!("input kind does not fit a {} field", t.name())));
                     }
+                    check_init(s, init, t, &np)?;
                     add_form(&mut forms, action, field, &np)?;
                 }
-                Node::Select { action, field, label } => {
+                Node::Select { action, field, label, init } => {
                     check_label(label, &np)?;
                     let t = form_field(m, scope, action, field, &np)?;
+                    check_init(s, init, t, &np)?;
                     match t {
                         FieldType::Enum { .. } => {}
                         FieldType::Choice { from } => match s.slots.get(from) {
@@ -335,9 +337,10 @@ fn check_screen_def<'m>(m: &'m Manifest, name: &str, s: &'m ScreenDef, triggered
                     }
                     add_form(&mut forms, action, field, &np)?;
                 }
-                Node::Toggle { action, field, label } => {
+                Node::Toggle { action, field, label, init } => {
                     check_label(label, &np)?;
                     let t = form_field(m, scope, action, field, &np)?;
+                    check_init(s, init, t, &np)?;
                     if !matches!(t, FieldType::Bool) {
                         return Err(err(&np, "toggle needs a bool field"));
                     }
@@ -448,6 +451,15 @@ fn check_screen_def<'m>(m: &'m Manifest, name: &str, s: &'m ScreenDef, triggered
         }
     }
     Ok(())
+}
+
+/// A form field's initial value: a literal that fits the field, or a bind
+/// (top-level slots only, since form fields cannot sit inside lists).
+fn check_init(s: &ScreenDef, init: &Option<ArgSrc>, t: &FieldType, np: &str) -> Result<()> {
+    match init {
+        None => Ok(()),
+        Some(a) => check_arg(s, None, a, t, &format!("{np}.init")),
+    }
 }
 
 fn check_label(s: &str, path: &str) -> Result<()> {

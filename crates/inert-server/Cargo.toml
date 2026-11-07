@@ -1,6 +1,27 @@
 [package]
 name = "inert-server"
+description = "Inert server SDK, manifest signing (inert-sign) and dev runner"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "inert-sign"
+path = "src/bin/inert-sign.rs"
 
 [dependencies]
+inert-proto.workspace = true
+inert-verify.workspace = true
+inert-transport.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+ed25519-dalek.workspace = true
+rand.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+png.workspace = true

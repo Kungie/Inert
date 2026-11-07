@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod tls;
+pub mod trust;
 
 use inert_proto::limits::{FRAME_MAX_SERVER_TO_CLIENT, FRAME_MAX_SMALL, HANDSHAKE_TIMEOUT_SECS, IDLE_TIMEOUT_SECS, READ_TIMEOUT_SECS};
 use inert_proto::{DecodeError, ErrorCode, Message};

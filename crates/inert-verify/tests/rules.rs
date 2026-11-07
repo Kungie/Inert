@@ -41,8 +41,8 @@ fn fixture() -> Manifest {
     let root = stack(vec![
         Node::Text { style: TextStyle::Display, text: TextSrc::Bind("balance".into()) },
         Node::List { bind: "accounts".into(), item: Box::new(Node::Text { style: TextStyle::Body, text: TextSrc::Bind("item.label".into()) }) },
-        Node::Select { action: "transfer".into(), field: "from".into(), label: "From".into() },
-        Node::Input { action: "transfer".into(), field: "amount".into(), label: "Amount".into(), kind: InputKind::Number, placeholder: None },
+        Node::Select { action: "transfer".into(), field: "from".into(), label: "From".into(), init: None },
+        Node::Input { action: "transfer".into(), field: "amount".into(), label: "Amount".into(), kind: InputKind::Number, placeholder: None, init: None },
         Node::Button { label: "Send".into(), action: "transfer".into(), args: BTreeMap::new(), variant: Variant::Primary },
     ]);
     let mut screens = BTreeMap::new();
@@ -101,7 +101,7 @@ fn form_field_inside_list_is_rejected() {
     if let Node::Stack { children, .. } = &mut s.root {
         children[1] = Node::List {
             bind: "accounts".into(),
-            item: Box::new(Node::Input { action: "transfer".into(), field: "amount".into(), label: "A".into(), kind: InputKind::Number, placeholder: None }),
+            item: Box::new(Node::Input { action: "transfer".into(), field: "amount".into(), label: "A".into(), kind: InputKind::Number, placeholder: None, init: None }),
         };
     }
     assert!(check_manifest(&m).is_err());
