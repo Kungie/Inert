@@ -10,7 +10,7 @@
 - Everything else on the web opens in the same browser as **unsecured** tabs,
   rendered by **Servo** (the Rust web engine) in its own process by default,
   or by the system WebKit for Inbox tabs and on demand, with ad & tracker
-  blocking in both. The browser process never links Servo.
+  blocking in both. 
 
 ![Inert Bank in the Inert browser](docs/screenshots/04-bank-overview.png)
 
