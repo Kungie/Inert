@@ -92,7 +92,7 @@ Her biri kendi spec → plan → kod döngüsüyle ilerler.
 Gece raporu (görsel özet): https://claude.ai/artifact/BERyRh213X8xgAk2CSKnMD
 
 ## Tarayıcıda olanlar (2026-11-07)
-- Stencil tarzı koyu arayüz, egui + wgpu, dört Geist fontu gömülü.
+- Glyph arayüzü (mavi glif çerçevesi, kenar çubuğu, içe gömülü sayfa kartı), egui + wgpu, dört Geist fontu gömülü.
 - Giriş: sadece AI sağlayıcı (Claude / GPT) + isteğe bağlı API key (Keychain).
 - Sekmeler, sekme grupları (Inbox, Homeserver, Developer + normal gruplar), yer imleri, geçmiş, omnibox (satır içi tamamlama + arama önerileri), kapatılan sekmeyi geri açma, sayfada bul, zoom, indirmeler, memory saver, native menü ve kısayollar.
 - `inert://` siteleri SECURED, normal web UNSECURED / NOT ENCRYPTED rozetiyle.
@@ -118,7 +118,8 @@ Gece raporu (görsel özet): https://claude.ai/artifact/BERyRh213X8xgAk2CSKnMD
 - **Referanslar:**
   - stencil.so: saf siyah zemin, `#EDEDED` metin, dither/noktalı (stipple) mor-mavi gezegen yayı ve yıldızlar, küçük harf aralıklı mono büyük harf etiketler, ince kenarlıklı küçük butonlar ve `→` okları, neredeyse boş kompozisyon, logo sol altta.
   - stoaexchange.com: sıcak kırık beyaz zemin, sıcak gri tonlar (`#272625` metin, `#706C6A` buton), Inter, hap (pill) butonlar, 24px regular başlıklar ve hafif negatif harf aralığı, arka planda mono ASCII ticker metni, dikey çizgili ve dolu sütun grafikleri, küçük mono etiketler.
-- **Seçilen yön: Yön A (Stencil dili, koyu).** Web sitesi ve tarayıcı arayüzü bu dille yapılır.
+- **Web sitesi: Yön A (Stencil dili, koyu).**
+- **Tarayıcı arayüzü: Glyph dili (2026-11-10).** Yön A'nın yerini aldı. Ana tema glyphblue (inspora.design/posts/glyphblue): kobalt mavi (`#1F4DFF`) pencere çerçevesi, üzerinde imlecin altında değişen beyaz ASCII glif haritası (Geist Mono). Düzen ve hareket Dia ile Facet'ten: sekmeler ve gruplar sol kenar çubuğunda (Cmd+S gizler), sayfa içe gömülü yuvarlak koyu kartta, butonlar yumuşak cam haplar, başlıklar Geist Sans. Ayrıntılar spec §18.2, kod `theme.rs`, `art.rs`, `chrome.rs`.
 - **Tasarım dosyaları (Claude Design, 2026-11-07):**
   - Yön A, Stencil dili (koyu, dither cam küre): https://claude.ai/artifact/FeE2baRHUwY1tdfxLf6cbz
   - Yön B, Stoa dili (açık, sütunlu galeri, protokol ticker'ı): https://claude.ai/artifact/7Phi2q4Cashnwoo1Xnmen2

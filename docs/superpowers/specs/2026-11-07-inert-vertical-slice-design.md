@@ -514,3 +514,26 @@ Kullanıcının dokuz maddelik listesi. Her madde UI sürücüsünde bir kontrol
 - Mullvad girişi gerçek bir hesapla denenmedi (numara kullanıcıda). Çıkış ve oturum kapalı durumun okunması gerçek CLI ile doğrulandı.
 - Bellek, 71 kontrollük turda: tarayıcı medyan 97 MB, en fazla 109 MB; Servo süreci medyan 56 MB, en fazla 185 MB.
 
+### 18.2 Glyph arayüzü (2026-11-10)
+
+Tarayıcı arayüzü baştan tasarlandı. Kaynaklar: glyphblue (ana tema), Dia ve Facet (düzen, butonlar, hareket).
+
+| Parça | Karar |
+|---|---|
+| Çerçeve | Pencerenin tamamı kobalt mavi (`#1F4DFF`). Üzerinde Geist Mono ile çizilen ASCII glif haritası; imlecin altında yükselir ve harfleri değişir. Doku tutulmaz, satırlar metin olarak çizilir (`art.rs`). |
+| Sekmeler | Sol kenar çubuğu (252 pt). Sabitlenen sekmeler cam karolar, gruplar renkli çipli klasör satırları, sekmeler satır. Cmd+S ile gizlenir. Altta VPN hapı, geçmiş, ayarlar, asistan. |
+| Sayfa | İçe gömülü, 14 pt yuvarlak koyu kart (`#090B12`). WebKit görünümleri katman yarıçapıyla, egui içeriği köşe maskeleriyle yuvarlanır. |
+| Adres çubuğu | Mavi çerçevede lacivert cam hap, ortalanmış. Sayfa yüklenirken alt kenarında ışık gezer. |
+| Butonlar | Düz yazılı, hap biçimli (`theme::cta`). Mono büyük harf yalnızca küçük etiketlerde. |
+| Yeni sekme | Glif kartı (kahraman) ve altına taşan arama kutusu: alan, arama motoru çipi, gönder düğmesi. |
+| Giriş | Tüm pencere glif kartı. Yazı gerektiren adımlar koyu panelde. |
+| Hareket | Üzerine gelme ve basma geçişleri, sekme satırlarının açılıp katlanması, grup oku dönüşü, kenar çubuğu kayması, açılır panellerde belirme ve kayma, sekme değişiminde sayfa belirmesi. |
+| macOS | Trafik ışıkları araç çubuğu hizasına taşınır (`web::mac::traffic_lights`). |
+
+Notlar:
+- Kenar çubuğu satırları sabit kimlik taşır. Otomatik kimlikler, üstteki satırlar katlanınca kayıyor ve açık sağ tık menüsünü başka sekmeye bağlıyordu.
+- Yukarı açılan panel (VPN) içeriği değişince aynı kare yeniden yerleştirilir (`request_discard`), panel zıplamaz.
+- Demo siteleri yeni dile uyduruldu (yarıçap 14, sans başlıklar); her site kendi vurgu rengini korur.
+- Bellek: yalnız banka açıkken ayak izi 134 MB ölçüldü (önceki sürüm aynı ekranda 60 MB). Glif haritası bunun ~4 MB'ı; kalan artışın nedeni bulunmadı. Açık iş.
+- Doğrulama: son tam UI turu 68/75 (kalan 7 hata VPN çıkış adımı ve ona bağlı adımlar; düzeltmesi yazıldı, tam turla doğrulanmadı). `scripts/design-check.py` hâlâ Yön A paletini sayıyor, güncellenmedi.
+- Ekran görüntüleri: `docs/screenshots/44…49`.
