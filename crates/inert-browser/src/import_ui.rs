@@ -8,7 +8,7 @@ use crate::theme::{self, *};
 use eframe::egui::{self, Color32, FontId, RichText, Sense, Stroke, Ui, Vec2, vec2};
 
 fn pill(ui: &mut Ui, text: &str, on: bool) -> egui::Response {
-    ui.add(egui::Button::new(RichText::new(text).font(FontId::new(12.5, sans())).color(if on { BG } else { FG })).fill(if on { FG } else { RAISED }).stroke(Stroke::new(1.0, if on { FG } else { LINE_STRONG })).corner_radius(16).min_size(vec2(0.0, 32.0)))
+    ui.add(egui::Button::new(RichText::new(text).font(FontId::new(12.5, sans())).color(if on { BG } else { FG })).fill(if on { WHITE } else { RAISED }).stroke(Stroke::new(1.0, if on { WHITE } else { LINE })).corner_radius(16).min_size(vec2(0.0, 32.0)))
 }
 
 impl Browser {
@@ -19,7 +19,7 @@ impl Browser {
             ui.label(theme::body("No Chrome, Brave, Edge, Arc, Vivaldi or Chromium profile was found on this Mac."));
             if onboarding {
                 ui.add_space(18.0);
-                let b = big(ui, "CONTINUE →", true);
+                let b = big(ui, "Continue", true);
                 crate::drive::reg("import:skip", b.rect);
                 if b.clicked() {
                     self.finish_onboarding();
@@ -65,13 +65,13 @@ impl Browser {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 let running = self.import.running;
-                let b = big(ui, if running { "IMPORTING…" } else { "IMPORT →" }, true);
+                let b = big(ui, if running { "Importing…" } else { "Import" }, true);
                 crate::drive::reg("import:go", b.rect);
                 if b.clicked() && !running {
                     self.start_import();
                 }
                 if onboarding {
-                    let s = big(ui, "SKIP", false);
+                    let s = big(ui, "Skip", false);
                     crate::drive::reg("import:skip", s.rect);
                     if s.clicked() {
                         self.finish_onboarding();
@@ -93,12 +93,12 @@ impl Browser {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 if onboarding {
-                    let b = big(ui, "CONTINUE →", true);
+                    let b = big(ui, "Continue", true);
                     crate::drive::reg("import:continue", b.rect);
                     if b.clicked() {
                         self.finish_onboarding();
                     }
-                } else if big(ui, "IMPORT AGAIN", false).clicked() {
+                } else if big(ui, "Import again", false).clicked() {
                     self.import.summary.clear();
                     self.import.errors.clear();
                 }
@@ -225,19 +225,19 @@ impl Browser {
 
     /// Step 2 of onboarding, in the sign-in screen's style.
     pub fn import_screen(&mut self, ui: &mut Ui) {
-        ui.label(theme::label("inert:// — step 2 of 2"));
-        ui.add_space(18.0);
-        ui.label(RichText::new("Bring Chrome\nwith you.").font(FontId::new(80.0, serif())).color(WHITE).extra_letter_spacing(-2.5).line_height(Some(80.0)));
-        ui.add_space(20.0);
-        ui.label(RichText::new("Bookmarks, history, passwords, sign-ins and habits move over in one go. Nothing leaves this Mac.").font(FontId::new(17.0, sans())).color(MUTED));
-        ui.add_space(26.0);
+        ui.label(theme::label_c("Step 2 of 2 · Import", ACCENT));
+        ui.add_space(10.0);
+        ui.label(theme::title("Bring Chrome with you.", 38.0));
+        ui.add_space(8.0);
+        ui.label(RichText::new("Bookmarks, history, passwords, sign-ins and habits move over in one go. Nothing leaves this Mac.").font(FontId::new(15.0, sans())).color(MUTED));
+        ui.add_space(22.0);
         self.import_panel(ui, true);
     }
 
     pub fn import_page(&mut self, ui: &mut Ui) {
         ui.add_space(48.0);
         ui.label(theme::label("Import"));
-        ui.label(theme::serif_text("Bring Chrome with you.", 44.0));
+        ui.label(theme::title("Bring Chrome with you.", 44.0));
         ui.add_space(6.0);
         if let Some(f) = &self.profile.imported_from {
             ui.label(theme::muted(&format!("Last import: {f}.")));
@@ -253,7 +253,6 @@ fn plural(n: usize, word: &str) -> String {
 }
 
 pub fn big(ui: &mut Ui, text: &str, primary: bool) -> egui::Response {
-    let (fill, ink) = if primary { (FG, BG) } else { (Color32::TRANSPARENT, FG) };
-    ui.add(egui::Button::new(RichText::new(text).font(FontId::new(12.0, mono())).color(ink).extra_letter_spacing(1.4)).fill(fill).stroke(Stroke::new(1.0, if primary { FG } else { LINE_STRONG })).corner_radius(2).min_size(vec2(if primary { 200.0 } else { 150.0 }, 46.0)))
+    let b = if primary { theme::cta(text, BLUE, WHITE, 46.0) } else { theme::cta_ghost(text, 46.0) };
+    ui.add(b.min_size(vec2(if primary { 180.0 } else { 130.0 }, 46.0)))
 }
-

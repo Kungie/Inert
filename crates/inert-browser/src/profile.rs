@@ -104,6 +104,9 @@ pub struct Settings {
     /// Cookies extension: sites (eTLD+1) whose cookies are deleted after every load.
     #[serde(default)]
     pub cookie_block: Vec<String>,
+    /// The tab sidebar is showing (Cmd+S hides it).
+    #[serde(default = "yes")]
+    pub sidebar: bool,
 }
 
 impl Default for Settings {
@@ -121,6 +124,7 @@ impl Default for Settings {
             inbox_webkit: true,
             cookie_banners: true,
             cookie_block: Vec::new(),
+            sidebar: true,
         }
     }
 }

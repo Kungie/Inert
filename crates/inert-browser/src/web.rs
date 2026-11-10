@@ -164,3 +164,107 @@ pub fn read_text(t: &WebTab, tab: u64, tx: &Sender<Event>, ctx: &egui::Context) 
         });
     }
 }
+
+/// macOS window dressing that egui and wry don't cover.
+#[cfg(target_os = "macos")]
+pub mod mac {
+    use objc2::encode::{Encode, Encoding};
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Pt {
+        x: f64,
+        y: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Sz {
+        w: f64,
+        h: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Rc {
+        o: Pt,
+        s: Sz,
+    }
+    unsafe impl Encode for Pt {
+        const ENCODING: Encoding = Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+    }
+    unsafe impl Encode for Sz {
+        const ENCODING: Encoding = Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+    }
+    unsafe impl Encode for Rc {
+        const ENCODING: Encoding = Encoding::Struct("CGRect", &[Pt::ENCODING, Sz::ENCODING]);
+    }
+
+    /// Rounds a web view's corners so it fits the page card.
+    pub fn round(view: &wry::WebView, radius: f64) {
+        use wry::WebViewExtMacOS;
+        let wv = view.webview();
+        unsafe {
+            let _: () = msg_send![&*wv, setWantsLayer: true];
+            let layer: *mut AnyObject = msg_send![&*wv, layer];
+            if !layer.is_null() {
+                let _: () = msg_send![layer, setCornerRadius: radius];
+                let _: () = msg_send![layer, setMasksToBounds: true];
+            }
+        }
+    }
+
+    /// Moves the traffic lights so the close button starts at `x` and all
+    /// three center on `y` (points from the window's top-left). AppKit puts
+    /// them back whenever it lays the title bar out, so this runs every frame
+    /// and only touches what has drifted. Returns the close button's center.
+    pub fn traffic_lights(frame: &eframe::Frame, x: f64, y: f64) -> Option<(f64, f64)> {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let handle = frame.window_handle().ok()?;
+        let RawWindowHandle::AppKit(h) = handle.as_raw() else { return None };
+        let view = h.ns_view.as_ptr() as *mut AnyObject;
+        unsafe {
+            let window: *mut AnyObject = msg_send![view, window];
+            if window.is_null() {
+                return None;
+            }
+            let close: *mut AnyObject = msg_send![window, standardWindowButton: 0usize];
+            let mini: *mut AnyObject = msg_send![window, standardWindowButton: 1usize];
+            if close.is_null() || mini.is_null() {
+                return None;
+            }
+            let bar: *mut AnyObject = msg_send![close, superview];
+            if bar.is_null() {
+                return None;
+            }
+            let container: *mut AnyObject = msg_send![bar, superview];
+            if container.is_null() {
+                return None;
+            }
+            // A taller title bar, so the buttons can sit lower than AppKit's default.
+            let height = y * 2.0;
+            let wf: Rc = msg_send![window, frame];
+            let cf: Rc = msg_send![container, frame];
+            if (cf.s.h - height).abs() > 0.5 || (cf.o.y - (wf.s.h - height)).abs() > 0.5 {
+                let nf = Rc { o: Pt { x: cf.o.x, y: wf.s.h - height }, s: Sz { w: cf.s.w, h: height } };
+                let _: () = msg_send![container, setFrame: nf];
+            }
+            let c0: Rc = msg_send![close, frame];
+            let m0: Rc = msg_send![mini, frame];
+            let step = (m0.o.x - c0.o.x).clamp(16.0, 28.0);
+            for i in 0..3usize {
+                let b: *mut AnyObject = msg_send![window, standardWindowButton: i];
+                if b.is_null() {
+                    continue;
+                }
+                let f: Rc = msg_send![b, frame];
+                let o = Pt { x: x + i as f64 * step, y: (height - f.s.h) / 2.0 };
+                if (f.o.x - o.x).abs() > 0.5 || (f.o.y - o.y).abs() > 0.5 {
+                    let _: () = msg_send![b, setFrameOrigin: o];
+                }
+            }
+            let c: Rc = msg_send![close, frame];
+            Some((c.o.x + c.s.w / 2.0, height - (c.o.y + c.s.h / 2.0)))
+        }
+    }
+}

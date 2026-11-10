@@ -1,6 +1,7 @@
-//! Browser chrome: tab strip with groups, toolbar + omnibox, bookmarks bar,
-//! popovers (site security, VPN, shield, menu), the AI side panel and the
-//! content area.
+//! Browser chrome. The window is one blue glyph card: a sidebar of tabs and
+//! groups on the left, a toolbar with the address bar on top, and the page in
+//! an inset rounded card. Also the popovers (site security, VPN, shield,
+//! menu), the AI side panel and the content area.
 
 use crate::app::{Browser, Kind, Page, Popover};
 use crate::icons::{self, Icon};
@@ -12,11 +13,16 @@ use crate::{adblock, vpn};
 use eframe::egui::{self, Align, Color32, FontId, Id, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use std::time::{Duration, Instant};
 
-const STRIP_H: f32 = 44.0;
-const TAB_H: f32 = 36.0;
-const BAR_H: f32 = 50.0;
+const SIDE_W: f32 = 252.0;
+const TOP_H: f32 = 52.0;
+const ROW_H: f32 = 34.0;
 const MARKS_H: f32 = 30.0;
 const LEFT_INSET: f32 = 80.0; // macOS traffic lights
+const GAP: f32 = 8.0;
+/// Corner radius of the page card (web views are rounded to match).
+pub const CARD_R: f32 = 14.0;
+/// Where the traffic lights sit: centered on the toolbar's line.
+pub const LIGHTS: (f64, f64) = (18.0, TOP_H as f64 / 2.0);
 
 pub fn group_icon(k: GroupKind) -> Option<Icon> {
     match k {
@@ -36,35 +42,50 @@ pub fn ease(t: f32) -> f32 {
 /// A tab that was just closed, drawn shrinking for a moment after the tab it followed.
 pub struct Ghost {
     pub after: Option<u64>,
-    pub w: f32,
+    pub h: f32,
     pub start: f64,
     pub title: String,
 }
 
-/// Chrome's tab: rounded top corners and small outward curves at the bottom,
-/// so the active tab flows into the toolbar below it.
-fn tab_shape(p: &egui::Painter, r: Rect, fill: Color32, stroke: Option<Stroke>) {
-    let (rad, f) = (10.0, 8.0);
-    let body = Rect::from_min_max(r.min, pos2(r.max.x, r.max.y + 1.0));
-    p.rect_filled(body, egui::CornerRadius { nw: rad as u8, ne: rad as u8, sw: 0, se: 0 }, fill);
-    for (x, dir) in [(r.left(), -1.0f32), (r.right(), 1.0)] {
-        let sq = Rect::from_min_max(pos2(x.min(x + dir * f), r.bottom() - f), pos2(x.max(x + dir * f), r.bottom() + 1.0));
-        p.rect_filled(sq, 0.0, fill);
-        p.circle_filled(pos2(x + dir * f, r.bottom() - f), f, BG);
+/// Paints the frame color over a rect's corners, so whatever was drawn inside
+/// it ends up with rounded corners (egui clips to rectangles only).
+pub fn round_corners(p: &egui::Painter, r: Rect, rad: f32, c: Color32) {
+    for (corner, sx, sy) in [(r.left_top(), 1.0, 1.0), (r.right_top(), -1.0, 1.0), (r.right_bottom(), -1.0, -1.0), (r.left_bottom(), 1.0, -1.0)] {
+        let centre = corner + vec2(sx * rad, sy * rad);
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(corner, c);
+        let n = 12u32;
+        for i in 0..=n {
+            let a = std::f32::consts::FRAC_PI_2 * i as f32 / n as f32;
+            mesh.colored_vertex(centre - vec2(sx * rad * a.sin(), sy * rad * a.cos()), c);
+        }
+        for i in 1..=n {
+            mesh.add_triangle(0, i, i + 1);
+        }
+        p.add(egui::Shape::mesh(mesh));
     }
-    if let Some(s) = stroke {
-        let arc = |c: egui::Pos2, rr: f32, a0: f32, a1: f32| -> Vec<egui::Pos2> {
-            (0..=8).map(|i| {
-                let a = (a0 + (a1 - a0) * i as f32 / 8.0).to_radians();
-                c + vec2(a.cos(), a.sin()) * rr
-            }).collect()
-        };
-        let mut pts = arc(pos2(r.left() - f, r.bottom() - f), f, 90.0, 0.0);
-        pts.extend(arc(pos2(r.left() + rad, r.top() + rad), rad, 180.0, 270.0));
-        pts.extend(arc(pos2(r.right() - rad, r.top() + rad), rad, 270.0, 360.0));
-        pts.extend(arc(pos2(r.right() + f, r.bottom() - f), f, 180.0, 90.0));
-        p.add(egui::Shape::line(pts, s));
+}
+
+fn tab_icon(k: &Kind) -> (Icon, Color32) {
+    match k {
+        Kind::Inert(it) if it.status == Status::Failed => (Icon::Unlock, Color32::from_rgb(255, 196, 196)),
+        Kind::Inert(_) => (Icon::Lock, WHITE),
+        Kind::Web(_) => (Icon::Globe, glass(0.72)),
+        Kind::Page(Page::Settings) => (Icon::Gear, glass(0.72)),
+        Kind::Page(Page::History) => (Icon::History, glass(0.72)),
+        Kind::Page(Page::Bookmarks) => (Icon::Bookmark, glass(0.72)),
+        Kind::Page(_) => (Icon::Spark, glass(0.72)),
     }
+}
+
+fn spinner(p: &egui::Painter, c: egui::Pos2, time: f32) {
+    p.circle_stroke(c, 5.5, Stroke::new(1.2, glass(0.25)));
+    let a = time * 6.0;
+    let arc: Vec<egui::Pos2> = (0..=10).map(|i| {
+        let t = a + i as f32 / 10.0 * 2.2;
+        c + vec2(t.cos(), t.sin()) * 5.5
+    }).collect();
+    p.add(egui::Shape::line(arc, Stroke::new(1.6, WHITE)));
 }
 
 enum Security {
@@ -103,28 +124,62 @@ impl Browser {
         self.ctx.data_mut(|d| d.insert_temp(Id::unique("pop_anchor"), anchor));
     }
 
+    pub fn toggle_sidebar(&mut self) {
+        self.profile.settings.sidebar = !self.profile.settings.sidebar;
+        self.dirty = true;
+    }
+
     pub fn chrome(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        egui::Panel::top("strip").exact_size(STRIP_H).frame(egui::Frame::new().fill(BG)).show(ui, |ui| self.tab_strip(ui));
-        egui::Panel::top("toolbar").exact_size(BAR_H).frame(egui::Frame::new().fill(PANEL).inner_margin(egui::Margin::symmetric(10, 0))).show(ui, |ui| self.toolbar(ui));
-        if self.profile.settings.bookmarks_bar {
-            egui::Panel::top("marks").exact_size(MARKS_H).frame(egui::Frame::new().fill(PANEL).inner_margin(egui::Margin::symmetric(12, 0))).show(ui, |ui| self.bookmarks_bar(ui));
+        let win = ui.max_rect();
+        let side_t = ease(ctx.animate_bool_with_time(Id::unique("side-open"), self.profile.settings.sidebar, 0.28));
+        let side_w = (SIDE_W * side_t).round();
+        let marks = if self.profile.settings.bookmarks_bar { MARKS_H } else { 0.0 };
+
+        // The frame is one blue card. Its glyph map shows on the sidebar and
+        // the bars; the page card covers the rest.
+        let p = ui.painter().clone();
+        p.rect_filled(win, 0.0, BLUE);
+        let ptr = ctx.pointer_latest_pos();
+        let g = crate::art::Glyphs::frame();
+        crate::art::glyphs(&p, &ctx, Rect::from_min_max(win.min, pos2(win.left() + side_w, win.bottom())), ptr, &g);
+        crate::art::glyphs(&p, &ctx, Rect::from_min_max(pos2(win.left() + side_w, win.top()), pos2(win.right(), win.top() + TOP_H + marks)), ptr, &g);
+
+        if side_w >= 1.0 {
+            egui::Panel::left("side").resizable(false).show_separator_line(false).exact_size(side_w).frame(egui::Frame::NONE).show(ui, |ui| self.sidebar(ui));
         }
-        // Hairline under the chrome.
+        egui::Panel::top("toolbar").show_separator_line(false).exact_size(TOP_H).frame(egui::Frame::NONE).show(ui, |ui| self.toolbar(ui, side_t));
+        if self.profile.settings.bookmarks_bar {
+            let left = (4.0 + (GAP + 4.0) * (1.0 - side_t)) as i8;
+            egui::Panel::top("marks").show_separator_line(false).exact_size(MARKS_H).frame(egui::Frame::new().inner_margin(egui::Margin { left, right: 14, top: 0, bottom: 6 })).show(ui, |ui| self.bookmarks_bar(ui));
+        }
         if self.find.is_some() {
-            egui::Panel::top("find").exact_size(38.0).frame(egui::Frame::new().fill(RAISED).inner_margin(egui::Margin::symmetric(12, 0))).show(ui, |ui| self.find_bar(ui));
+            egui::Panel::top("find").show_separator_line(false).exact_size(44.0).frame(egui::Frame::new().inner_margin(egui::Margin { left: (GAP * (1.0 - side_t)) as i8, right: GAP as i8, top: 0, bottom: 6 })).show(ui, |ui| self.find_bar(ui));
         }
         if self.ai.open {
-            egui::Panel::right("ai").exact_size(380.0).frame(egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE)).inner_margin(16.0)).show(ui, |ui| self.ai_panel(ui));
+            egui::Panel::right("ai").resizable(false).show_separator_line(false).exact_size(388.0).frame(egui::Frame::NONE).show(ui, |ui| {
+                let mut c = side_card(ui);
+                self.ai_panel(&mut c);
+            });
         }
         if self.inspector {
-            egui::Panel::right("inspector").exact_size(340.0).frame(egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE)).inner_margin(16.0)).show(ui, |ui| self.inspector_panel(ui));
+            egui::Panel::right("inspector").resizable(false).show_separator_line(false).exact_size(348.0).frame(egui::Frame::NONE).show(ui, |ui| {
+                let mut c = side_card(ui);
+                self.inspector_panel(&mut c);
+            });
         }
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let r = ui.max_rect();
-            ui.painter().line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, LINE));
-            self.content_rect = Rect::from_min_max(pos2(r.left(), r.top() + 1.0), r.max);
-            self.content(ui);
+            let card = Rect::from_min_max(pos2(r.left() + GAP * (1.0 - side_t), r.top()), pos2(r.right() - GAP, r.bottom() - GAP));
+            let p = ui.painter().clone();
+            p.add(egui::epaint::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(70) }.as_shape(card, CARD_R));
+            p.rect_filled(card, CARD_R, BG);
+            self.content_rect = card;
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(card).layout(Layout::top_down(Align::Min)));
+            child.set_clip_rect(card);
+            self.content(&mut child);
+            round_corners(&p, card, CARD_R, BLUE);
+            p.rect_stroke(card, CARD_R, Stroke::new(1.0, glass(0.16)), egui::StrokeKind::Inside);
         });
         self.popovers(&ctx);
         self.omnibox_dropdown(&ctx);
@@ -133,17 +188,9 @@ impl Browser {
         self.toast_overlay(&ctx);
     }
 
-    // ------------------------------------------------------------------ tab strip
-
-    fn tab_strip(&mut self, ui: &mut Ui) {
-        let full = ui.max_rect();
-        let ctx = ui.ctx().clone();
-        let now = ctx.input(|i| i.time);
-        // The hairline under the strip; the active tab is painted over it so it
-        // flows into the toolbar (Chrome's tab shape).
-        ui.painter().line_segment([pos2(full.left(), full.bottom() - 0.5), pos2(full.right(), full.bottom() - 0.5)], Stroke::new(1.0, LINE));
-        // Window drag on the empty strip.
-        let drag = ui.interact(full, Id::unique("strip-drag"), Sense::click_and_drag());
+    /// Empty frame areas move the window; a double click zooms it.
+    fn frame_drag(&self, ui: &mut Ui, r: Rect, key: &'static str) {
+        let drag = ui.interact(r, Id::unique(key), Sense::click_and_drag());
         if drag.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
@@ -151,130 +198,196 @@ impl Browser {
             let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
-        // Right side: VPN chip + assistant.
-        let right = Rect::from_min_max(pos2(full.right() - 205.0, full.top() + 4.0), pos2(full.right() - 10.0, full.bottom() - 4.0));
-        let mut r = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)));
-        let ai_color = if self.ai.open { ACCENT } else { FG };
-        let air = icons::button_c(&mut r, Icon::Spark, 30.0, "Assistant  Cmd+J", ai_color, true);
-        crate::drive::reg("ai", air.rect);
-        if air.clicked() {
-            self.ai.open = !self.ai.open;
-        }
-        let st = &self.vpn.status;
-        let cc = self.vpn.relays.iter().find(|c| c.name == st.country).map(|c| c.code.to_uppercase());
-        let txt = match (st.connected(), cc) {
-            (true, Some(cc)) => format!("VPN · {cc}"),
-            _ => st.short(),
-        };
-        let col = if st.connected() { OK } else { MUTED };
-        let chip = egui::Button::new(RichText::new(format!("● {txt}")).font(FontId::new(10.5, mono())).color(col).extra_letter_spacing(1.2)).fill(if st.connected() { OK.gamma_multiply(0.08) } else { Color32::TRANSPARENT }).stroke(Stroke::new(1.0, if st.connected() { OK.gamma_multiply(0.6) } else { LINE_STRONG })).corner_radius(13).min_size(vec2(0.0, 26.0));
-        let resp = r.add(chip).on_hover_text("Mullvad VPN");
-        crate::drive::reg("vpn", resp.rect);
-        if resp.clicked() {
-            self.open_popover(Popover::Vpn, resp.rect);
+    }
+
+    // ------------------------------------------------------------------ sidebar
+
+    fn sidebar(&mut self, ui: &mut Ui) {
+        let panel = ui.max_rect();
+        // Laid out at full width; it slides in from the left while the panel opens.
+        let full = Rect::from_min_max(pos2(panel.right() - SIDE_W, panel.top()), panel.max);
+        let ctx = ui.ctx().clone();
+        let now = ctx.input(|i| i.time);
+        self.frame_drag(ui, panel, "side-drag");
+        ui.set_clip_rect(panel);
+
+        // Top row: the traffic lights on the left, the sidebar toggle on the right.
+        let top = Rect::from_min_max(pos2(full.left() + LEFT_INSET, full.top()), pos2(full.right() - 10.0, full.top() + TOP_H));
+        let mut tu = ui.new_child(egui::UiBuilder::new().max_rect(top).layout(Layout::right_to_left(Align::Center)));
+        let tg = icons::button(&mut tu, Icon::Sidebar, 30.0, "Hide sidebar  Cmd+S");
+        crate::drive::reg("sidebar", tg.rect);
+        if tg.clicked() {
+            self.toggle_sidebar();
         }
 
-        let tabs_rect = Rect::from_min_max(pos2(full.left() + LEFT_INSET, full.bottom() - TAB_H), pos2(full.right() - 210.0, full.bottom()));
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tabs_rect).layout(Layout::left_to_right(Align::Center)));
-        let ui = &mut child;
-        ui.set_clip_rect(Rect::from_min_max(pos2(tabs_rect.left() - 10.0, full.top()), tabs_rect.max));
-        ui.spacing_mut().item_spacing.x = 2.0;
+        // Bottom row: VPN on the left, assistant and settings on the right.
+        let bottom = Rect::from_min_max(pos2(full.left() + 10.0, full.bottom() - 46.0), pos2(full.right() - 10.0, full.bottom() - GAP));
+        let mut bu = ui.new_child(egui::UiBuilder::new().max_rect(bottom).layout(Layout::left_to_right(Align::Center)));
+        self.sidebar_footer(&mut bu);
 
-        // Tabs that appear after startup grow in; the ones restored at launch don't.
-        let animate_new = ctx.cumulative_pass_nr() > 3;
-        let order = self.visible_order();
-        let n_visible = order
-            .iter()
-            .filter(|id| {
-                let t = self.tab(**id).unwrap();
-                !t.pinned && t.group.and_then(|g| self.profile.groups.iter().find(|x| x.id == g)).is_none_or(|g| !g.collapsed)
-            })
-            .count()
-            .max(1);
-        let n_pinned = self.tabs.iter().filter(|t| t.pinned).count() as f32;
-        let chip_space: f32 = self.profile.groups.iter().map(|g| g.name.len() as f32 * 7.5 + 50.0).sum();
-        let target = ((ui.available_width() - chip_space - n_pinned * 42.0 - 44.0) / n_visible as f32 - 2.0).clamp(36.0, 240.0);
-        let tab_w = ctx.animate_value_with_time(Id::unique("tab-w-all"), target, 0.18);
+        let list = Rect::from_min_max(pos2(full.left() + 8.0, top.bottom()), pos2(full.right() - 8.0, bottom.top() - 6.0));
+        let mut lu = ui.new_child(egui::UiBuilder::new().max_rect(list).layout(Layout::top_down(Align::Min)));
+        lu.set_clip_rect(list.intersect(panel));
+        egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(&mut lu, |ui| {
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            // Tabs that appear after startup grow in; the ones restored at launch don't.
+            let animate_new = ctx.cumulative_pass_nr() > 3;
 
-        self.ghosts(ui, None, now);
-        // Pinned tabs.
-        let pinned: Vec<u64> = self.tabs.iter().filter(|t| t.pinned).map(|t| t.id).collect();
-        for id in pinned {
-            self.tab_item(ui, id, 40.0, 1.0, None, animate_new);
-            self.ghosts(ui, Some(id), now);
-        }
-        // Groups: the chip, then its tabs, which slide open and closed.
-        let groups = self.profile.groups.clone();
-        for g in &groups {
-            let ids: Vec<u64> = self.tabs.iter().filter(|t| !t.pinned && t.group == Some(g.id)).map(|t| t.id).collect();
-            let color = group_color(&g.color);
-            let open = ease(ctx.animate_bool_with_time(Id::unique(("grp-open", g.id)), !g.collapsed, 0.24));
-            self.group_chip(ui, g, ids.len(), color, open);
-            if open > 0.002 {
-                for id in ids {
-                    self.tab_item(ui, id, tab_w, open, Some(color), animate_new);
-                    self.ghosts(ui, Some(id), now);
+            // Pinned tabs: a grid of glass tiles.
+            let pinned: Vec<u64> = self.tabs.iter().filter(|t| t.pinned).map(|t| t.id).collect();
+            if !pinned.is_empty() {
+                let gap = 6.0;
+                let tw = ((ui.available_width() - gap * 3.0) / 4.0).floor();
+                for row in pinned.chunks(4) {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = gap;
+                        for id in row {
+                            self.pin_tile(ui, *id, tw);
+                        }
+                    });
+                    ui.add_space(gap);
+                }
+                ui.add_space(4.0);
+            }
+            self.ghosts(ui, None, now);
+            for id in pinned {
+                self.ghosts(ui, Some(id), now);
+            }
+
+            // Groups: a folder row, then its tabs, which slide open and closed.
+            let groups = self.profile.groups.clone();
+            for g in &groups {
+                let ids: Vec<u64> = self.tabs.iter().filter(|t| !t.pinned && t.group == Some(g.id)).map(|t| t.id).collect();
+                let color = group_color(&g.color);
+                let open = ease(ctx.animate_bool_with_time(Id::unique(("grp-open", g.id)), !g.collapsed, 0.26));
+                self.group_row(ui, g, ids.len(), color, open);
+                if open > 0.002 {
+                    for id in ids {
+                        self.tab_row(ui, id, open, Some(color), animate_new);
+                        self.ghosts(ui, Some(id), now);
+                    }
                 }
             }
-        }
-        // Ungrouped.
-        let rest: Vec<u64> = self.tabs.iter().filter(|t| !t.pinned && t.group.is_none_or(|g| !groups.iter().any(|x| x.id == g))).map(|t| t.id).collect();
-        for id in rest {
-            self.tab_item(ui, id, tab_w, 1.0, None, animate_new);
-            self.ghosts(ui, Some(id), now);
-        }
-        ui.add_space(4.0);
-        let plus = icons::button(ui, Icon::Plus, 28.0, "New tab  Cmd+T");
-        crate::drive::reg("newtab", plus.rect);
-        if plus.clicked() {
-            self.add_tab("about:newtab", None, true, None);
-        }
+            if !groups.is_empty() {
+                ui.add_space(6.0);
+            }
+
+            // Ungrouped tabs.
+            let rest: Vec<u64> = self.tabs.iter().filter(|t| !t.pinned && t.group.is_none_or(|g| !groups.iter().any(|x| x.id == g))).map(|t| t.id).collect();
+            for id in rest {
+                self.tab_row(ui, id, 1.0, None, animate_new);
+                self.ghosts(ui, Some(id), now);
+            }
+
+            // "+ New Tab", the last row.
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+            crate::drive::reg("newtab", rect);
+            let hov = ctx.animate_bool_with_time(Id::unique("newtab-hov"), resp.hovered(), 0.14);
+            let body = rect.shrink2(vec2(0.0, 1.0));
+            let p = ui.painter();
+            if hov > 0.0 {
+                p.rect_filled(body, 10.0, glass(0.09 * hov));
+            }
+            let ink = glass(0.66 + 0.34 * hov);
+            icons::paint(p, Rect::from_center_size(pos2(body.left() + 16.0, body.center().y), Vec2::splat(13.0)), Icon::Plus, ink);
+            p.text(pos2(body.left() + 34.0, body.center().y), egui::Align2::LEFT_CENTER, "New Tab", FontId::new(13.0, sans()), ink);
+            if resp.on_hover_text("New tab  Cmd+T").clicked() {
+                self.add_tab("about:newtab", None, true, None);
+            }
+            ui.add_space(12.0);
+        });
         self.closing.retain(|g| now - g.start < 0.3);
     }
 
-    /// Tabs that were just closed, shrinking away where they stood.
+    fn sidebar_footer(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let st = &self.vpn.status;
+        let cc = self.vpn.relays.iter().find(|c| c.name == st.country).map(|c| c.code.to_uppercase());
+        let on = st.connected();
+        let txt = match (on, cc) {
+            (true, Some(cc)) => format!("VPN · {cc}"),
+            _ => st.short(),
+        };
+        let galley = ui.painter().layout_no_wrap(txt, FontId::new(10.5, mono()), WHITE);
+        let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x + 36.0, 28.0), Sense::click());
+        crate::drive::reg("vpn", rect);
+        let hov = ctx.animate_bool_with_time(Id::unique("vpn-hov"), resp.hovered(), 0.14);
+        let p = ui.painter();
+        p.rect_filled(rect, 14.0, glass(0.10 + 0.08 * hov));
+        let dot = pos2(rect.left() + 14.0, rect.center().y);
+        if on {
+            p.circle_filled(dot, 6.0, OK.gamma_multiply(0.28));
+        }
+        p.circle_filled(dot, 3.2, if on { OK } else { glass(0.5) });
+        p.galley(pos2(rect.left() + 25.0, rect.center().y - galley.size().y / 2.0), galley, WHITE);
+        if resp.on_hover_text("Mullvad VPN").clicked() {
+            self.open_popover(Popover::Vpn, rect);
+        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let air = icons::button_c(ui, Icon::Spark, 30.0, "Assistant  Cmd+J", if self.ai.open { WHITE } else { glass(0.8) }, true);
+            crate::drive::reg("ai", air.rect);
+            if self.ai.open {
+                ui.painter().circle_filled(pos2(air.rect.center().x, air.rect.bottom() - 2.0), 1.6, WHITE);
+            }
+            if air.clicked() {
+                self.ai.open = !self.ai.open;
+            }
+            if icons::button_c(ui, Icon::Gear, 30.0, "Settings  Cmd+,", glass(0.8), true).clicked() {
+                self.add_tab("about:settings", None, true, None);
+            }
+            if icons::button_c(ui, Icon::History, 30.0, "History  Cmd+Y", glass(0.8), true).clicked() {
+                self.add_tab("about:history", None, true, None);
+            }
+        });
+    }
+
+    /// Tabs that were just closed, folding away where they stood.
     fn ghosts(&mut self, ui: &mut Ui, after: Option<u64>, now: f64) {
         for g in self.closing.iter().filter(|g| g.after == after) {
-            let f = 1.0 - ease(((now - g.start) / 0.18) as f32);
+            let f = 1.0 - ease(((now - g.start) / 0.2) as f32);
             if f <= 0.0 {
                 continue;
             }
             ui.ctx().request_repaint();
-            let (rect, _) = ui.allocate_exact_size(vec2(g.w * f, TAB_H), Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), g.h * f), Sense::hover());
             let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-            p.rect_filled(Rect::from_min_max(rect.min + vec2(2.0, 4.0), rect.max - vec2(2.0, 4.0)), 10.0, RAISED.gamma_multiply(f));
-            let mut job = egui::text::LayoutJob::single_section(g.title.clone(), egui::TextFormat::simple(FontId::new(12.5, sans()), MUTED.gamma_multiply(f)));
-            job.wrap = egui::text::TextWrapping::truncate_at_width((g.w - 50.0).max(0.0));
+            let body = Rect::from_min_size(pos2(rect.left(), rect.top() + 1.0), vec2(rect.width(), ROW_H - 2.0));
+            p.rect_filled(body, 10.0, glass(0.10 * f));
+            let mut job = egui::text::LayoutJob::single_section(g.title.clone(), egui::TextFormat::simple(FontId::new(13.0, sans()), glass(0.7 * f)));
+            job.wrap = egui::text::TextWrapping::truncate_at_width((rect.width() - 50.0).max(0.0));
             let galley = ui.fonts_mut(|fo| fo.layout_job(job));
-            p.galley(pos2(rect.left() + 34.0, rect.center().y - galley.size().y / 2.0), galley, MUTED);
+            p.galley(pos2(body.left() + 34.0, body.center().y - galley.size().y / 2.0), galley, WHITE);
         }
     }
 
-    fn group_chip(&mut self, ui: &mut Ui, g: &crate::profile::GroupDef, count: usize, color: Color32, open: f32) -> Rect {
-        let icon = group_icon(g.kind);
-        let label = g.name.to_uppercase();
-        let galley = ui.painter().layout_no_wrap(label.clone(), FontId::new(10.5, mono()), Color32::PLACEHOLDER);
-        let w = galley.size().x + if icon.is_some() { 32.0 } else { 20.0 } + if count > 0 { 16.0 } else { 0.0 };
-        let (rect, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
+    /// A group's folder row: color chip, name, tab count and a chevron that
+    /// turns as the group opens.
+    fn group_row(&mut self, ui: &mut Ui, g: &crate::profile::GroupDef, count: usize, color: Color32, open: f32) {
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
         crate::drive::reg(format!("group:{}", g.name), rect);
-        let hov = ui.ctx().animate_bool_with_time(Id::unique(("chip-hov", g.id)), resp.hovered(), 0.12);
-        // Expanded: a tinted pill in the group's color. Collapsed: a solid
-        // pill, like Chrome's collapsed group.
-        let shut = 1.0 - open;
-        let fill = color.gamma_multiply(0.12 + 0.08 * hov).lerp_to_gamma(color.gamma_multiply(0.82 + 0.18 * hov), shut);
-        // The text flips color halfway, so it never fades into the fill.
-        let ink = if shut > 0.5 { BG } else { color };
+        let hov = ui.ctx().animate_bool_with_time(Id::unique(("chip-hov", g.id)), resp.hovered(), 0.14);
+        let body = rect.shrink2(vec2(0.0, 1.0));
         let p = ui.painter();
-        p.rect_filled(rect, 13.0, fill);
-        p.rect_stroke(rect, 13.0, Stroke::new(1.0, color.gamma_multiply(0.55 * open)), egui::StrokeKind::Inside);
-        let mut x = rect.left() + 10.0;
-        if let Some(ic) = icon {
-            icons::paint(p, Rect::from_center_size(pos2(x + 6.0, rect.center().y), Vec2::splat(13.0)), ic, ink);
-            x += 17.0;
+        if hov > 0.0 {
+            p.rect_filled(body, 10.0, glass(0.09 * hov));
         }
-        p.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, ink);
+        // The chip carries the group's color; it stays readable on the blue frame.
+        let chip = Rect::from_center_size(pos2(body.left() + 16.0, body.center().y), Vec2::splat(18.0));
+        p.rect_filled(chip, 6.0, color);
+        icons::paint(p, chip.shrink(3.5), group_icon(g.kind).unwrap_or(Icon::Folder), BG);
+        let mut job = egui::text::LayoutJob::single_section(g.name.clone(), egui::TextFormat::simple(FontId::new(13.0, sans_medium()), WHITE));
+        job.wrap = egui::text::TextWrapping::truncate_at_width((body.width() - 90.0).max(0.0));
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
+        p.galley(pos2(body.left() + 34.0, body.center().y - galley.size().y / 2.0), galley, WHITE);
+        // Chevron: points right when closed, down when open.
+        let c = pos2(body.right() - 14.0, body.center().y);
+        let a = open * std::f32::consts::FRAC_PI_2;
+        let rot = |v: Vec2| vec2(v.x * a.cos() - v.y * a.sin(), v.x * a.sin() + v.y * a.cos());
+        p.add(egui::Shape::line(vec![c + rot(vec2(-1.5, -3.5)), c + rot(vec2(2.0, 0.0)), c + rot(vec2(-1.5, 3.5))], Stroke::new(1.4, glass(0.7))));
         if count > 0 {
-            p.text(pos2(rect.right() - 11.0, rect.center().y), egui::Align2::CENTER_CENTER, count.to_string(), FontId::new(10.0, mono()), ink.gamma_multiply(0.85));
+            p.text(pos2(body.right() - 28.0, body.center().y), egui::Align2::RIGHT_CENTER, count.to_string(), FontId::new(10.5, mono()), glass(0.7));
         }
         let gid = g.id;
         let resp = resp.on_hover_text(if g.collapsed { "Expand group" } else { "Collapse group" });
@@ -338,94 +451,107 @@ impl Browser {
                 ui.close();
             }
         });
-        rect
     }
 
-    /// One tab. `scale` shrinks it while its group opens or closes; new tabs
-    /// grow in from zero width.
-    fn tab_item(&mut self, ui: &mut Ui, id: u64, full_w: f32, scale: f32, group: Option<Color32>, animate_new: bool) {
+    /// A pinned tab: a square glass tile with just its icon.
+    fn pin_tile(&mut self, ui: &mut Ui, id: u64, w: f32) {
+        let Some(t) = self.tab(id) else { return };
+        let ctx = ui.ctx().clone();
+        let active = id == self.active;
+        let title = t.title();
+        let loading = t.loading();
+        let (icon, icon_c) = tab_icon(&t.kind);
+        let (rect, resp) = ui.allocate_exact_size(vec2(w, 40.0), Sense::click());
+        crate::drive::reg(format!("tab:{title}"), rect);
+        let hov = ctx.animate_bool_with_time(Id::unique(("tab-hov", id)), resp.hovered(), 0.14);
+        let act = ctx.animate_bool_with_time(Id::unique(("tab-act", id)), active, 0.18);
+        let down = ctx.animate_bool_with_time(Id::unique(("tab-down", id)), resp.is_pointer_button_down_on(), 0.08);
+        let body = rect.shrink(down);
+        let p = ui.painter();
+        p.rect_filled(body, 12.0, glass(0.10 + 0.06 * hov + 0.14 * act));
+        if act > 0.0 {
+            p.rect_stroke(body, 12.0, Stroke::new(1.0, glass(0.22 * act)), egui::StrokeKind::Inside);
+        }
+        if loading {
+            spinner(p, body.center(), ctx.input(|i| i.time) as f32);
+        } else {
+            icons::paint(p, Rect::from_center_size(body.center(), Vec2::splat(16.0)), icon, icon_c);
+        }
+        let resp = resp.on_hover_text(&title);
+        if resp.clicked() {
+            self.activate(id);
+        }
+        if resp.middle_clicked() {
+            self.close_tab(id);
+            return;
+        }
+        self.tab_menu(&resp, id, true);
+    }
+
+    /// One tab row. `scale` folds it while its group opens or closes; new
+    /// tabs unfold from nothing.
+    fn tab_row(&mut self, ui: &mut Ui, id: u64, scale: f32, group: Option<Color32>, animate_new: bool) {
         let Some(t) = self.tab(id) else { return };
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
         let active = id == self.active;
         let title = t.title();
-        let pinned = t.pinned;
         let loading = t.loading();
-        let (icon, icon_c) = match &t.kind {
-            Kind::Inert(it) if it.status == Status::Failed => (Icon::Unlock, DANGER),
-            Kind::Inert(_) => (Icon::Lock, SECURE),
-            Kind::Web(_) => (Icon::Globe, MUTED),
-            Kind::Page(Page::Settings) => (Icon::Gear, MUTED),
-            Kind::Page(Page::History) => (Icon::History, MUTED),
-            Kind::Page(Page::Bookmarks) => (Icon::Bookmark, MUTED),
-            Kind::Page(_) => (Icon::Spark, MUTED),
-        };
+        let (icon, icon_c) = tab_icon(&t.kind);
         let t0 = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(Id::unique(("tab-born", id)), || if animate_new { now } else { now - 10.0 }));
-        let grow = ease(((now - t0) / 0.2) as f32);
+        let grow = ease(((now - t0) / 0.22) as f32);
         if grow < 1.0 {
             ctx.request_repaint();
         }
-        let w = (full_w * scale * grow).max(0.0);
-        let (rect, resp) = ui.allocate_exact_size(vec2(w, TAB_H), Sense::click());
-        ctx.data_mut(|d| d.insert_temp(Id::unique(("tab-w", id)), full_w));
-        if w < 1.0 {
+        let k = (scale * grow).clamp(0.0, 1.0);
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H * k), Sense::click());
+        ctx.data_mut(|d| d.insert_temp(Id::unique(("tab-h", id)), ROW_H));
+        if rect.height() < 1.0 {
             return;
         }
         crate::drive::reg(format!("tab:{title}"), rect);
-        let alpha = (scale * grow).clamp(0.0, 1.0);
-        let lr = Rect::from_min_size(rect.min, vec2(full_w, TAB_H));
-        let shape = ui.painter().with_clip_rect(rect.expand2(vec2(10.0, 0.0)).intersect(ui.clip_rect()));
+        let indent = if group.is_some() { 16.0 } else { 0.0 };
+        // The row keeps its full height while it unfolds, clipped to what has opened.
+        let body = Rect::from_min_size(pos2(rect.left() + indent, rect.top() + 1.0), vec2(rect.width() - indent, ROW_H - 2.0));
         let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-        let hov = ctx.animate_bool_with_time(Id::unique(("tab-hov", id)), resp.hovered() && !active, 0.12);
-        if active {
-            tab_shape(&shape, rect, PANEL, Some(Stroke::new(1.0, LINE_STRONG.gamma_multiply(alpha))));
-        } else {
-            if hov > 0.0 {
-                p.rect_filled(Rect::from_min_max(rect.min + vec2(2.0, 4.0), rect.max - vec2(2.0, 4.0)), 10.0, HOVER.gamma_multiply(hov * alpha));
-            }
-            if hov < 0.5 && !pinned {
-                shape.line_segment([pos2(rect.right() + 1.0, rect.center().y - 8.0), pos2(rect.right() + 1.0, rect.center().y + 8.0)], Stroke::new(1.0, LINE.gamma_multiply(alpha)));
-            }
+        let hov = ctx.animate_bool_with_time(Id::unique(("tab-hov", id)), resp.hovered(), 0.14);
+        let act = ctx.animate_bool_with_time(Id::unique(("tab-act", id)), active, 0.18);
+        let fill = (0.09 * hov * (1.0 - act) + 0.20 * act) * k;
+        if fill > 0.0 {
+            p.rect_filled(body, 10.0, glass(fill));
+        }
+        if act > 0.0 {
+            p.rect_stroke(body, 10.0, Stroke::new(1.0, glass(0.20 * act * k)), egui::StrokeKind::Inside);
         }
         if let Some(gc) = group {
-            p.line_segment([pos2(rect.left() + 10.0, rect.bottom() - 2.0), pos2(rect.right() - 10.0, rect.bottom() - 2.0)], Stroke::new(2.0, gc.gamma_multiply(alpha)));
+            // A guide in the group's color ties the tabs to their folder.
+            p.line_segment([pos2(rect.left() + 16.0, rect.top()), pos2(rect.left() + 16.0, rect.bottom())], Stroke::new(1.5, gc.gamma_multiply(0.9 * k)));
         }
-        let compact = full_w < 64.0;
-        let ic_x = if compact { lr.center().x } else { lr.left() + 18.0 };
-        let ic_rect = Rect::from_center_size(pos2(ic_x, rect.center().y), Vec2::splat(14.0));
+        let ic = pos2(body.left() + 16.0 + if group.is_some() { 6.0 } else { 0.0 }, body.center().y);
         if loading {
-            let tm = ctx.input(|i| i.time) as f32;
-            let a = tm * 6.0;
-            let c = ic_rect.center();
-            p.circle_stroke(c, 5.5, Stroke::new(1.0, LINE_STRONG));
-            let arc: Vec<egui::Pos2> = (0..=10).map(|i| {
-                let t = a + i as f32 / 10.0 * 2.2;
-                c + vec2(t.cos(), t.sin()) * 5.5
-            }).collect();
-            p.add(egui::Shape::line(arc, Stroke::new(1.6, ACCENT)));
+            spinner(&p, ic, now as f32);
         } else {
-            icons::paint(&p, ic_rect, icon, icon_c.gamma_multiply(alpha));
+            icons::paint(&p, Rect::from_center_size(ic, Vec2::splat(14.0)), icon, icon_c.gamma_multiply(k));
         }
-        if !pinned && !compact {
-            let show_close = (active || resp.hovered()) && w >= full_w - 1.0;
-            let text_right = lr.right() - if show_close { 28.0 } else { 12.0 };
-            let avail = (text_right - (lr.left() + 34.0)).max(0.0);
-            let color = if active { WHITE } else { MUTED.lerp_to_gamma(FG, hov) };
-            let mut job = egui::text::LayoutJob::single_section(title.clone(), egui::TextFormat::simple(FontId::new(12.5, sans()), color.gamma_multiply(alpha)));
-            job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
-            let galley = ui.fonts_mut(|f| f.layout_job(job));
-            p.galley(pos2(lr.left() + 34.0, rect.center().y - galley.size().y / 2.0), galley, color);
-            if show_close {
-                let cr = Rect::from_center_size(pos2(lr.right() - 16.0, rect.center().y), Vec2::splat(18.0));
-                let cresp = ui.interact(cr, Id::unique(("close", id)), Sense::click());
-                if cresp.hovered() {
-                    p.circle_filled(cr.center(), 9.0, LINE);
-                }
-                icons::paint(&p, cr.shrink(5.0), Icon::Close, if cresp.hovered() { WHITE } else { MUTED });
-                if cresp.clicked() {
-                    self.close_tab(id);
-                    return;
-                }
+        let show_close = (active || resp.hovered() || ui.rect_contains_pointer(rect)) && k > 0.99;
+        let text_left = ic.x + 18.0;
+        let avail = (body.right() - if show_close { 30.0 } else { 12.0 } - text_left).max(0.0);
+        let ink = glass((0.80 + 0.20 * act.max(hov)) * k);
+        let mut job = egui::text::LayoutJob::single_section(title.clone(), egui::TextFormat::simple(FontId::new(13.0, sans()), ink));
+        job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
+        p.galley(pos2(text_left, body.center().y - galley.size().y / 2.0), galley, WHITE);
+        if show_close {
+            let cr = Rect::from_center_size(pos2(body.right() - 16.0, body.center().y), Vec2::splat(20.0));
+            let cresp = ui.interact(cr, Id::unique(("close", id)), Sense::click());
+            let ch = ctx.animate_bool_with_time(Id::unique(("close-hov", id)), cresp.hovered(), 0.12);
+            if ch > 0.0 {
+                p.circle_filled(cr.center(), 10.0, glass(0.18 * ch));
+            }
+            icons::paint(&p, cr.shrink(6.0), Icon::Close, glass(0.7 + 0.3 * ch));
+            if cresp.clicked() {
+                self.close_tab(id);
+                return;
             }
         }
         let resp = resp.on_hover_text(&title);
@@ -436,10 +562,14 @@ impl Browser {
             self.close_tab(id);
             return;
         }
+        self.tab_menu(&resp, id, false);
+    }
+
+    fn tab_menu(&mut self, resp: &egui::Response, id: u64, pinned: bool) {
         let groups = self.profile.groups.clone();
         resp.context_menu(|ui| {
             ui.set_min_width(230.0);
-            if ui.button("New tab to the right").clicked() {
+            if ui.button("New tab below").clicked() {
                 self.active = id;
                 let g = self.tab(id).and_then(|t| t.group);
                 self.add_tab("about:newtab", g, true, None);
@@ -507,64 +637,84 @@ impl Browser {
 
     // ------------------------------------------------------------------ toolbar
 
-    fn toolbar(&mut self, ui: &mut Ui) {
-        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            let rb = icons::button_c(ui, Icon::Back, 30.0, "Back  Cmd+[", FG, self.can_go(true));
-            crate::drive::reg("back", rb.rect);
-            if rb.clicked() {
-                self.go_back();
+    fn toolbar(&mut self, ui: &mut Ui, side_t: f32) {
+        let full = ui.max_rect();
+        self.frame_drag(ui, full, "bar-drag");
+        // With the sidebar hidden, the traffic lights sit at the bar's left end.
+        let inset = 4.0 + (LEFT_INSET - 4.0) * (1.0 - side_t);
+        let inner = Rect::from_min_max(pos2(full.left() + inset, full.top()), pos2(full.right() - 12.0, full.bottom()));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
+        let ui = &mut child;
+        ui.spacing_mut().item_spacing.x = 2.0;
+        if side_t < 0.5 {
+            let tg = icons::button(ui, Icon::Sidebar, 30.0, "Show sidebar  Cmd+S");
+            crate::drive::reg("sidebar", tg.rect);
+            if tg.clicked() {
+                self.toggle_sidebar();
             }
-            let rf = icons::button_c(ui, Icon::Forward, 30.0, "Forward  Cmd+]", FG, self.can_go(false));
-            crate::drive::reg("forward", rf.rect);
-            if rf.clicked() {
-                self.go_forward();
+        }
+        let rb = icons::button_c(ui, Icon::Back, 30.0, "Back  Cmd+[", WHITE, self.can_go(true));
+        crate::drive::reg("back", rb.rect);
+        if rb.clicked() {
+            self.go_back();
+        }
+        let rf = icons::button_c(ui, Icon::Forward, 30.0, "Forward  Cmd+]", WHITE, self.can_go(false));
+        crate::drive::reg("forward", rf.rect);
+        if rf.clicked() {
+            self.go_forward();
+        }
+        let loading = self.active_tab().is_some_and(|t| t.loading());
+        if loading {
+            if icons::button(ui, Icon::Stop, 30.0, "Stop").clicked() {
+                self.stop();
             }
-            let loading = self.active_tab().is_some_and(|t| t.loading());
-            if loading {
-                if icons::button(ui, Icon::Stop, 30.0, "Stop").clicked() {
-                    self.stop();
-                }
-            } else if icons::button(ui, Icon::Reload, 30.0, "Reload  Cmd+R").clicked() {
-                self.reload();
-            }
-            ui.add_space(6.0);
-            let right_w = 5.0 * 32.0 + 8.0;
-            let w = (ui.available_width() - right_w).max(200.0);
-            self.omnibox(ui, w);
-            ui.add_space(6.0);
-            let url = self.active_tab().map(|t| t.url()).unwrap_or_default();
-            let marked = self.profile.is_bookmarked(&url);
-            let rs = icons::button_c(ui, if marked { Icon::StarFilled } else { Icon::Star }, 30.0, "Bookmark this tab  Cmd+D", if marked { ACCENT } else { FG }, !url.starts_with("about:"));
-            crate::drive::reg("star", rs.rect);
-            if rs.clicked() {
-                let title = self.active_tab().map(|t| t.title()).unwrap_or_default();
-                self.profile.toggle_bookmark(&url, &title);
-                self.dirty = true;
-            }
-            let rc = icons::button_c(ui, Icon::Cookie, 30.0, "Cookies — see and delete this site's cookies", if self.profile.settings.cookie_banners { FG } else { MUTED }, true);
-            crate::drive::reg("cookies", rc.rect);
-            if rc.clicked() {
-                self.cookies_refresh();
-                self.open_popover(Popover::Cookies, rc.rect);
-            }
-            let (shield_c, tip) = match (&self.ad.state, self.profile.settings.adblock) {
-                (_, false) => (MUTED, "Shield is off".to_owned()),
-                (adblock::State::Ready(n), _) => (OK, format!("Shield on — {n} ad & tracker rules")),
-                (adblock::State::Failed(e), _) => (DANGER, format!("Shield failed: {e}")),
-                _ => (WARN, "Shield is preparing filter lists…".to_owned()),
-            };
-            let r = icons::button_c(ui, Icon::Shield, 30.0, &tip, shield_c, true);
-            crate::drive::reg("shield", r.rect);
-            if r.clicked() {
-                self.open_popover(Popover::Shield, r.rect);
-            }
-            let r = icons::button(ui, Icon::Menu, 30.0, "Menu");
-            crate::drive::reg("menu", r.rect);
-            if r.clicked() {
-                self.open_popover(Popover::Menu, r.rect);
-            }
-        });
+        } else if icons::button(ui, Icon::Reload, 30.0, "Reload  Cmd+R").clicked() {
+            self.reload();
+        }
+        ui.add_space(8.0);
+        // The address bar: centered in what is left, never wider than it reads well.
+        let right_w = 4.0 * 32.0 + 8.0;
+        let avail = ui.available_width() - right_w;
+        let w = avail.clamp(200.0, 820.0);
+        let pad = ((avail - w) / 2.0).max(0.0);
+        ui.add_space(pad);
+        self.omnibox(ui, w);
+        ui.add_space(pad + 8.0);
+        let url = self.active_tab().map(|t| t.url()).unwrap_or_default();
+        let marked = self.profile.is_bookmarked(&url);
+        let rs = icons::button_c(ui, if marked { Icon::StarFilled } else { Icon::Star }, 30.0, "Bookmark this tab  Cmd+D", WHITE, !url.starts_with("about:"));
+        crate::drive::reg("star", rs.rect);
+        if rs.clicked() {
+            let title = self.active_tab().map(|t| t.title()).unwrap_or_default();
+            self.profile.toggle_bookmark(&url, &title);
+            self.dirty = true;
+        }
+        let rc = icons::button_c(ui, Icon::Cookie, 30.0, "Cookies — see and delete this site's cookies", if self.profile.settings.cookie_banners { WHITE } else { glass(0.55) }, true);
+        crate::drive::reg("cookies", rc.rect);
+        if rc.clicked() {
+            self.cookies_refresh();
+            self.open_popover(Popover::Cookies, rc.rect);
+        }
+        let (shield_c, tip) = match (&self.ad.state, self.profile.settings.adblock) {
+            (_, false) => (glass(0.55), "Shield is off".to_owned()),
+            (adblock::State::Ready(n), _) => (WHITE, format!("Shield on — {n} ad & tracker rules")),
+            (adblock::State::Failed(e), _) => (Color32::from_rgb(255, 196, 196), format!("Shield failed: {e}")),
+            _ => (WARN, "Shield is preparing filter lists…".to_owned()),
+        };
+        let r = icons::button_c(ui, Icon::Shield, 30.0, &tip, shield_c, true);
+        crate::drive::reg("shield", r.rect);
+        if matches!((&self.ad.state, self.profile.settings.adblock), (adblock::State::Ready(_), true)) {
+            // A lit dot says the shield is up.
+            ui.painter().circle_filled(pos2(r.rect.right() - 7.0, r.rect.top() + 8.0), 2.6, OK);
+        }
+        if r.clicked() {
+            self.open_popover(Popover::Shield, r.rect);
+        }
+        let r = icons::button(ui, Icon::Menu, 30.0, "Menu");
+        crate::drive::reg("menu", r.rect);
+        if r.clicked() {
+            self.open_popover(Popover::Menu, r.rect);
+        }
     }
 
     fn omnibox(&mut self, ui: &mut Ui, width: f32) {
@@ -576,13 +726,23 @@ impl Browser {
         let hov = ctx.animate_bool_with_time(Id::unique("omni-hover"), bg.hovered() || ui.rect_contains_pointer(rect), 0.12);
         let rad = rect.height() / 2.0;
         let p = ui.painter();
-        // Pill like Chrome's omnibox: lifts on hover, gets an accent ring on focus.
-        let fill = RAISED.lerp_to_gamma(HOVER, hov * (1.0 - f)).lerp_to_gamma(BG, f);
+        // A navy glass well in the blue frame: deepens on hover, and on focus
+        // goes dark with a soft white halo.
         if f > 0.0 {
-            p.rect_stroke(rect.expand(1.5), rad + 1.5, Stroke::new(3.0, ACCENT.gamma_multiply(0.22 * f)), egui::StrokeKind::Outside);
+            p.rect_stroke(rect.expand(1.5), rad + 1.5, Stroke::new(3.0, glass(0.16 * f)), egui::StrokeKind::Outside);
         }
-        p.rect_filled(rect, rad, fill);
-        p.rect_stroke(rect, rad, Stroke::new(1.0, LINE.lerp_to_gamma(LINE_STRONG, hov).lerp_to_gamma(ACCENT.gamma_multiply(0.75), f)), egui::StrokeKind::Inside);
+        p.rect_filled(rect, rad, well(0.38 + 0.08 * hov + 0.34 * f));
+        p.rect_stroke(rect, rad, Stroke::new(1.0, glass(0.10 + 0.08 * hov + 0.26 * f)), egui::StrokeKind::Inside);
+        // While the page loads, a light runs along the bottom edge.
+        if self.active_tab().is_some_and(|t| t.loading()) {
+            let tm = ctx.input(|i| i.time) as f32;
+            let (x0, x1) = (rect.left() + rad, rect.right() - rad);
+            let seg = (x1 - x0) * 0.22;
+            let x = x0 + ((tm * 0.9).fract()) * (x1 - x0 + seg) - seg;
+            let y = rect.bottom() - 1.5;
+            p.line_segment([pos2(x.max(x0), y), pos2((x + seg).min(x1), y)], Stroke::new(2.0, glass(0.85)));
+            ctx.request_repaint();
+        }
         if bg.clicked() {
             self.omni.focus = true;
         }
@@ -591,16 +751,16 @@ impl Browser {
         // describing the current page (like Chrome's search icon).
         let current = crate::app::display_url(&self.active_tab().map(|t| t.url()).unwrap_or_default());
         let typing_other = self.omni.editing && !self.omni.text.is_empty() && self.omni.text != current;
-        let (label, color, icon) = if typing_other { ("SEARCH", MUTED, Icon::Search) } else { match self.security() {
+        let (label, color, icon) = if typing_other { ("SEARCH", glass(0.75), Icon::Search) } else { match self.security() {
             Security::Secured { dev: true } => ("SECURED · DEV", SECURE, Icon::Lock),
             Security::Secured { dev: false } => ("SECURED", SECURE, Icon::Lock),
-            Security::Connecting => ("VERIFYING", MUTED, Icon::Lock),
+            Security::Connecting => ("VERIFYING", glass(0.75), Icon::Lock),
             Security::Failed => ("BLOCKED", DANGER, Icon::Unlock),
             Security::Unsecured("Servo") => ("UNSECURED · SERVO", WARN, Icon::Unlock),
             Security::Unsecured(_) => ("UNSECURED · WEBKIT", WARN, Icon::Unlock),
             Security::Unencrypted("Servo") => ("NOT ENCRYPTED · SERVO", DANGER, Icon::Unlock),
             Security::Unencrypted(_) => ("NOT ENCRYPTED · WEBKIT", DANGER, Icon::Unlock),
-            Security::Internal => ("INERT", MUTED, Icon::Spark),
+            Security::Internal => ("INERT", glass(0.75), Icon::Spark),
         } };
         let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::new(10.0, mono()), color);
         let bw = galley.size().x + 32.0;
@@ -608,7 +768,7 @@ impl Browser {
         let bresp = ui.interact(badge, Id::unique("sec-badge"), Sense::click()).on_hover_text("Site security");
         crate::drive::reg("badge", badge);
         let bh = ctx.animate_bool_with_time(Id::unique("badge-hover"), bresp.hovered(), 0.12);
-        ui.painter().rect_filled(badge, badge.height() / 2.0, color.gamma_multiply(0.1).lerp_to_gamma(color.gamma_multiply(0.2), bh));
+        ui.painter().rect_filled(badge, badge.height() / 2.0, color.gamma_multiply(0.12 + 0.10 * bh));
         icons::paint(ui.painter(), Rect::from_center_size(pos2(badge.left() + 14.0, badge.center().y), Vec2::splat(12.0)), icon, color);
         ui.painter().galley(pos2(badge.left() + 24.0, badge.center().y - galley.size().y / 2.0), galley, color);
         if bresp.clicked() {
@@ -627,9 +787,9 @@ impl Browser {
             let k = ui.interact(kr, Id::unique("omni-key"), Sense::click()).on_hover_text("Saved passwords for this site");
             crate::drive::reg("omni:key", kr);
             if k.hovered() {
-                ui.painter().circle_filled(kr.center(), 13.0, HOVER);
+                ui.painter().circle_filled(kr.center(), 13.0, glass(0.14));
             }
-            icons::paint(ui.painter(), kr.shrink(6.0), Icon::Key, ACCENT);
+            icons::paint(ui.painter(), kr.shrink(6.0), Icon::Key, WHITE);
             if k.clicked() {
                 self.open_popover(Popover::Passwords, kr);
             }
@@ -651,11 +811,11 @@ impl Browser {
             match (focused, s.split_once("://")) {
                 (false, Some((scheme, rest))) => {
                     let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-                    job.append(&format!("{scheme}://"), 0.0, fmt(DIM));
+                    job.append(&format!("{scheme}://"), 0.0, fmt(glass(0.5)));
                     job.append(&rest[..host_end], 0.0, fmt(WHITE));
-                    job.append(&rest[host_end..], 0.0, fmt(MUTED));
+                    job.append(&rest[host_end..], 0.0, fmt(glass(0.7)));
                 }
-                _ => job.append(s, 0.0, fmt(FG)),
+                _ => job.append(s, 0.0, fmt(WHITE)),
             }
             ui.fonts_mut(|fo| fo.layout_job(job))
         };
@@ -665,9 +825,9 @@ impl Browser {
             .frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
             .font(font)
-            .text_color(FG)
+            .text_color(WHITE)
             .layouter(&mut layouter)
-            .hint_text(RichText::new("Search or enter an address — inert:// sites are verified").color(DIM))
+            .hint_text(RichText::new("Search or enter an address").color(glass(0.5)))
             .desired_width(text_rect.width())
             .show(&mut child);
         let resp = out.response.clone();
@@ -844,20 +1004,21 @@ impl Browser {
             let marks = self.profile.bookmarks.clone();
             for b in marks.iter().take(14) {
                 let inert = b.url.starts_with("inert://");
-                let icon_c = if inert { SECURE } else { DIM };
+                let icon_c = if inert { WHITE } else { glass(0.6) };
                 let (rect, resp) = {
-                    let g = ui.painter().layout_no_wrap(b.title.clone(), FontId::new(12.0, sans()), MUTED);
+                    let g = ui.painter().layout_no_wrap(b.title.clone(), FontId::new(12.0, sans()), WHITE);
                     let w = g.size().x.min(150.0) + 30.0;
                     ui.allocate_exact_size(vec2(w, 22.0), Sense::click())
                 };
-                if resp.hovered() {
-                    ui.painter().rect_filled(rect, 11.0, HOVER);
+                let bh = ui.ctx().animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.12);
+                if bh > 0.0 {
+                    ui.painter().rect_filled(rect, 11.0, glass(0.12 * bh));
                 }
                 icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 12.0, rect.center().y), Vec2::splat(11.0)), if inert { Icon::Lock } else { Icon::Globe }, icon_c);
-                let mut job = egui::text::LayoutJob::single_section(b.title.clone(), egui::TextFormat::simple(FontId::new(12.0, sans()), if resp.hovered() { FG } else { MUTED }));
+                let mut job = egui::text::LayoutJob::single_section(b.title.clone(), egui::TextFormat::simple(FontId::new(12.0, sans()), glass(0.82 + 0.18 * bh)));
                 job.wrap = egui::text::TextWrapping::truncate_at_width(150.0);
                 let g = ui.fonts_mut(|f| f.layout_job(job));
-                ui.painter().galley(pos2(rect.left() + 22.0, rect.center().y - g.size().y / 2.0), g, MUTED);
+                ui.painter().galley(pos2(rect.left() + 22.0, rect.center().y - g.size().y / 2.0), g, WHITE);
                 let resp = resp.on_hover_text(&b.url);
                 if resp.clicked() {
                     let cmd = ui.input(|i| i.modifiers.command);
@@ -885,7 +1046,7 @@ impl Browser {
                 });
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(egui::Label::new(theme::label("All bookmarks")).sense(Sense::click())).clicked() {
+                if ui.add(egui::Label::new(theme::label_c("All bookmarks", glass(0.78))).sense(Sense::click())).clicked() {
                     self.add_tab("about:bookmarks", None, true, None);
                 }
             });
@@ -893,8 +1054,10 @@ impl Browser {
     }
 
     fn find_bar(&mut self, ui: &mut Ui) {
-        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            ui.label(theme::label("Find in page"));
+        egui::Frame::new().fill(well(0.55)).stroke(Stroke::new(1.0, glass(0.12))).corner_radius(19).inner_margin(egui::Margin::symmetric(14, 4)).show(ui, |ui| {
+          ui.set_width(ui.available_width());
+          ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            ui.label(theme::label_c("Find in page", glass(0.8)));
             let mut q = self.find.clone().unwrap_or_default();
             let r = ui.add(egui::TextEdit::singleline(&mut q).id(Id::unique("find")).desired_width(280.0).font(FontId::new(13.0, sans())));
             if ui.memory(|m| m.focused().is_none()) {
@@ -910,12 +1073,13 @@ impl Browser {
             }
             if let Some(Kind::Inert(it)) = self.active_tab().map(|t| &t.kind) {
                 let n = if q.is_empty() { 0 } else { it.semantic_text().to_lowercase().matches(&q.to_lowercase()).count() };
-                ui.label(theme::muted(&format!("{n} matches on this screen")));
+                ui.label(RichText::new(format!("{n} matches on this screen")).font(FontId::new(13.0, sans())).color(glass(0.8)));
             }
             self.find = Some(q);
             if ui.button("Done").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.find = None;
             }
+          });
         });
     }
 
@@ -934,13 +1098,17 @@ impl Browser {
             _ => 360.0,
         };
         let screen = ctx.content_rect();
-        let x = (anchor.right() - width).clamp(8.0, screen.right() - width - 8.0);
-        let x = if matches!(self.popover, Popover::Security | Popover::GroupAdd(_)) { anchor.left().min(screen.right() - width - 8.0) } else { x };
-        let pos = pos2(x, anchor.bottom() + 8.0 - 6.0 * (1.0 - ease(t)));
+        // Open toward the middle of the window: right-aligned from the
+        // toolbar's right end, upward from the sidebar's foot.
+        let from_left = anchor.center().x < screen.center().x;
+        let x = if from_left { anchor.left() } else { anchor.right() - width }.clamp(8.0, (screen.right() - width - 8.0).max(8.0));
+        let up = anchor.center().y > screen.center().y;
+        let slide = 8.0 * (1.0 - ease(t));
+        let (pos, pivot) = if up { (pos2(x, anchor.top() - 8.0 + slide), egui::Align2::LEFT_BOTTOM) } else { (pos2(x, anchor.bottom() + 8.0 - slide), egui::Align2::LEFT_TOP) };
         let which = self.popover;
-        let area = egui::Area::new(Id::unique("popover")).fixed_pos(pos).order(egui::Order::Foreground).show(ctx, |ui| {
+        let area = egui::Area::new(Id::unique("popover")).pivot(pivot).fixed_pos(pos).order(egui::Order::Foreground).show(ctx, |ui| {
             ui.multiply_opacity(t);
-            egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(14).inner_margin(16.0).show(ui, |ui| {
+            theme::panel_frame(18, 16.0).show(ui, |ui| {
                 ui.set_width(width - 32.0);
                 match which {
                     Popover::Security => self.pop_security(ui),
@@ -974,7 +1142,7 @@ impl Browser {
                 if status == Status::Ready {
                     ui.label(theme::label_c("● Connection is secured", SECURE));
                     ui.add_space(6.0);
-                    ui.label(theme::serif_text(&host, 24.0));
+                    ui.label(theme::title(&host, 24.0));
                     ui.add_space(8.0);
                     for line in [
                         "The manifest is signed and matches the pinned key.",
@@ -1027,7 +1195,7 @@ impl Browser {
                 _ => {
                     ui.label(theme::label_c("○ Unsecured", WARN));
                     ui.add_space(6.0);
-                    ui.label(theme::serif_text("Ordinary web page", 22.0));
+                    ui.label(theme::title("Ordinary web page", 22.0));
                     ui.add_space(6.0);
                     ui.label(theme::body("The connection uses HTTPS, but the page runs the site's own code inside WebKit's sandbox. Inert cannot verify what it shows."));
                     ui.add_space(6.0);
@@ -1083,7 +1251,7 @@ impl Browser {
             return;
         }
         let headline = if st.connected() { format!("{}, {}", st.city, st.country) } else if st.busy() { "Connecting…".into() } else { "Not connected".into() };
-        ui.label(theme::serif_text(&headline, 26.0));
+        ui.label(theme::title(&headline, 26.0));
         ui.add_space(4.0);
         let ip = if self.vpn.reveal_ip || self.demo { st.ip.clone() } else { "•••.•••.•••.•••".into() };
         ui.horizontal(|ui| {
@@ -1099,8 +1267,7 @@ impl Browser {
             });
         }
         ui.add_space(10.0);
-        let (txt, fill, tc) = if st.connected() { ("DISCONNECT", Color32::TRANSPARENT, FG) } else { ("CONNECT →", OK, BG) };
-        let b = egui::Button::new(RichText::new(txt).font(FontId::new(12.0, mono())).color(tc).extra_letter_spacing(1.4)).fill(fill).stroke(Stroke::new(1.0, if st.connected() { LINE_STRONG } else { OK })).min_size(vec2(ui.available_width(), 40.0));
+        let b = if st.connected() { theme::cta_ghost("Disconnect", 42.0) } else { theme::cta("Connect", BLUE, WHITE, 42.0) }.min_size(vec2(ui.available_width(), 42.0));
         if ui.add_enabled(!st.busy(), b).clicked() {
             let cmd = if st.connected() { vpn::Cmd::Disconnect } else { vpn::Cmd::Connect };
             self.vpn.status.state = if st.connected() { "disconnecting".into() } else { "connecting".into() };
@@ -1141,14 +1308,14 @@ impl Browser {
         if self.vpn.confirm_logout {
             ui.label(theme::body("Log out of Mullvad? The VPN disconnects and this Mac is removed from your account. You'll need your account number to sign back in."));
             ui.horizontal(|ui| {
-                let b = ui.add(egui::Button::new(RichText::new("LOG OUT").font(FontId::new(11.5, mono())).color(DANGER).extra_letter_spacing(1.2)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, DANGER)).corner_radius(16).min_size(vec2(110.0, 32.0)));
+                let b = ui.add(theme::cta("Log out", DANGER.gamma_multiply(0.14), DANGER, 34.0).min_size(vec2(110.0, 34.0)));
                 crate::drive::reg("vpn:logout-confirm", b.rect);
                 if b.clicked() {
                     self.vpn.confirm_logout = false;
                     self.vpn.status.state = "disconnecting".into();
                     vpn::exec(vpn::Cmd::Logout, self.demo, self.tx.clone(), self.ctx.clone());
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.add(theme::cta_ghost("Cancel", 34.0)).clicked() {
                     self.vpn.confirm_logout = false;
                 }
             });
@@ -1171,17 +1338,19 @@ impl Browser {
 
     /// Mullvad isn't installed: how to set it up.
     fn vpn_setup(&mut self, ui: &mut Ui) {
-        ui.label(theme::serif_text("Set up the VPN", 24.0));
+        ui.label(theme::title("Set up the VPN", 24.0));
         ui.label(theme::body("Inert's VPN is Mullvad's own WireGuard tunnel, dressed in Inert. Three steps:"));
         ui.add_space(6.0);
         for (n, t) in [("1", "Install the Mullvad app from mullvad.net."), ("2", "Open it once so its background service starts."), ("3", "Come back and type your account number.")] {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(n).font(FontId::new(13.0, pixel())).color(ACCENT));
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 10.0, BLUE);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, n, FontId::new(11.0, mono()), WHITE);
                 ui.label(theme::body(t));
             });
         }
         ui.add_space(8.0);
-        let b = ui.add(egui::Button::new(RichText::new("DOWNLOAD MULLVAD →").font(FontId::new(12.0, mono())).color(BG).extra_letter_spacing(1.2)).fill(OK).corner_radius(18).min_size(vec2(ui.available_width(), 38.0)));
+        let b = ui.add(theme::cta("Download Mullvad", BLUE, WHITE, 42.0).min_size(vec2(ui.available_width(), 42.0)));
         if b.clicked() {
             self.add_tab("https://mullvad.net/download", None, true, None);
             self.popover = Popover::None;
@@ -1190,7 +1359,7 @@ impl Browser {
 
     /// Mullvad is installed but signed out: the account number is all it takes.
     fn vpn_login(&mut self, ui: &mut Ui) {
-        ui.label(theme::serif_text("Sign in to Mullvad", 24.0));
+        ui.label(theme::title("Sign in to Mullvad", 24.0));
         ui.label(theme::body("Type your 16-digit Mullvad account number. That's all — no email, no password."));
         ui.add_space(8.0);
         ui.label(theme::label("Account number"));
@@ -1213,8 +1382,8 @@ impl Browser {
             ui.label(RichText::new(e).font(FontId::new(12.0, mono())).color(DANGER));
         }
         ui.add_space(6.0);
-        let label = if busy { "SIGNING IN…" } else { "LOG IN →" };
-        let b = ui.add_enabled(!busy, egui::Button::new(RichText::new(label).font(FontId::new(12.0, mono())).color(BG).extra_letter_spacing(1.4)).fill(OK).corner_radius(18).min_size(vec2(ui.available_width(), 40.0)));
+        let label = if busy { "Signing in…" } else { "Log in" };
+        let b = ui.add_enabled(!busy, theme::cta(label, BLUE, WHITE, 42.0).min_size(vec2(ui.available_width(), 42.0)));
         crate::drive::reg("vpn:login", b.rect);
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (b.clicked() || enter) && !busy {
@@ -1252,14 +1421,14 @@ impl Browser {
         ui.add_space(6.0);
         let list = self.logins_here();
         if let Some(l) = list.first() {
-            ui.label(theme::serif_text(l.origin.trim_start_matches("https://"), 22.0));
+            ui.label(theme::title(l.origin.trim_start_matches("https://"), 22.0));
         }
         ui.add_space(6.0);
         for (i, l) in list.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(theme::body(if l.username.is_empty() { "(no username)" } else { &l.username }));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let b = ui.add(egui::Button::new(RichText::new("FILL").font(FontId::new(11.0, mono())).color(BG).extra_letter_spacing(1.2)).fill(FG).corner_radius(14).min_size(vec2(64.0, 28.0)));
+                    let b = ui.add(theme::cta("Fill", BLUE, WHITE, 30.0).min_size(vec2(64.0, 30.0)));
                     crate::drive::reg(format!("pw:fill:{i}"), b.rect);
                     if b.clicked() {
                         match crate::passwords::get(&l.origin, &l.username, self.demo) {
@@ -1289,12 +1458,12 @@ impl Browser {
         let id = self.active;
         let web = matches!(self.tab(id).map(|t| &t.kind), Some(Kind::Web(_)));
         if !web {
-            ui.label(theme::serif_text("No cookies here", 24.0));
+            ui.label(theme::title("No cookies here", 24.0));
             ui.label(theme::body("inert:// sites and Inert's own pages don't use cookies: there is no script to set them, and sessions are part of the signed protocol."));
         } else {
             let host = self.cookie.host.clone();
             let site = crate::cookies::site_of(&host);
-            ui.label(theme::serif_text(&host, 24.0));
+            ui.label(theme::title(&host, 24.0));
             let n = self.cookie.list.len();
             let consent = self.cookie.consent.get(&id).cloned().unwrap_or_default();
             ui.label(theme::muted(&if self.cookie.loading { "Reading cookies…".to_owned() } else { format!("{n} cookie{} for this site", if n == 1 { "" } else { "s" }) }));
@@ -1335,7 +1504,7 @@ impl Browser {
                 self.cookie_delete(&c);
             }
             ui.add_space(8.0);
-            let b = ui.add(egui::Button::new(RichText::new(format!("DELETE COOKIES FOR {}", site.to_uppercase())).font(FontId::new(11.5, mono())).color(FG).extra_letter_spacing(1.0)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(18).min_size(vec2(ui.available_width(), 36.0)));
+            let b = ui.add(theme::cta_ghost(&format!("Delete cookies for {site}"), 38.0).min_size(vec2(ui.available_width(), 38.0)));
             crate::drive::reg("cookies:clear-site", b.rect);
             if b.clicked() {
                 self.cookies_clear_site(&site);
@@ -1376,7 +1545,7 @@ impl Browser {
             (adblock::State::Failed(e), _) => ("Shield failed".to_owned(), e.clone()),
             _ => ("Preparing…".to_owned(), "Fetching and converting filter lists.".to_owned()),
         };
-        ui.label(theme::serif_text(&h, 24.0));
+        ui.label(theme::title(&h, 24.0));
         ui.label(theme::body(&d));
         if let Some(h) = &self.servo {
             let (n, ready) = h.shield();
@@ -1398,11 +1567,12 @@ impl Browser {
 
     fn pop_menu(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 2.0;
-        let mut item = |ui: &mut Ui, icon: Icon, text: &str, key: &str| -> bool {
-            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+        let item = |ui: &mut Ui, icon: Icon, text: &str, key: &str| -> bool {
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
             crate::drive::reg(format!("menu:{text}"), rect);
-            if resp.hovered() {
-                ui.painter().rect_filled(rect, 8.0, HOVER);
+            let h = ui.ctx().animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.10);
+            if h > 0.0 {
+                ui.painter().rect_filled(rect, 10.0, HOVER.gamma_multiply(h));
             }
             icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), Vec2::splat(13.0)), icon, MUTED);
             ui.painter().text(pos2(rect.left() + 32.0, rect.center().y), egui::Align2::LEFT_CENTER, text, FontId::new(13.0, sans()), FG);
@@ -1519,7 +1689,7 @@ impl Browser {
         let mut done = false;
         let mut cancel = false;
         egui::Area::new(Id::unique("rename")).fixed_pos(pos2(ctx.content_rect().center().x - 160.0, 90.0)).order(egui::Order::Foreground).show(ctx, |ui| {
-            egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(14).inner_margin(16.0).show(ui, |ui| {
+            theme::panel_frame(18, 16.0).show(ui, |ui| {
                 ui.set_width(300.0);
                 ui.label(theme::label("Name this group"));
                 let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(290.0).font(FontId::new(15.0, sans())));
@@ -1530,10 +1700,10 @@ impl Browser {
                     r.request_focus();
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui.add(theme::cta("Save", BLUE, WHITE, 34.0)).clicked() {
                         done = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.add(theme::cta_ghost("Cancel", 34.0)).clicked() {
                         cancel = true;
                     }
                 });
@@ -1556,11 +1726,18 @@ impl Browser {
     }
 
     fn toast_overlay(&mut self, ctx: &egui::Context) {
-        let Some((t, _)) = &self.toast else { return };
+        let Some((t, at)) = &self.toast else {
+            ctx.animate_bool_with_time(Id::unique("toast-in"), false, 0.0);
+            return;
+        };
+        // Rises in, and fades out before it is dropped.
+        let left = 4.0 - at.elapsed().as_secs_f32();
+        let a = ease(ctx.animate_bool_with_time(Id::unique("toast-in"), true, 0.22)) * (left / 0.3).clamp(0.0, 1.0);
         let r = self.content_rect;
-        egui::Area::new(Id::unique("toast")).fixed_pos(pos2(r.left() + 16.0, r.bottom() - 52.0)).order(egui::Order::Tooltip).interactable(false).show(ctx, |ui| {
-            egui::Frame::new().fill(RAISED).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 9)).show(ui, |ui| {
-                ui.label(theme::mono_text(t, 12.0));
+        egui::Area::new(Id::unique("toast")).pivot(egui::Align2::CENTER_BOTTOM).fixed_pos(pos2(r.center().x, r.bottom() - 18.0 + 10.0 * (1.0 - a))).order(egui::Order::Tooltip).interactable(false).show(ctx, |ui| {
+            ui.multiply_opacity(a);
+            egui::Frame::new().fill(RAISED).stroke(Stroke::new(1.0, glass(0.14))).corner_radius(20).inner_margin(egui::Margin::symmetric(18, 10)).shadow(theme::shadow()).show(ui, |ui| {
+                ui.label(RichText::new(t).font(FontId::new(13.0, sans())).color(FG));
             });
         });
     }
@@ -1586,7 +1763,7 @@ impl Browser {
             Some(Kind::Web(w)) => (format!("Reading {} — untrusted text", omnibox::strip(&w.url).split('/').next().unwrap_or("")), WARN),
             _ => ("No page context".into(), MUTED),
         };
-        egui::Frame::new().stroke(Stroke::new(1.0, ctx_color.gamma_multiply(0.5))).corner_radius(3).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
+        egui::Frame::new().fill(ctx_color.gamma_multiply(0.10)).corner_radius(12).inner_margin(egui::Margin::symmetric(10, 5)).show(ui, |ui| {
             ui.label(RichText::new(ctx_label).font(FontId::new(11.0, mono())).color(ctx_color));
         });
         ui.add_space(8.0);
@@ -1595,12 +1772,12 @@ impl Browser {
         egui::ScrollArea::vertical().max_height(avail).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
             if self.ai.msgs.is_empty() {
                 ui.add_space(20.0);
-                ui.label(theme::serif_text("Ask about this page.", 26.0));
+                ui.label(theme::title("Ask about this page.", 26.0));
                 ui.add_space(6.0);
                 ui.label(theme::muted("Inert pages are read from their signed structure. Web pages are read as untrusted text — instructions hidden in them are ignored."));
                 ui.add_space(10.0);
                 for s in ["Summarize this page", "What can I do here?", "Is anything on this page unusual?"] {
-                    if ui.button(s).clicked() {
+                    if ui.add(theme::cta_ghost(s, 32.0)).clicked() {
                         self.ask_ai(s.into());
                     }
                 }
@@ -1608,7 +1785,7 @@ impl Browser {
             for m in &self.ai.msgs {
                 if m.user {
                     ui.with_layout(Layout::top_down(Align::Max), |ui| {
-                        egui::Frame::new().fill(RAISED).corner_radius(4).inner_margin(10.0).show(ui, |ui| {
+                        egui::Frame::new().fill(BLUE).corner_radius(egui::CornerRadius { nw: 16, ne: 16, sw: 16, se: 4 }).inner_margin(egui::Margin::symmetric(12, 9)).show(ui, |ui| {
                             ui.set_max_width(290.0);
                             ui.label(theme::body(&m.text));
                         });
@@ -1753,7 +1930,7 @@ impl Browser {
         let mut choice = None;
         let r = self.content_rect;
         egui::Area::new(Id::unique("confirm-href")).fixed_pos(pos2(r.center().x - 200.0, r.top() + 60.0)).order(egui::Order::Foreground).show(ctx, |ui| {
-            egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(14).inner_margin(18.0).show(ui, |ui| {
+            theme::panel_frame(18, 18.0).show(ui, |ui| {
                 ui.set_width(380.0);
                 let web = href.starts_with("https://");
                 ui.label(theme::label_c(if web { "Leaving inert:// for the web" } else { "Opening another inert:// site" }, if web { WARN } else { SECURE }));
@@ -1763,10 +1940,10 @@ impl Browser {
                 ui.label(theme::body(if web { "The destination is an ordinary web page. It will run its own code and is shown as unsecured." } else { "That site is verified separately with its own pinned key." }));
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Open in new tab").clicked() {
+                    if ui.add(theme::cta("Open in new tab", BLUE, WHITE, 36.0)).clicked() {
                         choice = Some(true);
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.add(theme::cta_ghost("Cancel", 36.0)).clicked() {
                         choice = Some(false);
                     }
                 });
@@ -1799,6 +1976,7 @@ impl Browser {
                 (Modifiers::CTRL | Modifiers::SHIFT, Key::Tab, "prev-tab"),
                 (alt, Key::ArrowRight, "next-tab"),
                 (alt, Key::ArrowLeft, "prev-tab"),
+                (cmd, Key::S, "sidebar"),
                 (cmd, Key::T, "new-tab"),
                 (cmd, Key::W, "close-tab"),
                 (cmd, Key::L, "focus-omnibox"),
@@ -1842,6 +2020,7 @@ impl Browser {
                 self.close_tab(a);
             }
             "reopen" => self.reopen_closed(),
+            "sidebar" => self.toggle_sidebar(),
             "focus-omnibox" => self.omni.focus = true,
             "reload" => self.reload(),
             "back" => self.go_back(),
@@ -1873,8 +2052,8 @@ impl Browser {
             "next-tab" => self.cycle(1),
             "prev-tab" => self.cycle(-1),
             "vpn" => {
-                let r = Rect::from_min_size(pos2(self.content_rect.right() - 60.0, 30.0), Vec2::ZERO);
-                self.open_popover(Popover::Vpn, r);
+                let foot = self.ctx.content_rect().bottom() - 40.0;
+                self.open_popover(Popover::Vpn, Rect::from_min_size(pos2(14.0, foot), vec2(80.0, 28.0)));
             }
             s if s.starts_with("tab-") => {
                 let n: usize = s[4..].parse().unwrap_or(1);
@@ -1902,15 +2081,16 @@ pub fn suggestion_popup(ctx: &egui::Context, key: &str, r: Rect, rows: &[omnibox
     let mut clicked = None;
     let area = egui::Area::new(Id::unique(key)).fixed_pos(pos2(r.left(), r.bottom() + 6.0 - 6.0 * (1.0 - ease(t)))).order(egui::Order::Foreground).show(ctx, |ui| {
         ui.multiply_opacity(t);
-        egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(14).inner_margin(6.0).show(ui, |ui| {
+        theme::panel_frame(18, 6.0).show(ui, |ui| {
             ui.set_width(r.width() - 12.0);
             ui.spacing_mut().item_spacing.y = 0.0;
             for (i, s) in rows.iter().enumerate() {
                 let sel = i == selected;
-                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
+                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
                 crate::drive::reg(format!("{key}:{i}"), rect);
-                if sel || resp.hovered() {
-                    ui.painter().rect_filled(rect, 9.0, if sel { HOVER } else { RAISED });
+                let h = ui.ctx().animate_bool_with_time(resp.id.with("h"), sel || resp.hovered(), 0.10);
+                if h > 0.0 {
+                    ui.painter().rect_filled(rect, 12.0, if sel { HOVER } else { RAISED }.gamma_multiply(h));
                 }
                 let (icon, c) = match s.kind {
                     SKind::Url => (Icon::Globe, FG),
@@ -1944,4 +2124,15 @@ pub fn suggestion_popup(ctx: &egui::Context, key: &str, r: Rect, rows: &[omnibox
         });
     });
     (area.response.rect, clicked)
+}
+
+/// The rounded dark card a right-hand panel (assistant, inspector) lives in.
+fn side_card(ui: &mut Ui) -> Ui {
+    let r = ui.max_rect();
+    let card = Rect::from_min_max(r.min, pos2(r.right() - GAP, r.bottom() - GAP));
+    ui.painter().rect_filled(card, CARD_R, PANEL);
+    ui.painter().rect_stroke(card, CARD_R, Stroke::new(1.0, glass(0.16)), egui::StrokeKind::Inside);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(card.shrink(16.0)).layout(Layout::top_down(Align::Min)));
+    child.set_clip_rect(card);
+    child
 }

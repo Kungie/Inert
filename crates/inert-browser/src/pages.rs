@@ -11,19 +11,34 @@ use crate::{adblock, ai};
 use eframe::egui::{self, Align, Color32, FontId, Id, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2, pos2, vec2};
 
 fn primary(ui: &mut Ui, text: &str, w: f32) -> egui::Response {
-    ui.add(egui::Button::new(RichText::new(text).font(FontId::new(12.0, mono())).color(BG).extra_letter_spacing(1.4)).fill(FG).corner_radius(2).min_size(vec2(w, 46.0)))
+    ui.add(theme::cta(text, BLUE, WHITE, 46.0).min_size(vec2(w, 46.0)))
 }
 
 fn ghost(ui: &mut Ui, text: &str, w: f32) -> egui::Response {
-    ui.add(egui::Button::new(RichText::new(text).font(FontId::new(12.0, mono())).color(FG).extra_letter_spacing(1.4)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, LINE_STRONG)).corner_radius(2).min_size(vec2(w, 46.0)))
+    ui.add(theme::cta_ghost(text, 46.0).min_size(vec2(w, 46.0)))
 }
 
 /// A rounded panel for page content.
 fn card(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
-    egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE)).corner_radius(16).inner_margin(egui::Margin::symmetric(18, 14)).show(ui, |ui| {
+    egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, LINE)).corner_radius(18).inner_margin(egui::Margin::symmetric(18, 14)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         add(ui);
     });
+}
+
+/// A tile on the new tab page: lifts and brightens under the pointer.
+/// Returns its rect, response and hover amount.
+fn tile(ui: &mut Ui, size: Vec2, edge: Color32) -> (Rect, egui::Response, f32) {
+    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    let h = ui.ctx().animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.16);
+    let r = r.translate(vec2(0.0, -2.0 * h));
+    let p = ui.painter();
+    if h > 0.0 {
+        p.add(egui::epaint::Shadow { offset: [0, 8], blur: 22, spread: 0, color: Color32::from_black_alpha((90.0 * h) as u8) }.as_shape(r, 18));
+    }
+    p.rect_filled(r, 18.0, PANEL.lerp_to_gamma(RAISED, h));
+    p.rect_stroke(r, 18.0, Stroke::new(1.0, LINE.lerp_to_gamma(edge, h)), egui::StrokeKind::Inside);
+    (r, resp, h)
 }
 
 /// A history row: time, icon, title, host; hover shows a remove button.
@@ -71,123 +86,142 @@ fn section(ui: &mut Ui, n: &str, title: &str) {
 }
 
 impl Browser {
-    fn paint_planet(&self, ui: &Ui, rect: Rect, alpha: f32) {
-        if let Some(t) = &self.planet {
-            let w = rect.width().max(rect.height() * 1.6);
-            let h = w / 1.6;
-            let r = Rect::from_min_size(pos2(rect.right() - w * 0.9, rect.top() - h * 0.08), vec2(w, h));
-            ui.painter().with_clip_rect(rect).image(t.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE.gamma_multiply(alpha));
-        }
-    }
-
     // ------------------------------------------------------------------ sign in
 
+    /// First run. The whole window is the glyph card; the steps that need
+    /// typing sit in a dark panel on top of it.
     pub fn signin_screen(&mut self, ui: &mut Ui) {
         let rect = ui.max_rect();
-        ui.painter().rect_filled(rect, 0.0, BG);
-        self.paint_planet(ui, rect, 1.0);
-        // Window drag on the whole background.
-        let drag = ui.interact(Rect::from_min_size(rect.min, vec2(rect.width(), 48.0)), Id::unique("signin-drag"), Sense::drag());
+        let ctx = ui.ctx().clone();
+        let p = ui.painter().clone();
+        p.rect_filled(rect, 0.0, BLUE);
+        crate::art::glyphs(&p, &ctx, rect, ctx.pointer_latest_pos(), &crate::art::Glyphs::hero(ctx.input(|i| i.time) as f32));
+        if ctx.input(|i| i.focused) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(170));
+        }
+        // Window drag on the top strip.
+        let drag = ui.interact(Rect::from_min_size(rect.min, vec2(rect.width(), 52.0)), Id::unique("signin-drag"), Sense::drag());
         if drag.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(72.0, 0.0))).layout(Layout::top_down(Align::Min)));
+        // Corner tags, as on the card this theme comes from.
+        let m = 72.0;
+        p.rect_filled(Rect::from_min_max(pos2(rect.left() + m - 16.0, rect.top() + 56.0), pos2(rect.left() + m + 150.0, rect.top() + 112.0)), 28.0, BLUE);
+        crate::art::mark(&p, pos2(rect.left() + m + 15.0, rect.top() + 84.0), 15.0, WHITE);
+        p.text(pos2(rect.left() + m + 42.0, rect.top() + 84.0), egui::Align2::LEFT_CENTER, "INERT", FontId::new(22.0, pixel()), WHITE);
+        p.rect_filled(Rect::from_min_max(pos2(rect.right() - m - 80.0, rect.top() + 60.0), pos2(rect.right() - m + 16.0, rect.top() + 108.0)), 16.0, BLUE);
+        p.text(pos2(rect.right() - m, rect.top() + 76.0), egui::Align2::RIGHT_CENTER, "INERT://", FontId::new(11.0, mono()), WHITE);
+        p.text(pos2(rect.right() - m, rect.top() + 92.0), egui::Align2::RIGHT_CENTER, "2026", FontId::new(11.0, mono()), WHITE);
+        let foot = p.layout_no_wrap("RUST · SERVO · TLS 1.3 + ML-KEM".to_owned(), FontId::new(10.5, mono()), WHITE);
+        let fr = Rect::from_min_size(pos2(rect.right() - m - foot.size().x, rect.bottom() - 40.0 - foot.size().y), foot.size());
+        p.rect_filled(fr.expand2(vec2(14.0, 9.0)), 14.0, BLUE);
+        p.galley(fr.min, foot, WHITE);
+
+        let col = Rect::from_min_max(pos2(rect.left() + m, rect.top() + 130.0), pos2(rect.right() - m, rect.bottom() - 40.0));
+        // The map is cleared behind the headline so it reads cleanly.
+        let clearing = p.add(egui::Shape::Noop);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(col).layout(Layout::top_down(Align::Min)));
         let ui = &mut child;
-        ui.add_space(56.0);
-        ui.label(RichText::new("INERT").font(FontId::new(26.0, pixel())).color(WHITE));
-        ui.add_space((rect.height() * if self.signin.import_step { 0.12 } else { 0.22 }).max(40.0));
         if self.signin.import_step {
-            self.import_screen(ui);
-            let f = rect.shrink2(vec2(72.0, 36.0));
-            ui.painter().text(pos2(f.left(), f.bottom()), egui::Align2::LEFT_BOTTOM, "© 2026 INERT", FontId::new(10.5, mono()), DIM);
+            ui.add_space((col.height() - 560.0).max(0.0) * 0.5);
+            theme::panel_frame(26, 32.0).show(ui, |ui| {
+                ui.set_width(600.0);
+                self.import_screen(ui);
+            });
             return;
         }
-        ui.label(theme::label("inert:// — an application protocol"));
-        ui.add_space(18.0);
-        ui.label(RichText::new("The web,\nbehind glass.").font(FontId::new(96.0, serif())).color(WHITE).extra_letter_spacing(-3.0).line_height(Some(92.0)));
-        ui.add_space(26.0);
         match self.signin.provider {
             None => {
-                ui.label(RichText::new("Bring your own model. That is the only thing Inert asks for.").font(FontId::new(18.0, sans())).color(theme::MUTED));
-                ui.add_space(36.0);
+                ui.add_space((col.height() - 372.0).max(0.0));
+                let top = ui.cursor().top();
+                ui.label(RichText::new("The web,\nbehind glass.").font(FontId::new(88.0, sans())).color(WHITE).extra_letter_spacing(-2.6).line_height(Some(88.0)));
+                ui.add_space(18.0);
+                ui.label(RichText::new("Bring your own model. That is the only thing Inert asks for.").font(FontId::new(18.0, sans())).color(glass(0.9)));
+                ui.add_space(30.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 12.0;
-                    let c = primary(ui, "SIGN IN WITH CLAUDE →", 250.0);
+                    let c = ui.add(theme::cta("Sign in with Claude", WHITE, BLUE_DEEP, 50.0).min_size(vec2(220.0, 50.0)));
                     crate::drive::reg("signin:claude", c.rect);
                     if c.clicked() {
                         self.signin.provider = Some(Provider::Claude);
                     }
-                    let g = ghost(ui, "SIGN IN WITH GPT →", 230.0);
+                    let g = ui.add(theme::cta("Sign in with GPT", glass(0.10), WHITE, 50.0).stroke(Stroke::new(1.0, glass(0.55))).min_size(vec2(200.0, 50.0)));
                     crate::drive::reg("signin:gpt", g.rect);
                     if g.clicked() {
                         self.signin.provider = Some(Provider::Gpt);
                     }
                 });
-                ui.add_space(14.0);
-                ui.label(theme::label_c("No account. No email. No tracking.", DIM));
+                ui.add_space(16.0);
+                ui.label(theme::label_c("No account. No email. No tracking.", glass(0.85)));
+                let block = Rect::from_min_max(pos2(col.left(), top), pos2(col.left() + 700.0, ui.cursor().top())).expand2(vec2(28.0, 22.0));
+                p.set(clearing, egui::Shape::rect_filled(block, 30.0, BLUE));
             }
-            Some(p) => {
-                let (who, hint, console) = match p {
+            Some(prov) => {
+                let (who, hint, console) = match prov {
                     Provider::Claude => ("Anthropic", "sk-ant-…", "https://platform.claude.com/settings/keys"),
                     Provider::Gpt => ("OpenAI", "sk-…", "https://platform.openai.com/api-keys"),
                 };
-                ui.label(RichText::new(format!("Connect {} with your {who} API key.", p.name())).font(FontId::new(18.0, sans())).color(theme::MUTED));
-                ui.add_space(22.0);
-                ui.label(theme::label(&format!("{who} API key")));
-                ui.add_space(6.0);
-                let r = ui.add(egui::TextEdit::singleline(&mut self.signin.key).password(true).hint_text(hint).desired_width(480.0).font(FontId::new(15.0, mono())).margin(vec2(12.0, 12.0)));
-                if let Some(e) = &self.signin.error {
-                    ui.label(RichText::new(e).color(DANGER).font(FontId::new(12.0, mono())));
-                }
-                ui.add_space(6.0);
-                ui.label(theme::muted("Stored in your macOS Keychain. Sent only to the provider you chose — never to sites."));
-                ui.add_space(22.0);
+                ui.add_space((col.height() - 440.0).max(0.0) * 0.5);
                 let mut finish = false;
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 12.0;
+                theme::panel_frame(26, 32.0).show(ui, |ui| {
+                    ui.set_width(600.0);
+                    ui.label(theme::label_c("Step 1 of 2 · Your model", ACCENT));
+                    ui.add_space(10.0);
+                    ui.label(theme::title(&format!("Connect {}.", prov.name()), 38.0));
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(format!("Paste your {who} API key. It powers the assistant, with your own account.")).font(FontId::new(15.0, sans())).color(MUTED));
+                    ui.add_space(20.0);
+                    ui.label(theme::label(&format!("{who} API key")));
+                    ui.add_space(6.0);
+                    let r = ui.add(egui::TextEdit::singleline(&mut self.signin.key).password(true).hint_text(hint).desired_width(f32::INFINITY).font(FontId::new(15.0, mono())).margin(vec2(14.0, 12.0)));
                     crate::drive::reg("signin:key", r.rect);
-                    let cont = primary(ui, "CONTINUE →", 200.0);
-                    crate::drive::reg("signin:continue", cont.rect);
-                    let go = cont.clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                    if go {
-                        let k = self.signin.key.trim().to_owned();
-                        if k.len() < 20 {
-                            self.signin.error = Some("That doesn't look like an API key.".into());
-                        } else if let Err(e) = ai::save_key(p, &k) {
-                            self.signin.error = Some(format!("Keychain error: {e}"));
-                        } else {
+                    if let Some(e) = &self.signin.error {
+                        ui.label(RichText::new(e).color(DANGER).font(FontId::new(12.0, mono())));
+                    }
+                    ui.add_space(6.0);
+                    ui.label(theme::muted("Stored in your macOS Keychain. Sent only to the provider you chose — never to sites."));
+                    ui.add_space(22.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 12.0;
+                        let cont = primary(ui, "Continue", 170.0);
+                        crate::drive::reg("signin:continue", cont.rect);
+                        let go = cont.clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                        if go {
+                            let k = self.signin.key.trim().to_owned();
+                            if k.len() < 20 {
+                                self.signin.error = Some("That doesn't look like an API key.".into());
+                            } else if let Err(e) = ai::save_key(prov, &k) {
+                                self.signin.error = Some(format!("Keychain error: {e}"));
+                            } else {
+                                finish = true;
+                            }
+                        }
+                        let sk = ghost(ui, "Skip for now", 150.0);
+                        crate::drive::reg("signin:skip", sk.rect);
+                        if sk.clicked() {
                             finish = true;
                         }
-                    }
-                    let sk = ghost(ui, "SKIP FOR NOW", 170.0);
-                    crate::drive::reg("signin:skip", sk.rect);
-                    if sk.clicked() {
-                        finish = true;
-                    }
-                    if ui.add(egui::Label::new(theme::label("← back")).sense(Sense::click())).clicked() {
-                        self.signin.provider = None;
-                        self.signin.error = None;
+                        if ui.add(egui::Label::new(theme::label("← back")).sense(Sense::click())).clicked() {
+                            self.signin.provider = None;
+                            self.signin.error = None;
+                        }
+                    });
+                    ui.add_space(14.0);
+                    if ui.add(egui::Label::new(theme::label_c(&format!("Get a key at {}", console.trim_start_matches("https://")), SECURE)).sense(Sense::click())).clicked() {
+                        // Opens after sign-in completes, in a normal (unsecured) tab.
+                        self.profile.session.push(crate::profile::SavedTab { url: console.into(), title: "API keys".into(), group: None, pinned: false });
                     }
                 });
-                ui.add_space(12.0);
-                if ui.add(egui::Label::new(theme::label_c(&format!("Get a key at {}", console.trim_start_matches("https://")), SECURE)).sense(Sense::click())).clicked() {
-                    // Opens after sign-in completes, in a normal (unsecured) tab.
-                    self.profile.session.push(crate::profile::SavedTab { url: console.into(), title: "API keys".into(), group: None, pinned: false });
-                }
                 if finish {
                     self.signin.key.clear();
-                    self.profile.settings.provider = Some(p);
-                    self.profile.settings.model = p.default_model().into();
+                    self.profile.settings.provider = Some(prov);
+                    self.profile.settings.model = prov.default_model().into();
                     // Step 2: bring Chrome along (skippable).
                     self.signin.import_step = true;
                     self.dirty = true;
                 }
             }
         }
-        // Footer, Stencil style.
-        let f = rect.shrink2(vec2(72.0, 36.0));
-        ui.painter().text(pos2(f.left(), f.bottom()), egui::Align2::LEFT_BOTTOM, "© 2026 INERT", FontId::new(10.5, mono()), DIM);
-        ui.painter().text(pos2(f.right(), f.bottom()), egui::Align2::RIGHT_BOTTOM, "RUST · SERVO · TLS 1.3 + ML-KEM", FontId::new(10.5, mono()), DIM);
     }
 
     // ------------------------------------------------------------------ pages
@@ -195,9 +229,6 @@ impl Browser {
     pub fn page(&mut self, ui: &mut Ui, p: Page) {
         let rect = ui.max_rect();
         ui.painter().rect_filled(rect, 0.0, BG);
-        if p == Page::NewTab {
-            self.paint_planet(ui, rect, 0.85);
-        }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             let w = (ui.available_width() - 96.0).clamp(320.0, 1040.0);
             let side = ((ui.available_width() - w) / 2.0).max(32.0);
@@ -220,12 +251,39 @@ impl Browser {
     }
 
     fn new_tab_page(&mut self, ui: &mut Ui, w: f32) {
-        ui.add_space(72.0);
-        ui.label(theme::label("inert:// — new tab"));
-        ui.add_space(12.0);
-        ui.label(RichText::new("Where to?").font(FontId::new(64.0, serif())).color(WHITE).extra_letter_spacing(-2.0));
-        ui.add_space(22.0);
-        self.ntp_search(ui, w.min(680.0));
+        let ctx = ui.ctx().clone();
+        ui.add_space(28.0);
+        // The hero: the glyph card itself, alive under the cursor.
+        let (hero, _) = ui.allocate_exact_size(vec2(w, 268.0), Sense::hover());
+        let p = ui.painter().clone();
+        p.rect_filled(hero, 0.0, BLUE);
+        crate::art::glyphs(&p, &ctx, hero, ctx.pointer_latest_pos(), &crate::art::Glyphs::hero(ctx.input(|i| i.time) as f32));
+        if ctx.input(|i| i.focused) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(170));
+        }
+        // The map is cleared behind the headline.
+        let head = "The web,\nbehind glass.";
+        let job = egui::text::LayoutJob::simple(head.to_owned(), FontId::new(34.0, sans()), WHITE, f32::INFINITY);
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
+        let at = pos2(hero.left() + 30.0, hero.bottom() - 62.0 - galley.size().y);
+        p.rect_filled(Rect::from_min_size(at, galley.size()).expand2(vec2(18.0, 12.0)), 18.0, BLUE);
+        p.galley(at, galley, WHITE);
+        let tag = Rect::from_min_max(pos2(hero.right() - 120.0, hero.top() + 18.0), pos2(hero.right() - 14.0, hero.top() + 60.0));
+        p.rect_filled(tag, 12.0, BLUE);
+        p.text(pos2(hero.right() - 28.0, hero.top() + 32.0), egui::Align2::RIGHT_CENTER, "INERT://", FontId::new(11.0, mono()), WHITE);
+        p.text(pos2(hero.right() - 28.0, hero.top() + 47.0), egui::Align2::RIGHT_CENTER, "NEW TAB", FontId::new(11.0, mono()), WHITE);
+        let mk = pos2(hero.left() + 46.0, hero.top() + 44.0);
+        p.circle_filled(mk, 26.0, BLUE);
+        crate::art::mark(&p, mk, 15.0, WHITE);
+        crate::chrome::round_corners(&p, hero, 26.0, BG);
+
+        // The composer overlaps the hero's lower edge.
+        ui.add_space(-36.0);
+        let cw = (w - 60.0).min(700.0);
+        ui.horizontal(|ui| {
+            ui.add_space(((w - cw) / 2.0).max(0.0));
+            self.ntp_search(ui, cw);
+        });
 
         section(ui, "01", "Secured sites");
         let sites = self.sites.clone();
@@ -235,14 +293,15 @@ impl Browser {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
             for (host, name) in &sites {
-                let (r, resp) = ui.allocate_exact_size(vec2(240.0, 104.0), Sense::click());
+                let (r, resp, h) = tile(ui, vec2(240.0, 108.0), ACCENT);
                 let p = ui.painter();
-                p.rect_filled(r, 4.0, if resp.hovered() { RAISED } else { Color32::from_black_alpha(160) });
-                p.rect_stroke(r, 4.0, Stroke::new(1.0, if resp.hovered() { EDGE } else { LINE }), egui::StrokeKind::Inside);
-                icons::paint(p, Rect::from_min_size(r.min + vec2(16.0, 16.0), Vec2::splat(14.0)), Icon::Lock, SECURE);
-                p.text(r.min + vec2(38.0, 16.0), egui::Align2::LEFT_TOP, "SECURED", FontId::new(10.0, mono()), SECURE);
-                p.text(r.min + vec2(16.0, 42.0), egui::Align2::LEFT_TOP, name, FontId::new(22.0, serif()), WHITE);
-                p.text(r.min + vec2(16.0, 76.0), egui::Align2::LEFT_TOP, format!("inert://{host}"), FontId::new(11.0, mono()), MUTED);
+                let chip = Rect::from_min_size(r.min + vec2(16.0, 16.0), Vec2::splat(26.0));
+                p.rect_filled(chip, 9.0, BLUE);
+                icons::paint(p, chip.shrink(6.5), Icon::Lock, WHITE);
+                p.text(pos2(chip.right() + 10.0, chip.center().y), egui::Align2::LEFT_CENTER, "SECURED", FontId::new(10.0, mono()), SECURE);
+                icons::paint(p, Rect::from_center_size(pos2(r.right() - 22.0, chip.center().y), Vec2::splat(12.0)), Icon::Forward, MUTED.lerp_to_gamma(WHITE, h));
+                p.text(r.min + vec2(16.0, 52.0), egui::Align2::LEFT_TOP, name, FontId::new(18.0, sans_medium()), WHITE);
+                p.text(r.min + vec2(16.0, 80.0), egui::Align2::LEFT_TOP, format!("inert://{host}"), FontId::new(11.0, mono()), MUTED);
                 if resp.clicked() {
                     let id = self.active;
                     self.navigate(id, &format!("inert://{host}"));
@@ -257,21 +316,21 @@ impl Browser {
             for g in groups.iter().filter(|g| g.kind != GroupKind::Normal) {
                 let c = group_color(&g.color);
                 let n = self.tabs.iter().filter(|t| t.group == Some(g.id)).count();
-                let (r, resp) = ui.allocate_exact_size(vec2(240.0, 92.0), Sense::click());
+                let (r, resp, _) = tile(ui, vec2(240.0, 96.0), c);
                 let p = ui.painter();
-                p.rect_filled(r, 4.0, if resp.hovered() { c.gamma_multiply(0.1) } else { Color32::from_black_alpha(160) });
-                p.rect_stroke(r, 4.0, Stroke::new(1.0, c.gamma_multiply(if resp.hovered() { 0.9 } else { 0.4 })), egui::StrokeKind::Inside);
+                let chip = Rect::from_min_size(r.min + vec2(16.0, 16.0), Vec2::splat(26.0));
+                p.rect_filled(chip, 9.0, c);
                 if let Some(ic) = group_icon(g.kind) {
-                    icons::paint(p, Rect::from_min_size(r.min + vec2(16.0, 16.0), Vec2::splat(22.0)), ic, c);
+                    icons::paint(p, chip.shrink(6.0), ic, BG);
                 }
-                p.text(r.min + vec2(16.0, 52.0), egui::Align2::LEFT_TOP, g.name.to_uppercase(), FontId::new(12.0, mono()), c);
+                p.text(r.min + vec2(16.0, 52.0), egui::Align2::LEFT_TOP, &g.name, FontId::new(15.0, sans_medium()), WHITE);
                 let sub = match g.kind {
                     GroupKind::Inbox => "mail · chat",
                     GroupKind::Homeserver => "self-hosted",
                     GroupKind::Dev => "dev servers · docs",
                     GroupKind::Normal => "",
                 };
-                p.text(r.min + vec2(16.0, 70.0), egui::Align2::LEFT_TOP, format!("{n} {} · {sub}", if n == 1 { "tab" } else { "tabs" }), FontId::new(11.0, mono()), MUTED);
+                p.text(r.min + vec2(16.0, 74.0), egui::Align2::LEFT_TOP, format!("{n} {} · {sub}", if n == 1 { "tab" } else { "tabs" }), FontId::new(11.0, mono()), MUTED);
                 if resp.clicked() {
                     if let Some(first) = self.tabs.iter().find(|t| t.group == Some(g.id)).map(|t| t.id) {
                         self.activate(first);
@@ -291,7 +350,7 @@ impl Browser {
                 for h in top.iter().take(8) {
                     let label = if h.title.is_empty() { crate::omnibox::strip(&h.url).to_owned() } else { h.title.clone() };
                     let short: String = label.chars().take(26).collect();
-                    let b = egui::Button::new(RichText::new(short).font(FontId::new(12.5, sans())).color(FG)).fill(RAISED).stroke(Stroke::new(1.0, LINE)).min_size(vec2(0.0, 34.0));
+                    let b = egui::Button::new(RichText::new(short).font(FontId::new(12.5, sans())).color(FG)).fill(PANEL).stroke(Stroke::new(1.0, LINE)).corner_radius(17).min_size(vec2(0.0, 34.0));
                     if ui.add(b).on_hover_text(&h.url).clicked() {
                         let id = self.active;
                         self.navigate(id, &h.url);
@@ -305,26 +364,45 @@ impl Browser {
     /// (it no longer hands off to the address bar).
     fn ntp_search(&mut self, ui: &mut Ui, w: f32) {
         let id = Id::unique("ntp-search");
-        let (r, bg) = ui.allocate_exact_size(vec2(w, 54.0), Sense::click());
+        let (r, bg) = ui.allocate_exact_size(vec2(w, 100.0), Sense::click());
         crate::drive::reg("ntp:search", r);
         let ctx = ui.ctx().clone();
         let focused = ui.memory(|m| m.has_focus(id));
-        let f = ctx.animate_bool_with_time(Id::unique("ntp-focus"), focused, 0.16);
-        let hov = ctx.animate_bool_with_time(Id::unique("ntp-hover"), ui.rect_contains_pointer(r), 0.12);
-        let rad = r.height() / 2.0;
-        let p = ui.painter();
+        let f = ctx.animate_bool_with_time(Id::unique("ntp-focus"), focused, 0.18);
+        let hov = ctx.animate_bool_with_time(Id::unique("ntp-hover"), ui.rect_contains_pointer(r), 0.14);
+        // A composer: the field on top, a row of chips and the send button below.
+        let p = ui.painter().clone();
+        p.add(egui::epaint::Shadow { offset: [0, 14], blur: 36, spread: 0, color: Color32::from_black_alpha(130) }.as_shape(r, 24));
         if f > 0.0 {
-            p.rect_stroke(r.expand(1.5), rad + 1.5, Stroke::new(3.0, ACCENT.gamma_multiply(0.22 * f)), egui::StrokeKind::Outside);
+            p.rect_stroke(r.expand(2.0), 26.0, Stroke::new(4.0, ACCENT.gamma_multiply(0.20 * f)), egui::StrokeKind::Outside);
         }
-        p.rect_filled(r, rad, RAISED.lerp_to_gamma(HOVER, hov * (1.0 - f)).lerp_to_gamma(BG, f));
-        p.rect_stroke(r, rad, Stroke::new(1.0, LINE.lerp_to_gamma(LINE_STRONG, hov).lerp_to_gamma(ACCENT.gamma_multiply(0.75), f)), egui::StrokeKind::Inside);
-        icons::paint(p, Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), Vec2::splat(16.0)), Icon::Search, if focused { FG } else { MUTED });
+        p.rect_filled(r, 24.0, RAISED.lerp_to_gamma(HOVER, 0.35 * hov * (1.0 - f)));
+        p.rect_stroke(r, 24.0, Stroke::new(1.0, glass(0.10 + 0.06 * hov).lerp_to_gamma(ACCENT, 0.8 * f)), egui::StrokeKind::Inside);
+        icons::paint(&p, Rect::from_center_size(pos2(r.left() + 28.0, r.top() + 32.0), Vec2::splat(16.0)), Icon::Search, MUTED.lerp_to_gamma(WHITE, f));
         if bg.clicked() {
             ui.memory_mut(|m| m.request_focus(id));
         }
-        let font = FontId::new(16.0, sans());
+        // Chips: where the search goes, and the way to the address bar.
+        let engine = self.profile.settings.search.name();
+        let mut cx = r.left() + 16.0;
+        for (txt, ink) in [(engine.to_owned(), FG), ("Cmd+L for the address bar".to_owned(), MUTED)] {
+            let g = p.layout_no_wrap(txt, FontId::new(11.5, sans()), ink);
+            let chip = Rect::from_min_size(pos2(cx, r.bottom() - 40.0), vec2(g.size().x + 22.0, 26.0));
+            p.rect_stroke(chip, 13.0, Stroke::new(1.0, LINE_STRONG), egui::StrokeKind::Inside);
+            p.galley(pos2(chip.left() + 11.0, chip.center().y - g.size().y / 2.0), g, ink);
+            cx = chip.right() + 8.0;
+        }
+        // Send: lights up once there is something to send.
+        let sr = Rect::from_center_size(pos2(r.right() - 30.0, r.bottom() - 27.0), Vec2::splat(32.0));
+        let sresp = ui.interact(sr, Id::unique("ntp-send"), Sense::click()).on_hover_text("Go");
+        let ready = ctx.animate_bool_with_time(Id::unique("ntp-ready"), !self.ntp.text.trim().is_empty(), 0.16);
+        let sh = ctx.animate_bool_with_time(Id::unique("ntp-send-h"), sresp.hovered(), 0.12);
+        p.circle_filled(sr.center(), 16.0 + sh, HOVER.lerp_to_gamma(BLUE, ready));
+        icons::paint(&p, sr.shrink(9.0), Icon::ArrowUp, MUTED.lerp_to_gamma(WHITE, ready));
+        let send = sresp.clicked() && !self.ntp.text.trim().is_empty();
+        let font = FontId::new(17.0, sans());
         let row_h = ui.fonts_mut(|fo| fo.row_height(&font));
-        let tr = Rect::from_min_max(pos2(r.left() + 50.0, r.center().y - row_h / 2.0), pos2(r.right() - 22.0, r.center().y + row_h / 2.0));
+        let tr = Rect::from_min_max(pos2(r.left() + 52.0, r.top() + 32.0 - row_h / 2.0), pos2(r.right() - 22.0, r.top() + 32.0 + row_h / 2.0));
         let before = self.ntp.text.clone();
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tr).layout(Layout::left_to_right(Align::Center)));
         let out = egui::TextEdit::singleline(&mut self.ntp.text)
@@ -333,7 +411,7 @@ impl Browser {
             .margin(egui::Margin::ZERO)
             .font(font)
             .text_color(FG)
-            .hint_text(RichText::new(format!("Search {} or type an address", self.profile.settings.search.name())).color(DIM))
+            .hint_text(RichText::new("Search or ask anything…").color(DIM))
             .desired_width(tr.width())
             .show(&mut child);
         let resp = out.response.clone();
@@ -381,7 +459,7 @@ impl Browser {
                 crate::omnibox::remote(self.profile.settings.search, typed, self.tx.clone(), self.ctx.clone());
             }
         }
-        let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let enter = send || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
         if enter {
             let rows = crate::chrome::rows_of(&self.ntp);
             let choice = if self.ntp.sel == 0 { None } else { rows.get(self.ntp.sel).cloned() };
@@ -409,7 +487,7 @@ impl Browser {
     fn history_page(&mut self, ui: &mut Ui) {
         ui.add_space(48.0);
         ui.label(theme::label("History"));
-        ui.label(theme::serif_text("Where you've been.", 44.0));
+        ui.label(theme::title("Where you've been.", 44.0));
         ui.add_space(16.0);
         let key = Id::unique("hist-filter");
         let mut q: String = ui.ctx().data(|d| d.get_temp(key)).unwrap_or_default();
@@ -514,7 +592,7 @@ impl Browser {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 for (i, name) in ["Last hour", "Last 24 hours", "Last 7 days", "All time"].iter().enumerate() {
-                    let b = ui.add(egui::Button::new(RichText::new(*name).font(FontId::new(12.5, sans())).color(if range == i { BG } else { FG })).fill(if range == i { FG } else { RAISED }).corner_radius(14).min_size(vec2(0.0, 28.0)));
+                    let b = ui.add(egui::Button::new(RichText::new(*name).font(FontId::new(12.5, sans())).color(if range == i { BG } else { FG })).fill(if range == i { WHITE } else { RAISED }).corner_radius(15).min_size(vec2(0.0, 30.0)));
                     crate::drive::reg(format!("clear:{name}"), b.rect);
                     if b.clicked() {
                         range = i;
@@ -526,7 +604,7 @@ impl Browser {
             ui.checkbox(&mut cookies, "Also cookies and site data (signs you out of most sites)");
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                let b = ui.add(egui::Button::new(RichText::new("CLEAR DATA").font(FontId::new(12.0, mono())).color(BG).extra_letter_spacing(1.2)).fill(FG).corner_radius(16).min_size(vec2(130.0, 34.0)));
+                let b = ui.add(theme::cta("Clear data", BLUE, WHITE, 36.0).min_size(vec2(130.0, 36.0)));
                 crate::drive::reg("clear:go", b.rect);
                 if b.clicked() {
                     let now = crate::profile::now();
@@ -559,7 +637,7 @@ impl Browser {
     fn bookmarks_page(&mut self, ui: &mut Ui) {
         ui.add_space(48.0);
         ui.label(theme::label("Bookmarks"));
-        ui.label(theme::serif_text("Saved for later.", 44.0));
+        ui.label(theme::title("Saved for later.", 44.0));
         ui.add_space(16.0);
         let mut remove = None;
         let mut open = None;
@@ -599,7 +677,7 @@ impl Browser {
     fn downloads_page(&mut self, ui: &mut Ui) {
         ui.add_space(48.0);
         ui.label(theme::label("Downloads"));
-        ui.label(theme::serif_text("Files from this session.", 44.0));
+        ui.label(theme::title("Files from this session.", 44.0));
         ui.add_space(16.0);
         if self.downloads.is_empty() {
             ui.label(theme::muted(&format!("Nothing yet. Files are saved to {}.", crate::web::downloads_dir().display())));
@@ -615,14 +693,14 @@ impl Browser {
     fn settings_page(&mut self, ui: &mut Ui) {
         ui.add_space(48.0);
         ui.label(theme::label("Settings"));
-        ui.label(theme::serif_text("Make it yours.", 44.0));
+        ui.label(theme::title("Make it yours.", 44.0));
 
         section(ui, "01", "AI provider");
         let current = self.profile.settings.provider;
         ui.horizontal(|ui| {
             for p in [Provider::Claude, Provider::Gpt] {
                 let on = current == Some(p);
-                let b = egui::Button::new(RichText::new(p.name().to_uppercase()).font(FontId::new(12.0, mono())).color(if on { BG } else { FG }).extra_letter_spacing(1.4)).fill(if on { FG } else { Color32::TRANSPARENT }).stroke(Stroke::new(1.0, LINE_STRONG)).min_size(vec2(120.0, 36.0));
+                let b = if on { theme::cta(p.name(), BLUE, WHITE, 36.0) } else { theme::cta_ghost(p.name(), 36.0) }.min_size(vec2(120.0, 36.0));
                 if ui.add(b).clicked() {
                     self.profile.settings.provider = Some(p);
                     self.profile.settings.model = p.default_model().into();
@@ -736,7 +814,7 @@ impl Browser {
 
         section(ui, "06", "VPN");
         let s = self.vpn.status.clone();
-        ui.label(theme::body(if s.installed { "Mullvad is installed. Open the VPN chip in the tab strip to connect or pick a location." } else { "Install Mullvad VPN to enable the built-in VPN." }));
+        ui.label(theme::body(if s.installed { "Mullvad is installed. Open the VPN pill at the foot of the sidebar to connect or pick a location." } else { "Install Mullvad VPN to enable the built-in VPN." }));
         if s.installed {
             ui.label(theme::muted(&format!("Status: {}{}", s.state, if s.connected() { format!(" · {}, {}", s.city, s.country) } else { String::new() })));
         }
@@ -748,11 +826,14 @@ impl Browser {
         if ui.checkbox(&mut self.profile.settings.bookmarks_bar, "Show bookmarks bar").changed() {
             self.dirty = true;
         }
+        if ui.checkbox(&mut self.profile.settings.sidebar, "Show the tab sidebar (Cmd+S)").changed() {
+            self.dirty = true;
+        }
 
         section(ui, "08", "About");
-        ui.label(theme::body("Inert Browser 0.1 — Rust, egui + wgpu, WebKit for the unsecured web."));
+        ui.label(theme::body("Inert Browser 0.1 — Rust, egui + wgpu, Servo and WebKit for the unsecured web."));
         ui.label(theme::muted("inert:// protocol v1 · TLS 1.3 with X25519MLKEM768 · Ed25519-signed manifests."));
-        ui.label(theme::muted("Typefaces: Geist Serif, Sans, Mono and Pixel by Vercel (SIL Open Font License)."));
+        ui.label(theme::muted("Typefaces: Geist Sans, Mono, Pixel and Serif by Vercel (SIL Open Font License)."));
         ui.add_space(8.0);
         if ui.button("Sign out of the AI provider").clicked() {
             if let Some(p) = self.profile.settings.provider {
@@ -940,20 +1021,20 @@ impl Browser {
         };
         ui.label(theme::label_c(tag, if danger { DANGER } else { WARN }));
         ui.add_space(10.0);
-        ui.label(RichText::new(title).font(FontId::new(44.0, serif())).color(WHITE));
+        ui.label(theme::title(&title, 40.0));
         ui.add_space(14.0);
         ui.label(RichText::new(body).font(FontId::new(13.5, mono())).color(FG));
         ui.add_space(28.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
-            if primary(ui, "TRY AGAIN", 160.0).clicked() {
+            if primary(ui, "Try again", 150.0).clicked() {
                 self.reload();
             }
-            if ghost(ui, "BACK TO SAFETY", 190.0).clicked() {
+            if ghost(ui, "Back to safety", 170.0).clicked() {
                 self.navigate(id, "about:newtab");
             }
             if let Failure::KeyChanged { .. } = f {
-                if ui.add(egui::Button::new(RichText::new("TRUST THE NEW KEY").font(FontId::new(12.0, mono())).color(DANGER).extra_letter_spacing(1.4)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, DANGER)).min_size(vec2(200.0, 46.0))).on_hover_text("Re-pin to the key in the site's trust record").clicked() {
+                if ui.add(theme::cta("Trust the new key", DANGER.gamma_multiply(0.14), DANGER, 46.0).min_size(vec2(190.0, 46.0))).on_hover_text("Re-pin to the key in the site's trust record").clicked() {
                     self.trust_new_key(id);
                 }
             }

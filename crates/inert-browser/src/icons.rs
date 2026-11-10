@@ -36,6 +36,8 @@ pub enum Icon {
     Key,
     Import,
     Logout,
+    Sidebar,
+    ArrowUp,
 }
 
 fn s(c: Color32) -> Stroke {
@@ -220,27 +222,37 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, c: Color32) {
             line(at(6.0, 0.0), at(3.0, -3.0));
             line(at(6.0, 0.0), at(3.0, 3.0));
         }
+        Icon::Sidebar => {
+            p.rect_stroke(Rect::from_min_max(at(-6.5, -5.0), at(6.5, 5.0)), 2.5 * u, s(c), egui::StrokeKind::Middle);
+            line(at(-2.0, -5.0), at(-2.0, 5.0));
+        }
+        Icon::ArrowUp => {
+            line(at(0.0, 5.5), at(0.0, -5.0));
+            line(at(0.0, -5.0), at(-4.0, -1.0));
+            line(at(0.0, -5.0), at(4.0, -1.0));
+        }
         Icon::Folder => {
             p.add(egui::Shape::closed_line(vec![at(-6.0, -4.0), at(-2.0, -4.0), at(-0.5, -2.5), at(6.0, -2.5), at(6.0, 5.0), at(-6.0, 5.0)], s(c)));
         }
     }
 }
 
-/// A square icon button with hover background. Returns the response.
+/// A round icon button: the glass fades in on hover and the icon dips when
+/// pressed. Works on the blue frame and on dark panels alike.
 pub fn button(ui: &mut Ui, icon: Icon, size: f32, tooltip: &str) -> Response {
-    button_c(ui, icon, size, tooltip, crate::theme::FG, true)
+    button_c(ui, icon, size, tooltip, crate::theme::WHITE, true)
 }
 
 pub fn button_c(ui: &mut Ui, icon: Icon, size: f32, tooltip: &str, color: Color32, enabled: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), if enabled { Sense::click() } else { Sense::hover() });
     let resp = resp.on_hover_text(tooltip);
-    // Round hover, fading in and out (Chrome's toolbar buttons).
-    let h = ui.ctx().animate_bool_with_time(resp.id.with("hover"), resp.hovered() && enabled, 0.12);
+    let ctx = ui.ctx();
+    let h = ctx.animate_bool_with_time(resp.id.with("hover"), resp.hovered() && enabled, 0.14);
+    let down = ctx.animate_bool_with_time(resp.id.with("down"), resp.is_pointer_button_down_on() && enabled, 0.08);
     if h > 0.0 {
-        let fill = if resp.is_pointer_button_down_on() { crate::theme::LINE } else { crate::theme::HOVER };
-        ui.painter().circle_filled(rect.center(), size / 2.0, fill.gamma_multiply(h));
+        ui.painter().circle_filled(rect.center(), size / 2.0 - down, crate::theme::glass(0.13 * h + 0.09 * down));
     }
-    let c = if enabled { color } else { crate::theme::LINE_STRONG };
-    paint(ui.painter(), rect.shrink(size * 0.22), icon, c);
+    let c = if enabled { color } else { crate::theme::glass(0.32) };
+    paint(ui.painter(), rect.shrink(size * (0.23 + 0.03 * down)), icon, c);
     resp
 }

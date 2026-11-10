@@ -212,7 +212,6 @@ pub struct Browser {
     pub signin: Signin,
     pub popover: Popover,
     pub popover_opened: Option<Instant>,
-    pub planet: Option<egui::TextureHandle>,
     pub downloads: Vec<(String, std::path::PathBuf, Instant)>,
     pub toast: Option<(String, Instant)>,
     pub find: Option<String>,
@@ -289,7 +288,6 @@ impl Browser {
             signin: Signin::default(),
             popover: Popover::None,
             popover_opened: None,
-            planet: None,
             downloads: Vec::new(),
             toast: None,
             find: None,
@@ -449,11 +447,11 @@ impl Browser {
         let Some(i) = self.tabs.iter().position(|t| t.id == id) else { return };
         // Leave a shrinking ghost where the tab stood.
         let order = self.visible_order();
-        let w: Option<f32> = self.ctx.data(|d| d.get_temp(egui::Id::unique(("tab-w", id))));
+        let w: Option<f32> = self.ctx.data(|d| d.get_temp(egui::Id::unique(("tab-h", id))));
         if let (Some(w), Some(pos)) = (w, order.iter().position(|x| *x == id)) {
             let after = if pos == 0 { None } else { Some(order[pos - 1]) };
             let title = self.tabs[i].title();
-            self.closing.push(crate::chrome::Ghost { after, w, start: self.ctx.input(|x| x.time), title });
+            self.closing.push(crate::chrome::Ghost { after, h: w, start: self.ctx.input(|x| x.time), title });
         }
         let t = self.tabs.remove(i);
         self.closed.push(SavedTab { url: t.url(), title: t.title(), group: t.group, pinned: t.pinned });
@@ -1120,6 +1118,8 @@ impl Browser {
                 if w.view.is_none() {
                     match web::create(frame, t.id, &w.url, content, &tx, &ctx) {
                         Ok(v) => {
+                            #[cfg(target_os = "macos")]
+                            web::mac::round(&v, crate::chrome::CARD_R as f64);
                             w.view = Some(v);
                             w.visible = true;
                             w.bounds = Some(content);
@@ -1176,10 +1176,15 @@ impl eframe::App for Browser {
         self.handle_events(frame);
         self.overlay_rects.clear();
         let ctx = ui.ctx().clone();
-        if self.planet.is_none() {
-            self.planet = Some(crate::art::planet_texture(&ctx));
-        }
         self.shortcuts(&ctx);
+        // The traffic lights sit on the toolbar's line.
+        #[cfg(target_os = "macos")]
+        if !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
+            let at = web::mac::traffic_lights(frame, crate::chrome::LIGHTS.0, crate::chrome::LIGHTS.1);
+            if std::env::var_os("INERT_DEBUG_LIGHTS").is_some() && ctx.cumulative_pass_nr() % 120 == 5 {
+                eprintln!("traffic lights: close button center = {at:?}");
+            }
+        }
 
         if !self.profile.onboarded {
             self.hide_all_webviews();
