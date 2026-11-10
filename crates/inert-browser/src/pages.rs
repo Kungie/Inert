@@ -379,8 +379,14 @@ impl Browser {
         p.rect_filled(r, 24.0, RAISED.lerp_to_gamma(HOVER, 0.35 * hov * (1.0 - f)));
         p.rect_stroke(r, 24.0, Stroke::new(1.0, glass(0.10 + 0.06 * hov).lerp_to_gamma(ACCENT, 0.8 * f)), egui::StrokeKind::Inside);
         icons::paint(&p, Rect::from_center_size(pos2(r.left() + 28.0, r.top() + 32.0), Vec2::splat(16.0)), Icon::Search, MUTED.lerp_to_gamma(WHITE, f));
+        // Focus goes to the field once the click is over: a field that is
+        // focused during a click that landed outside it gives the focus up.
         if bg.clicked() {
+            self.ntp.focus = true;
+        }
+        if self.ntp.focus && !ui.input(|i| i.pointer.any_down() || i.pointer.any_released()) {
             ui.memory_mut(|m| m.request_focus(id));
+            self.ntp.focus = false;
         }
         // Chips: where the search goes, and the way to the address bar.
         let engine = self.profile.settings.search.name();

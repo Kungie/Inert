@@ -165,8 +165,8 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
                 Variant::Primary => (r.c(r.d.colors.accent), r.c(r.d.colors.on_accent), Stroke::NONE),
                 Variant::Ghost => (Color32::TRANSPARENT, r.c(r.d.colors.fg), Stroke::new(1.0, theme::LINE_STRONG)),
             };
-            let text = RichText::new(format!("{} →", label.to_uppercase())).font(FontId::new(12.0 * r.z, theme::mono())).color(text_c).extra_letter_spacing(1.4);
-            let b = egui::Button::new(text).fill(fill).stroke(stroke).corner_radius(CornerRadius::same(r.d.radius.min(16) as u8)).min_size(vec2(0.0, 40.0 * r.z));
+            let text = RichText::new(label.as_str()).font(FontId::new(14.0 * r.z, theme::sans_medium())).color(text_c);
+            let b = egui::Button::new(text).fill(fill).stroke(stroke).corner_radius(CornerRadius::same(r.d.radius.min(20) as u8)).min_size(vec2(96.0 * r.z, 40.0 * r.z));
             let busy = r.busy;
             let resp = ui.allocate_ui_with_layout(vec2(0.0, 40.0 * r.z), Layout::left_to_right(Align::Center), |ui| ui.add_enabled(!busy, b)).inner;
             crate::drive::reg(format!("btn:{label}"), resp.rect);

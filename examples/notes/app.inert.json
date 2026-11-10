@@ -4,11 +4,11 @@
   "version": 1,
   "entry": "list",
   "design": {
-    "colors": { "bg": "#000000", "fg": "#e8efec", "muted": "#8fa39b", "accent": "#5dcaa5", "on_accent": "#00201a", "line": "#1d2523" },
-    "fonts": { "display": "geist-pixel", "title": "geist-serif", "body": "geist-sans", "mono": "geist-mono", "label": "geist-mono" },
+    "colors": { "bg": "#080d0c", "fg": "#e8efec", "muted": "#8fa39b", "accent": "#5ddaa5", "on_accent": "#00201a", "line": "#1d2725" },
+    "fonts": { "display": "geist-pixel", "title": "geist-sans", "body": "geist-sans", "mono": "geist-mono", "label": "geist-mono" },
     "sizes": { "display": 48, "title": 26, "body": 16, "mono": 13, "label": 11 },
     "spacing": { "xs": 4, "s": 8, "m": 14, "l": 24, "xl": 48 },
-    "radius": 2
+    "radius": 14
   },
   "actions": {
     "add_note": {

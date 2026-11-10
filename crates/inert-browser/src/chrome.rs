@@ -192,9 +192,15 @@ impl Browser {
     fn frame_drag(&self, ui: &mut Ui, r: Rect, key: &'static str) {
         let drag = ui.interact(r, Id::unique(key), Sense::click_and_drag());
         if drag.drag_started() {
+            if std::env::var_os("INERT_DEBUG_FRAME").is_some() {
+                eprintln!("frame drag started on {key} at {:?}", ui.ctx().pointer_latest_pos());
+            }
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
         if drag.double_clicked() {
+            if std::env::var_os("INERT_DEBUG_FRAME").is_some() {
+                eprintln!("frame double click on {key} at {:?}", ui.ctx().pointer_latest_pos());
+            }
             let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
@@ -280,7 +286,8 @@ impl Browser {
             }
 
             // "+ New Tab", the last row.
-            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
+            let resp = ui.interact(rect, Id::unique("newtab-row"), Sense::click());
             crate::drive::reg("newtab", rect);
             let hov = ctx.animate_bool_with_time(Id::unique("newtab-hov"), resp.hovered(), 0.14);
             let body = rect.shrink2(vec2(0.0, 1.0));
@@ -365,7 +372,10 @@ impl Browser {
     /// A group's folder row: color chip, name, tab count and a chevron that
     /// turns as the group opens.
     fn group_row(&mut self, ui: &mut Ui, g: &crate::profile::GroupDef, count: usize, color: Color32, open: f32) {
-        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+        // Rows get ids of their own: automatic ids shift when rows above
+        // fold away, which would hand an open context menu to another row.
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
+        let resp = ui.interact(rect, Id::unique(("group-row", g.id)), Sense::click());
         crate::drive::reg(format!("group:{}", g.name), rect);
         let hov = ui.ctx().animate_bool_with_time(Id::unique(("chip-hov", g.id)), resp.hovered(), 0.14);
         let body = rect.shrink2(vec2(0.0, 1.0));
@@ -461,7 +471,8 @@ impl Browser {
         let title = t.title();
         let loading = t.loading();
         let (icon, icon_c) = tab_icon(&t.kind);
-        let (rect, resp) = ui.allocate_exact_size(vec2(w, 40.0), Sense::click());
+        let (rect, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
+        let resp = ui.interact(rect, Id::unique(("tab-row", id)), Sense::click());
         crate::drive::reg(format!("tab:{title}"), rect);
         let hov = ctx.animate_bool_with_time(Id::unique(("tab-hov", id)), resp.hovered(), 0.14);
         let act = ctx.animate_bool_with_time(Id::unique(("tab-act", id)), active, 0.18);
@@ -504,11 +515,12 @@ impl Browser {
             ctx.request_repaint();
         }
         let k = (scale * grow).clamp(0.0, 1.0);
-        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H * k), Sense::click());
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H * k), Sense::hover());
         ctx.data_mut(|d| d.insert_temp(Id::unique(("tab-h", id)), ROW_H));
         if rect.height() < 1.0 {
             return;
         }
+        let resp = ui.interact(rect, Id::unique(("tab-row", id)), Sense::click());
         crate::drive::reg(format!("tab:{title}"), rect);
         let indent = if group.is_some() { 16.0 } else { 0.0 };
         // The row keeps its full height while it unfolds, clipped to what has opened.
@@ -1122,6 +1134,15 @@ impl Browser {
                 }
             });
         });
+        // A popover that opens upward is placed by its size from the frame
+        // before. When its content grows or shrinks, lay this frame out again
+        // so it never jumps.
+        let size = area.response.rect.size();
+        let last: Option<Vec2> = ctx.data(|d| d.get_temp(Id::unique("pop_size")));
+        ctx.data_mut(|d| d.insert_temp(Id::unique("pop_size"), size));
+        if up && last.is_some_and(|l| (l.y - size.y).abs() > 0.5) {
+            ctx.request_discard("popover height changed");
+        }
         self.overlay_rects.push(area.response.rect);
         let outside = ctx.input(|i| i.pointer.any_pressed()) && ctx.pointer_latest_pos().is_some_and(|p| !area.response.rect.contains(p));
         let fresh = self.popover_opened.is_some_and(|t| t.elapsed() < Duration::from_millis(150));
@@ -1873,6 +1894,20 @@ impl Browser {
 
     fn content(&mut self, ui: &mut Ui) {
         let id = self.active;
+        // A page fades in when its tab comes forward.
+        let ctx = ui.ctx().clone();
+        let now = ctx.input(|i| i.time);
+        if ctx.data(|d| d.get_temp::<u64>(Id::unique("shown-tab"))) != Some(id) {
+            ctx.data_mut(|d| {
+                d.insert_temp(Id::unique("shown-tab"), id);
+                d.insert_temp(Id::unique("shown-at"), now);
+            });
+        }
+        let k = ease(((now - ctx.data(|d| d.get_temp::<f64>(Id::unique("shown-at"))).unwrap_or(0.0)) / 0.22) as f32);
+        if k < 1.0 {
+            ui.multiply_opacity(0.25 + 0.75 * k);
+            ctx.request_repaint();
+        }
         let kind_tag = match self.tab(id).map(|t| &t.kind) {
             Some(Kind::Page(p)) => Some(*p),
             _ => None,

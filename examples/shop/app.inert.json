@@ -4,11 +4,11 @@
   "version": 1,
   "entry": "catalog",
   "design": {
-    "colors": { "bg": "#050505", "fg": "#f0ede6", "muted": "#a09a90", "accent": "#ffb547", "on_accent": "#1a1000", "line": "#262420" },
-    "fonts": { "display": "geist-serif", "title": "geist-serif", "body": "geist-sans", "mono": "geist-mono", "label": "geist-mono" },
+    "colors": { "bg": "#0c0b0a", "fg": "#f0ede6", "muted": "#a8a196", "accent": "#ffb547", "on_accent": "#1a1000", "line": "#2a2723" },
+    "fonts": { "display": "geist-sans", "title": "geist-sans", "body": "geist-sans", "mono": "geist-mono", "label": "geist-mono" },
     "sizes": { "display": 56, "title": 26, "body": 16, "mono": 14, "label": 11 },
     "spacing": { "xs": 4, "s": 8, "m": 16, "l": 28, "xl": 48 },
-    "radius": 2
+    "radius": 14
   },
   "actions": {
     "add_to_cart": {

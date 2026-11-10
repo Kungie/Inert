@@ -262,6 +262,8 @@ impl Driver {
             Pause(600),
             Click(s("servo:surface")),
             expect("servo.click_follows_link", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.url.contains("clicked=1"))),
+            // Let that page finish before navigating away from it (setup, not under test).
+            Pause(2500),
             // …and typing into a page-filling text field.
             Setup(Box::new(|b| {
                 let id = b.active;
@@ -491,6 +493,11 @@ impl Driver {
 
     pub fn step(b: &mut Browser, ctx: &egui::Context) {
         ctx.request_repaint_after(Duration::from_millis(30));
+        // A pass egui is about to lay out again has widgets in the wrong
+        // places; act on the pass that is actually shown.
+        if ctx.will_discard() {
+            return;
+        }
         let Some(mut d) = b.driver.take() else { return };
         d.advance(b, ctx);
         if !d.finished {

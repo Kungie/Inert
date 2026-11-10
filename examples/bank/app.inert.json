@@ -4,11 +4,11 @@
   "version": 1,
   "entry": "overview",
   "design": {
-    "colors": { "bg": "#000000", "fg": "#ededed", "muted": "#9a9a9a", "accent": "#b48cff", "on_accent": "#000000", "line": "#222222" },
-    "fonts": { "display": "geist-serif", "title": "geist-serif", "body": "geist-sans", "mono": "geist-mono", "label": "geist-mono" },
+    "colors": { "bg": "#090b12", "fg": "#eceef5", "muted": "#a0a7bc", "accent": "#6e90ff", "on_accent": "#090b12", "line": "#242a3c" },
+    "fonts": { "display": "geist-sans", "title": "geist-sans", "body": "geist-sans", "mono": "geist-mono", "label": "geist-mono" },
     "sizes": { "display": 64, "title": 30, "body": 16, "mono": 14, "label": 11 },
     "spacing": { "xs": 4, "s": 8, "m": 16, "l": 28, "xl": 56 },
-    "radius": 2
+    "radius": 14
   },
   "assets": { "logo": "assets/logo.png" },
   "actions": {
