@@ -82,8 +82,9 @@ pub struct Imported {
 /// Chromium browsers this Mac has, with their profiles.
 pub fn sources() -> Vec<Source> {
     let Some(base) = dirs::data_dir() else { return Vec::new() };
-    let known: [(&str, &str, &str, &str); 6] = [
+    let known: [(&str, &str, &str, &str); 7] = [
         ("Chrome", "Google/Chrome", "Chrome Safe Storage", "Chrome"),
+        ("Dia", "Dia/User Data", "Dia Safe Storage", "Dia"),
         ("Brave", "BraveSoftware/Brave-Browser", "Brave Safe Storage", "Brave"),
         ("Edge", "Microsoft Edge", "Microsoft Edge Safe Storage", "Microsoft Edge"),
         ("Arc", "Arc/User Data", "Arc Safe Storage", "Arc"),
@@ -101,7 +102,7 @@ pub fn sources() -> Vec<Source> {
 /// (Privacy & Security protects other apps' data).
 pub fn blocked() -> Vec<&'static str> {
     let Some(base) = dirs::data_dir() else { return Vec::new() };
-    [("Chrome", "Google/Chrome"), ("Brave", "BraveSoftware/Brave-Browser"), ("Edge", "Microsoft Edge"), ("Arc", "Arc/User Data"), ("Vivaldi", "Vivaldi"), ("Chromium", "Chromium")]
+    [("Chrome", "Google/Chrome"), ("Dia", "Dia/User Data"), ("Brave", "BraveSoftware/Brave-Browser"), ("Edge", "Microsoft Edge"), ("Arc", "Arc/User Data"), ("Vivaldi", "Vivaldi"), ("Chromium", "Chromium")]
         .into_iter()
         .filter(|(_, rel)| matches!(std::fs::read_dir(base.join(rel)), Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied))
         .map(|(n, _)| n)

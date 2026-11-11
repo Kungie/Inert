@@ -20,7 +20,7 @@ pub enum Event {
     WebTitle { tab: u64, title: String },
     OpenTab { url: String, background: bool },
     Navigate { tab: u64, url: String },
-    Download { url: String, path: std::path::PathBuf },
+    Download { tab: u64, url: String, path: std::path::PathBuf },
     PageText { tab: u64, text: String },
     Remote(String, Vec<String>),
     AiReply(Result<String, String>),
@@ -42,10 +42,19 @@ pub enum Event {
     Clipped { rect: egui::Rect, image: std::sync::Arc<egui::ColorImage> },
     /// The text selected on a page (asked for by "Attach to assistant").
     Selection { tab: u64, text: String },
+    /// Touch ID answered.
+    Unlocked { what: Unlock, ok: bool },
     /// Push-to-talk: what the dictation helper heard.
     Dictate(crate::dictate::Heard),
     /// A Servo page asked for its context menu.
     ServoMenu { tab: u64, actions: Vec<String>, link: Option<String>, image: Option<String>, selection: bool, editable: bool },
+}
+
+/// What Touch ID was asked to open.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Unlock {
+    SecretFavorites,
+    PrivateTabs,
 }
 
 /// The context menu of a web page, drawn by the browser.
@@ -114,8 +123,19 @@ pub enum Kind {
     Web(WebTab),
 }
 
+/// A file downloaded this session.
+pub struct Download {
+    pub url: String,
+    pub path: std::path::PathBuf,
+    /// The private tab it came from; such files vanish with the tab unless kept.
+    pub private_tab: Option<u64>,
+    pub keep: bool,
+}
+
 pub struct Tab {
     pub id: u64,
+    /// A private tab: sealed data store, no history, erased when closed.
+    pub private: bool,
     pub kind: Kind,
     pub group: Option<u64>,
     pub pinned: bool,
@@ -267,7 +287,16 @@ pub struct Browser {
     pub signin: Signin,
     pub popover: Popover,
     pub popover_opened: Option<Instant>,
-    pub downloads: Vec<(String, std::path::PathBuf, Instant)>,
+    pub downloads: Vec<Download>,
+    /// The clipboard's change counter when the first private tab opened.
+    pub private_clip: Option<isize>,
+    /// Private tabs are covered until Touch ID unlocks them.
+    pub private_locked: bool,
+    /// Secret favorites, while unlocked (and until when).
+    pub secrets: Option<(Vec<crate::profile::Bookmark>, Instant)>,
+    /// When the user last did anything (private tabs erase themselves when idle).
+    pub last_input: Instant,
+    capture_hidden: bool,
     pub toast: Option<(String, Instant)>,
     pub find: Option<String>,
     pub inspector: bool,
@@ -371,6 +400,11 @@ impl Browser {
             servo_error: None,
             servo_restarts: 0,
             last_relief: Instant::now(),
+            private_clip: None,
+            private_locked: false,
+            secrets: None,
+            last_input: Instant::now(),
+            capture_hidden: false,
             closing: Vec::new(),
             cookie: Default::default(),
             pending_servo_cookies: Vec::new(),
@@ -402,7 +436,7 @@ impl Browser {
         for s in &session {
             let id = b.profile.new_id();
             let kind = b.make_kind(id, &s.url, Some(&s.title));
-            b.tabs.push(Tab { id, kind, group: s.group, pinned: s.pinned, back: Vec::new(), fwd: Vec::new() });
+            b.tabs.push(Tab { id, private: false, kind, group: s.group, pinned: s.pinned, back: Vec::new(), fwd: Vec::new() });
         }
         if b.tabs.is_empty() {
             b.add_tab("about:newtab", None, true, None);
@@ -483,7 +517,12 @@ impl Browser {
     pub fn add_tab(&mut self, url: &str, group: Option<u64>, activate: bool, title: Option<&str>) -> u64 {
         let id = self.profile.new_id();
         let kind = self.make_kind(id, url, title);
-        let tab = Tab { id, kind, group, pinned: false, back: Vec::new(), fwd: Vec::new() };
+        // Sites on the always-private list never open in a normal tab.
+        let private = self.wants_private(url);
+        if private {
+            self.note_private_opened();
+        }
+        let tab = Tab { id, private, kind, group, pinned: false, back: Vec::new(), fwd: Vec::new() };
         // Insert next to the active tab (Chrome-like), or at the end.
         let pos = self.tabs.iter().position(|t| t.id == self.active).map(|i| i + 1).unwrap_or(self.tabs.len());
         if activate || self.tabs.is_empty() {
@@ -525,7 +564,11 @@ impl Browser {
             self.closing.push(crate::chrome::Ghost { after, h: w, start: self.ctx.input(|x| x.time), title });
         }
         let t = self.tabs.remove(i);
-        self.closed.push(SavedTab { url: t.url(), title: t.title(), group: t.group, pinned: t.pinned });
+        if t.private {
+            self.wipe_private(t.id);
+        } else {
+            self.closed.push(SavedTab { url: t.url(), title: t.title(), group: t.group, pinned: t.pinned });
+        }
         if self.tabs.is_empty() {
             self.add_tab("about:newtab", None, true, None);
         } else if self.active == id {
@@ -568,6 +611,10 @@ impl Browser {
     /// Navigates the active tab (or `id`) to `url`.
     pub fn navigate(&mut self, id: u64, url: &str) {
         let url = crate::profile::dark_web(url.trim());
+        if self.wants_private(&url) && !self.tab(id).is_some_and(|t| t.private) {
+            self.add_tab(&url, None, true, None);
+            return;
+        }
         // Same kind web→web: reuse the web view.
         let old = self.tab(id).map(|t| t.url()).unwrap_or_default();
         if let Some(t) = self.tab_mut(id) {
@@ -761,12 +808,16 @@ impl Browser {
                             }
                         }
                     }
+                    let private = self.tab(tab).is_some_and(|t| t.private);
                     if !started {
-                        self.profile.record_visit(&url, &title);
-                        self.dirty = true;
                         self.after_web_load(tab, &url);
-                        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
-                        self.favicons.want(&url, &tx, &ctx);
+                        // A private tab leaves no history and asks no one for an icon.
+                        if !private {
+                            self.profile.record_visit(&url, &title);
+                            self.dirty = true;
+                            let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+                            self.favicons.want(&url, &tx, &ctx);
+                        }
                     }
                     if tab == self.active && !self.omni.editing {
                         self.omni.text = url;
@@ -786,9 +837,10 @@ impl Browser {
                     self.add_tab(&url, g, !background, None);
                 }
                 Event::Navigate { tab, url } => self.navigate(tab, &url),
-                Event::Download { url, path } => {
-                    self.toast(format!("Downloading to {}", path.display()));
-                    self.downloads.push((url, path, Instant::now()));
+                Event::Download { tab, url, path } => {
+                    let private_tab = self.tab(tab).filter(|t| t.private).map(|t| t.id);
+                    self.toast(if private_tab.is_some() { format!("Downloading to {} — it is deleted with the private tab unless you keep it (Downloads)", path.display()) } else { format!("Downloading to {}", path.display()) });
+                    self.downloads.push(Download { url, path, private_tab, keep: false });
                 }
                 Event::PageText { tab, text } => {
                     if tab == self.active {
@@ -816,6 +868,11 @@ impl Browser {
                 }
                 Event::Clipped { rect, image } => self.on_clipped(rect, &image),
                 Event::Dictate(h) => self.on_heard(h),
+                Event::Unlocked { what, ok } => match (what, ok) {
+                    (Unlock::PrivateTabs, true) => self.private_locked = false,
+                    (Unlock::SecretFavorites, true) => self.secrets = Some((crate::passwords::secrets_load(self.demo), Instant::now())),
+                    (_, false) => self.toast("Touch ID didn't confirm it was you"),
+                },
                 Event::Selection { tab, text } => {
                     let text = text.trim().to_owned();
                     if text.is_empty() {
@@ -1073,6 +1130,145 @@ impl Browser {
         }
     }
 
+    /// Asks for Touch ID; `Event::Unlocked` carries the answer.
+    pub fn ask_touch_id(&mut self, what: Unlock, reason: &str) {
+        if self.demo {
+            // The demo profile has nothing to protect and no one to ask.
+            let _ = self.tx.send(Event::Unlocked { what, ok: true });
+            return;
+        }
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        #[cfg(target_os = "macos")]
+        web::mac::touch_id(reason, move |ok| {
+            let _ = tx.send(Event::Unlocked { what, ok });
+            ctx.request_repaint();
+        });
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (reason, tx.send(Event::Unlocked { what, ok: false }), ctx);
+        }
+    }
+
+    /// Adds the active page to the secret favorites (no unlock needed to add).
+    pub fn add_secret_favorite(&mut self) {
+        let (url, title) = self.active_tab().map(|t| (t.url(), t.title())).unwrap_or_default();
+        if !url.starts_with("http") && !url.starts_with("inert://") {
+            self.toast("Open a page first");
+            return;
+        }
+        let mut list = crate::passwords::secrets_load(self.demo);
+        if !list.iter().any(|b| b.url == url) {
+            list.push(crate::profile::Bookmark { title, url });
+        }
+        match crate::passwords::secrets_save(&list, self.demo) {
+            Ok(()) => {
+                if let Some((open, _)) = &mut self.secrets {
+                    *open = list;
+                }
+                self.toast("Added to secret favorites (Bookmarks → Secret favorites)");
+            }
+            Err(e) => self.toast(format!("Keychain error: {e}")),
+        }
+    }
+
+    /// Whether a URL's site is on the always-private list.
+    pub fn wants_private(&self, url: &str) -> bool {
+        if self.profile.settings.private_sites.is_empty() || !url.starts_with("http") {
+            return false;
+        }
+        let site = crate::cookies::site_of(&crate::cookies::host_of(url));
+        self.profile.settings.private_sites.contains(&site)
+    }
+
+    /// A private tab is about to exist: remember where the clipboard stood.
+    fn note_private_opened(&mut self) {
+        #[cfg(target_os = "macos")]
+        if self.private_clip.is_none() {
+            self.private_clip = Some(web::mac::pasteboard_count());
+        }
+        self.last_input = Instant::now();
+    }
+
+    /// Opens a private tab: a WebKit view with its own data store that is
+    /// never written to disk and shared with no other tab.
+    pub fn add_private_tab(&mut self, url: &str) -> u64 {
+        self.note_private_opened();
+        let id = self.add_tab(url, None, true, None);
+        if let Some(t) = self.tab_mut(id) {
+            t.private = true;
+        }
+        id
+    }
+
+    /// A private tab closed: its downloads vanish unless kept, and when it
+    /// was the last one, whatever was copied meanwhile is cleared.
+    fn wipe_private(&mut self, id: u64) {
+        self.downloads.retain(|d| {
+            if d.private_tab == Some(id) && !d.keep {
+                let _ = std::fs::remove_file(&d.path);
+                false
+            } else {
+                true
+            }
+        });
+        if !self.tabs.iter().any(|t| t.private) {
+            #[cfg(target_os = "macos")]
+            if let Some(before) = self.private_clip.take() {
+                if web::mac::pasteboard_count() != before {
+                    web::mac::pasteboard_clear();
+                }
+            }
+            self.private_locked = false;
+        }
+    }
+
+    /// Closes every private tab at once. Returns how many there were.
+    pub fn close_private_tabs(&mut self) -> usize {
+        let ids: Vec<u64> = self.tabs.iter().filter(|t| t.private).map(|t| t.id).collect();
+        for id in &ids {
+            self.close_tab(*id);
+        }
+        // Private tabs fold away without a ghost.
+        self.closing.clear();
+        ids.len()
+    }
+
+    /// The panic key: every private tab is gone and Inert steps aside.
+    pub fn panic(&mut self) {
+        self.close_private_tabs();
+        self.popover = Popover::None;
+        self.ai.open = false;
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+    }
+
+    /// Per-frame upkeep for private tabs: erase when idle, hide from capture.
+    fn private_upkeep(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        if ctx.input(|i| !i.events.is_empty() || i.pointer.is_moving()) {
+            self.last_input = Instant::now();
+        }
+        let any = self.tabs.iter().any(|t| t.private);
+        let idle = self.profile.settings.private_idle_min;
+        if any && idle > 0 {
+            if self.last_input.elapsed() > Duration::from_secs(idle as u64 * 60) {
+                let n = self.close_private_tabs();
+                self.toast(format!("{n} private tab{} erased after {idle} idle minutes", if n == 1 { "" } else { "s" }));
+            } else {
+                ctx.request_repaint_after(Duration::from_secs(20));
+            }
+        }
+        // Lock private tabs when Inert goes to the background.
+        if any && self.profile.settings.private_lock && !ctx.input(|i| i.focused) {
+            self.private_locked = true;
+        }
+        let hide = self.profile.settings.private_no_capture && self.active_tab().is_some_and(|t| t.private);
+        if hide != self.capture_hidden {
+            self.capture_hidden = hide;
+            #[cfg(target_os = "macos")]
+            web::mac::set_capture_hidden(frame, hide);
+        }
+        let _ = frame;
+    }
+
     /// Option+Space went down: start listening (once; key repeat is ignored).
     pub fn dictate_start(&mut self) {
         if self.dictation.is_some() {
@@ -1212,7 +1408,7 @@ impl Browser {
         let order = self.visible_order();
         let mut session = Vec::new();
         for id in &order {
-            if let Some(t) = self.tab(*id) {
+            if let Some(t) = self.tab(*id).filter(|t| !t.private) {
                 session.push(SavedTab { url: t.url(), title: t.title(), group: t.group, pinned: t.pinned });
             }
         }
@@ -1267,10 +1463,14 @@ impl Browser {
         let mut err = None;
         let groups = self.profile.groups.clone();
         let (default_engine, inbox_webkit) = (self.profile.settings.web_engine, self.profile.settings.inbox_webkit);
+        let (hide_location, calm) = (self.profile.settings.hide_location, self.profile.settings.calm);
         // Pick an engine for the active web tab, starting Servo on first use.
         let mut need_servo = false;
         for t in &mut self.tabs {
             let Kind::Web(w) = &mut t.kind else { continue };
+            if t.private {
+                w.engine = Some(crate::profile::Engine::WebKit);
+            }
             if w.engine.is_none() {
                 let inbox = t.group.and_then(|g| groups.iter().find(|x| x.id == g)).is_some_and(|g| g.kind == crate::profile::GroupKind::Inbox);
                 w.engine = Some(if inbox && inbox_webkit { crate::profile::Engine::WebKit } else { default_engine });
@@ -1337,7 +1537,8 @@ impl Browser {
             if t.id == active {
                 w.last_active = Instant::now();
                 if w.view.is_none() {
-                    match web::create(frame, t.id, &w.url, content, &tx, &ctx) {
+                    let opts = web::Opts { private: t.private, hide_location, calm };
+                    match web::create(frame, t.id, &w.url, content, &tx, &ctx, opts) {
                         Ok(v) => {
                             #[cfg(target_os = "macos")]
                             web::mac::round(&v, crate::chrome::CARD_R as f64);
@@ -1429,9 +1630,11 @@ impl eframe::App for Browser {
             return;
         }
 
+        self.private_upkeep(&ctx, frame);
         self.chrome(ui);
         let content = self.content_rect;
-        let overlay = self.popover != Popover::None || (!self.omni.sugg.is_empty() && self.omni.editing) || egui::Popup::is_any_open(&ctx) || self.rename.is_some() || self.confirming() || self.page_menu.is_some();
+        let locked = self.private_locked && self.active_tab().is_some_and(|t| t.private);
+        let overlay = locked || self.popover != Popover::None || (!self.omni.sugg.is_empty() && self.omni.editing) || egui::Popup::is_any_open(&ctx) || self.rename.is_some() || self.confirming() || self.page_menu.is_some();
         self.sync_webviews(frame, content, overlay);
         self.memory_saver();
         self.after_frame(&ctx, frame);

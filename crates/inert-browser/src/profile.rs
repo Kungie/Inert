@@ -85,6 +85,10 @@ fn yes() -> bool {
     true
 }
 
+fn fifteen() -> u32 {
+    15
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
     pub provider: Option<Provider>,
@@ -125,6 +129,30 @@ pub struct Settings {
     /// Sites (eTLD+1) where the Shield is turned off.
     #[serde(default)]
     pub adblock_off: Vec<String>,
+    /// "Hide my location": sites always get "denied" for geolocation.
+    #[serde(default = "yes")]
+    pub hide_location: bool,
+    /// Calm mode: hide Shorts, feeds and recommendations.
+    #[serde(default)]
+    pub calm: bool,
+    /// Private tabs are erased after this many idle minutes (0 = never).
+    #[serde(default = "fifteen")]
+    pub private_idle_min: u32,
+    /// Sites (eTLD+1) that always open in a private tab.
+    #[serde(default)]
+    pub private_sites: Vec<String>,
+    /// Hide the window from screenshots and screen sharing while a private tab shows.
+    #[serde(default = "yes")]
+    pub private_no_capture: bool,
+    /// Lock private tabs behind Touch ID when Inert goes to the background.
+    #[serde(default)]
+    pub private_lock: bool,
+    /// Rewind: remember the text of visited pages (on this Mac only).
+    #[serde(default = "yes")]
+    pub rewind: bool,
+    /// Instant answers in the address bar (calculator, quick facts).
+    #[serde(default = "yes")]
+    pub instant: bool,
     /// Set once the profile has taken the WebKit default (profiles made
     /// while Servo was the default are switched over once; after that the
     /// choice in Settings stands).
@@ -155,6 +183,14 @@ impl Default for Settings {
             accent: 0,
             tabs_top: false,
             ai_mode: 0,
+            hide_location: true,
+            calm: false,
+            private_idle_min: 15,
+            private_sites: Vec::new(),
+            private_no_capture: true,
+            private_lock: false,
+            rewind: true,
+            instant: true,
             engine_v2: true,
             adblock_off: Vec::new(),
             import_nudge_off: false,

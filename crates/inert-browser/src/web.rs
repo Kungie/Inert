@@ -72,8 +72,25 @@ pub fn downloads_dir() -> std::path::PathBuf {
     dirs::download_dir().unwrap_or_else(std::env::temp_dir)
 }
 
+/// How a tab's web view is set up.
+#[derive(Clone, Copy, Default)]
+pub struct Opts {
+    /// A private tab: its own data store that is never written to disk and
+    /// is shared with no other tab.
+    pub private: bool,
+    pub hide_location: bool,
+    pub calm: bool,
+}
+
 /// Creates the web view for a tab as a child of the browser window.
-pub fn create(frame: &eframe::Frame, tab: u64, url: &str, rect: egui::Rect, tx: &Sender<Event>, ctx: &egui::Context) -> Result<wry::WebView, String> {
+pub fn create(frame: &eframe::Frame, tab: u64, url: &str, rect: egui::Rect, tx: &Sender<Event>, ctx: &egui::Context, opts: Opts) -> Result<wry::WebView, String> {
+    let mut script = String::from(crate::page_js::BASE);
+    if opts.hide_location {
+        script.push_str(crate::page_js::HIDE_LOCATION);
+    }
+    if opts.calm {
+        script.push_str(crate::page_js::CALM);
+    }
     let (t1, t2, t3, t4, t5) = (tx.clone(), tx.clone(), tx.clone(), tx.clone(), tx.clone());
     let (c1, c2, c3, c4, c5) = (ctx.clone(), ctx.clone(), ctx.clone(), ctx.clone(), ctx.clone());
     wry::WebViewBuilder::new()
@@ -110,10 +127,14 @@ pub fn create(frame: &eframe::Frame, tab: u64, url: &str, rect: egui::Rect, tx: 
             let name = url.rsplit('/').next().filter(|n| !n.is_empty() && !n.contains('?')).unwrap_or("download").to_owned();
             let dest = downloads_dir().join(&name);
             *path = dest.clone();
-            let _ = t5.send(Event::Download { url, path: dest });
+            let _ = t5.send(Event::Download { tab, url, path: dest });
             c5.request_repaint();
             true
         })
+        .with_incognito(opts.private)
+        .with_initialization_script(script)
+        // Camera and microphone: WebKit asks, every time. Nothing is granted silently.
+        .with_permission_handler(|_| wry::PermissionResponse::Default)
         .build_as_child(frame)
         .map_err(|e| e.to_string())
 }
@@ -219,6 +240,64 @@ pub mod mac {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    #[link(name = "LocalAuthentication", kind = "framework")]
+    unsafe extern "C" {}
+
+    /// Asks for Touch ID (or the Mac's password where there is no sensor).
+    /// `done` runs with the result, on some other thread.
+    pub fn touch_id(reason: &str, done: impl Fn(bool) + Send + 'static) {
+        let Some(cls) = objc2::runtime::AnyClass::get(c"LAContext") else {
+            done(false);
+            return;
+        };
+        let reason = objc2_foundation::NSString::from_str(reason);
+        let reply = block2::RcBlock::new(move |ok: objc2::runtime::Bool, _err: *mut AnyObject| done(ok.as_bool()));
+        unsafe {
+            let ctx: *mut AnyObject = msg_send![cls, new];
+            if ctx.is_null() {
+                return;
+            }
+            // LAPolicyDeviceOwnerAuthentication = 2: Touch ID, Apple Watch or password.
+            let _: () = msg_send![ctx, evaluatePolicy: 2isize, localizedReason: &*reason, reply: &*reply];
+            let _: () = msg_send![ctx, release];
+        }
+    }
+
+    /// The clipboard's change counter (it moves whenever something is copied).
+    pub fn pasteboard_count() -> isize {
+        let Some(cls) = objc2::runtime::AnyClass::get(c"NSPasteboard") else { return 0 };
+        unsafe {
+            let pb: *mut AnyObject = msg_send![cls, generalPasteboard];
+            if pb.is_null() { 0 } else { msg_send![pb, changeCount] }
+        }
+    }
+
+    /// Empties the clipboard.
+    pub fn pasteboard_clear() {
+        let Some(cls) = objc2::runtime::AnyClass::get(c"NSPasteboard") else { return };
+        unsafe {
+            let pb: *mut AnyObject = msg_send![cls, generalPasteboard];
+            if !pb.is_null() {
+                let _: isize = msg_send![pb, clearContents];
+            }
+        }
+    }
+
+    /// Hides the window from screenshots and screen sharing, or shows it again.
+    pub fn set_capture_hidden(frame: &eframe::Frame, hidden: bool) {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let Ok(handle) = frame.window_handle() else { return };
+        let RawWindowHandle::AppKit(h) = handle.as_raw() else { return };
+        let view = h.ns_view.as_ptr() as *mut AnyObject;
+        unsafe {
+            let window: *mut AnyObject = msg_send![view, window];
+            if !window.is_null() {
+                // NSWindowSharingNone = 0, NSWindowSharingReadOnly = 1
+                let _: () = msg_send![window, setSharingType: if hidden { 0usize } else { 1usize }];
             }
         }
     }

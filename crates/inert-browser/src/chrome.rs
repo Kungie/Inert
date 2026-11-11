@@ -144,7 +144,9 @@ impl Browser {
         let top = self.profile.settings.tabs_top;
         let side_t = if top { 0.0 } else { ease(ctx.animate_bool_with_time(Id::unique("side-open"), self.profile.settings.sidebar, 0.28)) };
         let side_w = (SIDE_W * side_t).round();
-        let marks = if self.profile.settings.bookmarks_bar { MARKS_H } else { 0.0 } + if top { STRIP_H } else { 0.0 };
+        // An empty bookmarks bar takes no room.
+        let show_marks = self.profile.settings.bookmarks_bar && !self.profile.bookmarks.is_empty();
+        let marks = if show_marks { MARKS_H } else { 0.0 } + if top { STRIP_H } else { 0.0 };
 
         // The frame is one blue card. Its glyph map shows on the sidebar and
         // the bars; the page card covers the rest.
@@ -162,7 +164,7 @@ impl Browser {
             egui::Panel::top("strip").show_separator_line(false).exact_size(STRIP_H).frame(egui::Frame::NONE).show(ui, |ui| self.top_strip(ui));
         }
         egui::Panel::top("toolbar").show_separator_line(false).exact_size(TOP_H).frame(egui::Frame::NONE).show(ui, |ui| self.toolbar(ui, side_t, top));
-        if self.profile.settings.bookmarks_bar {
+        if show_marks {
             let left = (4.0 + (GAP + 4.0) * (1.0 - side_t)) as i8;
             egui::Panel::top("marks").show_separator_line(false).exact_size(MARKS_H).frame(egui::Frame::new().inner_margin(egui::Margin { left, right: 14, top: 0, bottom: 6 })).show(ui, |ui| self.bookmarks_bar(ui));
         }
@@ -507,6 +509,8 @@ impl Browser {
         // A nameless group is just its icon (a folder, if it has none of its own).
         let icon = group_icon(g.kind).or(g.name.is_empty().then_some(Icon::Folder));
         let galley = ui.painter().layout_no_wrap(g.name.clone(), FontId::new(11.5, sans_medium()), BG);
+        let tabs_in = count;
+        let count = if g.name.is_empty() { 0 } else { count };
         let w = 20.0 + if icon.is_some() { 12.0 } else { 0.0 } + if icon.is_some() && !g.name.is_empty() { 5.0 } else { 0.0 } + galley.size().x + if count > 0 { 18.0 } else { 0.0 };
         let (rect, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
         let resp = ui.interact(rect, Id::unique(("group-row", g.id)), Sense::click());
@@ -527,7 +531,7 @@ impl Browser {
         let gid = g.id;
         let resp = resp.on_hover_text(if g.collapsed { "Expand group" } else { "Collapse group" });
         if resp.clicked() {
-            if count == 0 {
+            if tabs_in == 0 {
                 self.open_popover(Popover::GroupAdd(gid), resp.rect);
             } else if let Some(gd) = self.profile.groups.iter_mut().find(|x| x.id == gid) {
                 gd.collapsed = !gd.collapsed;
@@ -545,11 +549,13 @@ impl Browser {
         let active = id == self.active;
         let title = t.title();
         let loading = t.loading();
-        let (icon, icon_c) = tab_icon(&t.kind);
+        let private = t.private;
+        let (icon, icon_c) = if private { (Icon::Mask, PRIVATE) } else { tab_icon(&t.kind) };
         let fav = match &t.kind {
             Kind::Web(w) => Some(w.url.clone()),
             _ => None,
         }
+        .filter(|_| !private)
         .and_then(|u| self.favicons.get(&ctx, &u));
         let t0 = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(Id::unique(("tab-born", id)), || if animate_new { now } else { now - 10.0 }));
         let grow = ease(((now - t0) / 0.22) as f32);
@@ -665,7 +671,7 @@ impl Browser {
         let a = open * std::f32::consts::FRAC_PI_2;
         let rot = |v: Vec2| vec2(v.x * a.cos() - v.y * a.sin(), v.x * a.sin() + v.y * a.cos());
         p.add(egui::Shape::line(vec![c + rot(vec2(-1.5, -3.5)), c + rot(vec2(2.0, 0.0)), c + rot(vec2(-1.5, 3.5))], Stroke::new(1.4, glass(0.7))));
-        if count > 0 {
+        if count > 0 && !g.name.is_empty() {
             p.text(pos2(body.right() - 28.0, body.center().y), egui::Align2::RIGHT_CENTER, count.to_string(), FontId::new(10.5, mono()), glass(0.7));
         }
         let gid = g.id;
@@ -742,11 +748,13 @@ impl Browser {
         let active = id == self.active;
         let title = t.title();
         let loading = t.loading();
-        let (icon, icon_c) = tab_icon(&t.kind);
+        let private = t.private;
+        let (icon, icon_c) = if private { (Icon::Mask, PRIVATE) } else { tab_icon(&t.kind) };
         let fav = match &t.kind {
             Kind::Web(w) => Some(w.url.clone()),
             _ => None,
         }
+        .filter(|_| !private)
         .and_then(|u| self.favicons.get(&ctx, &u));
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         let resp = ui.interact(rect, Id::unique(("tab-row", id)), Sense::click());
@@ -787,11 +795,13 @@ impl Browser {
         let active = id == self.active;
         let title = t.title();
         let loading = t.loading();
-        let (icon, icon_c) = tab_icon(&t.kind);
+        let private = t.private;
+        let (icon, icon_c) = if private { (Icon::Mask, PRIVATE) } else { tab_icon(&t.kind) };
         let fav = match &t.kind {
             Kind::Web(w) => Some(w.url.clone()),
             _ => None,
         }
+        .filter(|_| !private)
         .and_then(|u| self.favicons.get(&ctx, &u));
         let t0 = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(Id::unique(("tab-born", id)), || if animate_new { now } else { now - 10.0 }));
         let grow = ease(((now - t0) / 0.22) as f32);
@@ -1044,26 +1054,35 @@ impl Browser {
         // describing the current page (like Chrome's search icon).
         let current = crate::app::display_url(&self.active_tab().map(|t| t.url()).unwrap_or_default());
         let typing_other = self.omni.editing && !self.omni.text.is_empty() && self.omni.text != current;
-        let (label, color, icon) = if typing_other { ("SEARCH", glass(0.75), Icon::Search) } else { match self.security() {
-            Security::Secured { dev: true } => ("SECURED · DEV", SECURE, Icon::Lock),
-            Security::Secured { dev: false } => ("SECURED", SECURE, Icon::Lock),
-            Security::Connecting => ("VERIFYING", glass(0.75), Icon::Lock),
-            Security::Failed => ("BLOCKED", DANGER, Icon::Unlock),
-            Security::Unsecured("Servo") => ("UNSECURED · SERVO", WARN, Icon::Unlock),
-            Security::Unsecured(_) => ("UNSECURED · WEBKIT", WARN, Icon::Unlock),
-            Security::Unencrypted("Servo") => ("NOT ENCRYPTED · SERVO", DANGER, Icon::Unlock),
-            Security::Unencrypted(_) => ("NOT ENCRYPTED · WEBKIT", DANGER, Icon::Unlock),
-            Security::Internal => ("INERT", glass(0.75), Icon::Spark),
+        // A lock and nothing else. Its color says how far the page can be
+        // trusted; a click opens the details.
+        //   green  — inert://, verified against its pinned key
+        //   yellow — inert:// on a local dev key, or still verifying
+        //   orange — an ordinary HTTPS page: encrypted, but it runs the site's code
+        //   red, open — not encrypted, or verification failed
+        let private = self.active_tab().is_some_and(|t| t.private);
+        let (label, color, icon) = if typing_other { ("Search", glass(0.75), Icon::Search) } else { match self.security() {
+            Security::Secured { dev: false } => ("Secured: verified inert:// site", OK, Icon::Lock),
+            Security::Secured { dev: true } => ("Secured with a local dev key", LOCK_YELLOW, Icon::Lock),
+            Security::Connecting => ("Verifying…", LOCK_YELLOW, Icon::Lock),
+            Security::Failed => ("Blocked: verification failed", LOCK_RED, Icon::Unlock),
+            Security::Unsecured(_) => ("Unsecured: an ordinary web page", LOCK_ORANGE, Icon::Lock),
+            Security::Unencrypted(_) => ("Not encrypted", LOCK_RED, Icon::Unlock),
+            Security::Internal => ("Inert page", glass(0.75), Icon::Spark),
         } };
-        let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::new(10.0, mono()), color);
-        let bw = galley.size().x + 32.0;
+        let bw = if private { 52.0 } else { 28.0 };
         let badge = Rect::from_min_size(rect.min + vec2(5.0, 5.0), vec2(bw, rect.height() - 10.0));
-        let bresp = ui.interact(badge, Id::unique("sec-badge"), Sense::click()).on_hover_text("Site security");
+        let bresp = ui.interact(badge, Id::unique("sec-badge"), Sense::click()).on_hover_text(if private { format!("{label} · private tab") } else { label.to_owned() });
         crate::drive::reg("badge", badge);
         let bh = ctx.animate_bool_with_time(Id::unique("badge-hover"), bresp.hovered(), 0.12);
-        ui.painter().rect_filled(badge, badge.height() / 2.0, color.gamma_multiply(0.12 + 0.10 * bh));
-        icons::paint(ui.painter(), Rect::from_center_size(pos2(badge.left() + 14.0, badge.center().y), Vec2::splat(12.0)), icon, color);
-        ui.painter().galley(pos2(badge.left() + 24.0, badge.center().y - galley.size().y / 2.0), galley, color);
+        ui.painter().rect_filled(badge, badge.height() / 2.0, color.gamma_multiply(0.14 + 0.12 * bh));
+        let lock_c = pos2(badge.left() + 14.0, badge.center().y);
+        // Drawn twice, a hair apart: a bolder lock.
+        icons::paint(ui.painter(), Rect::from_center_size(lock_c, Vec2::splat(13.0)), icon, color);
+        icons::paint(ui.painter(), Rect::from_center_size(lock_c + vec2(0.35, 0.0), Vec2::splat(13.0)), icon, color);
+        if private {
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(badge.left() + 37.0, badge.center().y), Vec2::splat(14.0)), Icon::Mask, PRIVATE);
+        }
         if bresp.clicked() {
             self.open_popover(Popover::Security, bresp.rect);
         }
@@ -1526,6 +1545,21 @@ impl Browser {
     }
 
     fn engine_switch(&mut self, ui: &mut Ui) {
+        // Always open this site in a private tab.
+        if let Some(site) = self.site_here() {
+            ui.add_space(8.0);
+            let mut on = self.profile.settings.private_sites.contains(&site);
+            let r = ui.checkbox(&mut on, format!("Always open {site} in a private tab"));
+            crate::drive::reg("private:site", r.rect);
+            if r.changed() {
+                if on {
+                    self.profile.settings.private_sites.push(site);
+                } else {
+                    self.profile.settings.private_sites.retain(|s| *s != site);
+                }
+                self.dirty = true;
+            }
+        }
         let id = self.active;
         let Some(Kind::Web(w)) = self.tab(id).map(|t| &t.kind) else { return };
         let cur = w.engine.unwrap_or(self.profile.settings.web_engine);
@@ -1918,6 +1952,10 @@ impl Browser {
             ui.painter().text(pos2(rect.right() - 8.0, rect.center().y), egui::Align2::RIGHT_CENTER, key, FontId::new(11.0, mono()), DIM);
             resp.clicked()
         };
+        if item(ui, Icon::Mask, "New private tab", "Shift+Cmd+N") {
+            self.add_private_tab("about:newtab");
+            self.popover = Popover::None;
+        }
         if item(ui, Icon::Tab, "New tab", "Cmd+T") {
             self.add_tab("about:newtab", None, true, None);
             self.popover = Popover::None;
@@ -1950,6 +1988,10 @@ impl Browser {
         if item(ui, Icon::Search, "Find in page", "Cmd+F") {
             self.find = Some(String::new());
             self.popover = Popover::None;
+        }
+        if item(ui, Icon::Lock, "Add to secret favorites", "") {
+            self.popover = Popover::None;
+            self.add_secret_favorite();
         }
         if item(ui, Icon::Clip, "Clip for the assistant", "") {
             self.popover = Popover::None;
@@ -2481,6 +2523,26 @@ impl Browser {
                 d.insert_temp(Id::unique("shown-at"), now);
             });
         }
+        // Locked private tabs show nothing until Touch ID says so.
+        if self.private_locked && self.tab(id).is_some_and(|t| t.private) {
+            let r = ui.max_rect();
+            ui.painter().rect_filled(r, 0.0, BG);
+            let mut col = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_center_size(r.center(), vec2(420.0, 260.0))).layout(Layout::top_down(Align::Center)));
+            let (ir, _) = col.allocate_exact_size(Vec2::splat(56.0), Sense::hover());
+            col.painter().circle_filled(ir.center(), 28.0, RAISED);
+            icons::paint(col.painter(), ir.shrink(16.0), Icon::Mask, PRIVATE);
+            col.add_space(14.0);
+            col.label(theme::title("Private tabs are locked.", 26.0));
+            col.add_space(6.0);
+            col.label(theme::muted("They were covered when Inert went to the background."));
+            col.add_space(16.0);
+            let b = col.add(theme::cta("Unlock with Touch ID", accent(), WHITE, 42.0).min_size(vec2(220.0, 42.0)));
+            crate::drive::reg("private:unlock", b.rect);
+            if b.clicked() {
+                self.ask_touch_id(crate::app::Unlock::PrivateTabs, "unlock your private tabs");
+            }
+            return;
+        }
         let k = ease(((now - ctx.data(|d| d.get_temp::<f64>(Id::unique("shown-at"))).unwrap_or(0.0)) / 0.22) as f32);
         if k < 1.0 {
             ui.multiply_opacity(0.25 + 0.75 * k);
@@ -2590,6 +2652,8 @@ impl Browser {
                 (alt, Key::ArrowRight, "next-tab"),
                 (alt, Key::ArrowLeft, "prev-tab"),
                 (cmd, Key::S, "sidebar"),
+                (shift, Key::N, "private-tab"),
+                (Modifiers::COMMAND | Modifiers::ALT | Modifiers::CTRL, Key::H, "panic"),
                 (cmd, Key::T, "new-tab"),
                 (cmd, Key::W, "close-tab"),
                 (cmd, Key::L, "focus-omnibox"),
@@ -2801,6 +2865,16 @@ impl Browser {
             "new-tab" => {
                 self.add_tab("about:newtab", None, true, None);
                 self.omni.focus = true;
+            }
+            "private-tab" => {
+                self.add_private_tab("about:newtab");
+                self.ntp.focus = true;
+            }
+            "panic" => self.panic(),
+            "lock-private" => {
+                if self.tabs.iter().any(|t| t.private) {
+                    self.private_locked = true;
+                }
             }
             "close-tab" => {
                 let a = self.active;

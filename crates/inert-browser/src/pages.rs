@@ -431,6 +431,13 @@ impl Browser {
         crate::art::logo(&p, &ctx, lr, ctx.input(|i| i.time) as f32, theme::frame());
         crate::chrome::round_corners(&p, hero, 26.0, BG);
 
+        if self.active_tab().is_some_and(|t| t.private) {
+            // A private tab says so, where the eye lands first.
+            let tag = Rect::from_min_size(pos2(hero.left() + 86.0, hero.top() + 30.0), vec2(250.0, 28.0));
+            p.rect_filled(tag, 14.0, BG);
+            icons::paint(&p, Rect::from_center_size(pos2(tag.left() + 18.0, tag.center().y), Vec2::splat(14.0)), Icon::Mask, PRIVATE);
+            p.text(pos2(tag.left() + 34.0, tag.center().y), egui::Align2::LEFT_CENTER, "PRIVATE TAB · NOTHING IS KEPT", FontId::new(10.5, mono()), PRIVATE);
+        }
         // The composer overlaps the hero's lower edge.
         ui.add_space(-36.0);
         let cw = (w - 60.0).min(700.0);
@@ -814,6 +821,8 @@ impl Browser {
         ui.label(theme::label("Bookmarks"));
         ui.label(theme::title("Saved for later.", 44.0));
         ui.add_space(16.0);
+        self.secret_favorites(ui);
+        ui.add_space(18.0);
         let mut remove = None;
         let mut open = None;
         let n = self.profile.bookmarks.len();
@@ -849,6 +858,71 @@ impl Browser {
         }
     }
 
+    /// Secret favorites: kept in the Keychain, listed only after Touch ID,
+    /// and always opened in a private tab.
+    fn secret_favorites(&mut self, ui: &mut Ui) {
+        // They lock themselves again after five minutes.
+        if self.secrets.as_ref().is_some_and(|(_, at)| at.elapsed().as_secs() > 300) {
+            self.secrets = None;
+        }
+        let mut open = None;
+        let mut remove = None;
+        let mut lock = false;
+        let mut unlock = false;
+        let list = self.secrets.as_ref().map(|(l, _)| l.clone());
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Mask, PRIVATE);
+                ui.label(theme::label_c("Secret favorites", PRIVATE));
+                ui.label(theme::muted("Hidden behind Touch ID. They open in private tabs."));
+            });
+            ui.add_space(6.0);
+            match &list {
+                None => {
+                    let b = ui.add(theme::cta("Unlock with Touch ID", accent(), WHITE, 36.0));
+                    crate::drive::reg("secrets:unlock", b.rect);
+                    unlock = b.clicked();
+                }
+                Some(items) => {
+                    if items.is_empty() {
+                        ui.label(theme::muted("Nothing here yet. Add the page you are on from the menu: Add to secret favorites."));
+                    }
+                    for (i, b) in items.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            if ui.add(egui::Label::new(theme::body(if b.title.is_empty() { &b.url } else { &b.title })).sense(Sense::click())).clicked() {
+                                open = Some(b.url.clone());
+                            }
+                            ui.label(theme::mono_text(&b.url, 11.0).color(DIM));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if icons::button(ui, Icon::Close, 20.0, "Remove").clicked() {
+                                    remove = Some(i);
+                                }
+                            });
+                        });
+                    }
+                    ui.add_space(6.0);
+                    lock = ui.add(theme::cta_ghost("Lock", 30.0)).clicked();
+                }
+            }
+        });
+        if unlock {
+            self.ask_touch_id(crate::app::Unlock::SecretFavorites, "show your secret favorites");
+        }
+        if lock {
+            self.secrets = None;
+        }
+        if let Some(i) = remove {
+            if let Some((l, _)) = &mut self.secrets {
+                l.remove(i);
+                let _ = crate::passwords::secrets_save(l, self.demo);
+            }
+        }
+        if let Some(u) = open {
+            self.add_private_tab(&u);
+        }
+    }
+
     fn downloads_page(&mut self, ui: &mut Ui) {
         ui.add_space(48.0);
         ui.label(theme::label("Downloads"));
@@ -857,10 +931,21 @@ impl Browser {
         if self.downloads.is_empty() {
             ui.label(theme::muted(&format!("Nothing yet. Files are saved to {}.", crate::web::downloads_dir().display())));
         }
-        for (url, path, _) in self.downloads.iter().rev() {
+        for d in self.downloads.iter_mut().rev() {
             ui.horizontal(|ui| {
-                ui.label(theme::body(&path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()));
-                ui.label(theme::mono_text(url, 11.0).color(DIM));
+                ui.label(theme::body(&d.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()));
+                ui.label(theme::mono_text(&d.url, 11.0).color(DIM));
+                // From a private tab: gone with the tab unless kept.
+                if d.private_tab.is_some() {
+                    if d.keep {
+                        ui.label(theme::label_c("Kept", OK));
+                    } else {
+                        ui.label(theme::label_c("Vanishes with its private tab", WARN));
+                        if ui.small_button("Keep").clicked() {
+                            d.keep = true;
+                        }
+                    }
+                }
             });
         }
     }

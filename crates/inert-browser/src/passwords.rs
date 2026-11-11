@@ -80,6 +80,24 @@ return pw ? 'filled' : (users.length ? 'user' : 'nofield');
     )
 }
 
+/// Secret favorites: kept in the Keychain, shown only after Touch ID.
+const SECRETS: &str = "Inert Secret Favorites";
+static DEMO_SECRETS: Mutex<String> = Mutex::new(String::new());
+
+pub fn secrets_load(demo: bool) -> Vec<crate::profile::Bookmark> {
+    let json = if demo { DEMO_SECRETS.lock().map(|s| s.clone()).unwrap_or_default() } else { keyring::Entry::new(SECRETS, "list").and_then(|e| e.get_password()).unwrap_or_default() };
+    serde_json::from_str(&json).unwrap_or_default()
+}
+
+pub fn secrets_save(list: &[crate::profile::Bookmark], demo: bool) -> Result<(), String> {
+    let json = serde_json::to_string(list).map_err(|e| e.to_string())?;
+    if demo {
+        *DEMO_SECRETS.lock().map_err(|e| e.to_string())? = json;
+        return Ok(());
+    }
+    keyring::Entry::new(SECRETS, "list").and_then(|e| e.set_password(&json)).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

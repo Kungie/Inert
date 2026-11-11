@@ -35,11 +35,23 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>${VERSION:-0.1.0}</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSLocationUsageDescription</key><string>Sites you allow can ask where you are. "Hide my location" in Settings keeps this off.</string>
+  <key>NSLocationWhenInUseUsageDescription</key><string>Sites you allow can ask where you are. "Hide my location" in Settings keeps this off.</string>
+  <key>NSCameraUsageDescription</key><string>Sites you allow can use the camera. Inert asks every time.</string>
+  <key>NSFaceIDUsageDescription</key><string>Inert uses Touch ID to unlock secret favorites and private tabs.</string>
   <key>NSMicrophoneUsageDescription</key><string>Inert listens while you hold Option+Space, to type what you say.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Inert turns what you say while holding Option+Space into text.</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
 PLIST
-# Ad-hoc signature so macOS keeps one identity for the permission entries.
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+# Signing. macOS ties permissions (Full Disk Access, microphone) to the
+# app's signature. With a code-signing certificate named "Inert Dev" in the
+# keychain the identity stays the same across builds and the permissions
+# stick; without one the app is signed ad hoc and macOS asks again after
+# every rebuild.
+if security find-identity -v -p codesigning 2>/dev/null | grep -q '"Inert Dev"'; then
+  codesign --force --deep --sign "Inert Dev" "$APP" >/dev/null 2>&1 || codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+else
+  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+fi
 echo "$APP"

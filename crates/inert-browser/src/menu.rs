@@ -44,10 +44,15 @@ impl AppMenu {
                 true,
                 &[
                     &item("new-tab", "New Tab", cmd, Some(Code::KeyT)),
+                    &item("private-tab", "New Private Tab", cmd_shift, Some(Code::KeyN)),
                     &item("reopen", "Reopen Closed Tab", cmd_shift, Some(Code::KeyT)),
                     &item("focus-omnibox", "Open Location…", cmd, Some(Code::KeyL)),
                     &PredefinedMenuItem::separator(),
                     &item("close-tab", "Close Tab", cmd, Some(Code::KeyW)),
+                    &PredefinedMenuItem::separator(),
+                    &item("lock-private", "Lock Private Tabs", None, None),
+                    // The panic key: private tabs gone, Inert out of the way.
+                    &item("panic", "Panic: Erase Private Tabs and Hide", Some(Modifiers::META | Modifiers::ALT | Modifiers::CONTROL), Some(Code::KeyH)),
                 ],
             )
             .ok()?;

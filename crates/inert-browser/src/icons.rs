@@ -39,6 +39,8 @@ pub enum Icon {
     Sidebar,
     ArrowUp,
     Clip,
+    Mask,
+    Split,
 }
 
 fn s(c: Color32) -> Stroke {
@@ -233,6 +235,18 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, c: Color32) {
                 p.add(egui::Shape::line(vec![at(6.0 * sx, 2.0 * sy), at(6.0 * sx, 6.0 * sy), at(2.0 * sx, 6.0 * sy)], s(c)));
             }
             p.circle_filled(ctr, 1.3 * u, c);
+        }
+        Icon::Mask => {
+            // A pair of dark glasses: the private tab.
+            p.circle_stroke(at(-3.5, 1.0), 2.8 * u, s(c));
+            p.circle_stroke(at(3.5, 1.0), 2.8 * u, s(c));
+            line(at(-0.7, 1.0), at(0.7, 1.0));
+            line(at(-6.3, 1.0), at(-7.0, -2.5));
+            line(at(6.3, 1.0), at(7.0, -2.5));
+        }
+        Icon::Split => {
+            p.rect_stroke(Rect::from_min_max(at(-6.5, -5.0), at(6.5, 5.0)), 2.5 * u, s(c), egui::StrokeKind::Middle);
+            line(at(0.0, -5.0), at(0.0, 5.0));
         }
         Icon::ArrowUp => {
             line(at(0.0, 5.5), at(0.0, -5.0));

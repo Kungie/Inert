@@ -20,6 +20,7 @@ mod import_ui;
 mod inert_tab;
 mod menu;
 mod omnibox;
+mod page_js;
 mod pages;
 mod passwords;
 mod profile;

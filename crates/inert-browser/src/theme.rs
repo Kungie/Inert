@@ -63,6 +63,11 @@ pub const SECURE: Color32 = Color32::from_rgb(176, 196, 255);
 pub const WARN: Color32 = Color32::from_rgb(255, 181, 71);
 pub const DANGER: Color32 = Color32::from_rgb(255, 122, 122);
 pub const OK: Color32 = Color32::from_rgb(93, 218, 165);
+// The address bar's lock: how far a page can be trusted, at a glance.
+pub const LOCK_RED: Color32 = Color32::from_rgb(255, 92, 92);
+pub const LOCK_ORANGE: Color32 = Color32::from_rgb(255, 152, 56);
+pub const LOCK_YELLOW: Color32 = Color32::from_rgb(255, 214, 64);
+pub const PRIVATE: Color32 = Color32::from_rgb(196, 168, 255);
 
 /// White glass over the blue frame: hover and active fills, and ink on blue.
 pub fn glass(a: f32) -> Color32 {

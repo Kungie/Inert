@@ -55,10 +55,11 @@ impl Browser {
             });
             ui.add_space(10.0);
             ui.label(theme::muted("Inert reads only the browser's own files, and only when you press Import. You can turn the access off again afterwards."));
+            ui.label(theme::muted("Already on, and still blocked? macOS forgets the permission when Inert is updated: turn the switch off and on again, or remove Inert from the list and add it back."));
             return;
         }
         if self.import.sources.is_empty() {
-            ui.label(theme::body("No Chrome, Brave, Edge, Arc, Vivaldi or Chromium profile was found on this Mac."));
+            ui.label(theme::body("No Chrome, Dia, Brave, Edge, Arc, Vivaldi or Chromium profile was found on this Mac."));
             if onboarding {
                 ui.add_space(18.0);
                 let b = big(ui, "Continue", true);
