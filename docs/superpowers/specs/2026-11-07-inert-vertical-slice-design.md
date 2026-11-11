@@ -537,3 +537,21 @@ Notlar:
 - Bellek: yalnız banka açıkken ayak izi 134 MB ölçüldü (önceki sürüm aynı ekranda 60 MB). Glif haritası bunun ~4 MB'ı; kalan artışın nedeni bulunmadı. Açık iş.
 - Doğrulama: son tam UI turu 68/75 (kalan 7 hata VPN çıkış adımı ve ona bağlı adımlar; düzeltmesi yazıldı, tam turla doğrulanmadı). `scripts/design-check.py` hâlâ Yön A paletini sayıyor, güncellenmedi.
 - Ekran görüntüleri: `docs/screenshots/44…49`.
+
+### 18.3 Kurulum, asistan ve sayfa araçları (2026-11-11)
+
+| Parça | Karar |
+|---|---|
+| Kurulum | Üç adım, ilerleme çubuğuyla: görünüm (Mavi/Koyu, renk, sekmeler kenarda ya da üstte) → model (API key) → Chrome'dan aktarım. Şifreler okunurken "Unlock your data" bekleme ekranı. |
+| Görünüm | `Settings.dark`, `accent` (8 renk, `theme::ACCENTS`), `tabs_top`. Koyu görünümde çerçeve siyaha yakın, glifler seçilen renkte. |
+| Logo | Halka içinde ortalanmış I, marka mavisi üzerinde beyaz glifler. Uygulama simgesini tarayıcı kendisi üretir (`--write-icon`). `scripts/bundle.sh` Inert.app'i kurar. |
+| Modeller | Varsayılan `claude-sonnet-5-5` ve `gpt-6.1-sol`. Giriş API key ile: Anthropic üçüncü taraf uygulamalara claude.ai girişi ya da abonelik limiti sunma izni vermiyor. |
+| Chrome aktarımı | `Bookmarks` ve `AccountBookmarks` birlikte okunur; site simgeleri Chrome'un `Favicons` veritabanından gelir. macOS veri klasörünü koruyorsa Tam Disk Erişimi adımları gösterilir. Yalnız-host çerezleri Domain özniteliği olmadan yazılır (aksi `__Host-` çerezlerini düşürüyor, GitHub yarım oturum görüyordu). |
+| Site simgeleri | `favicon.rs`: host başına PNG, profil klasöründe. Kaynak: Chrome önbelleği ve ziyaret sonrası indirme. Yer imleri kendi başına ağ isteği başlatmaz. |
+| Sayfa menüsü | Servo'nun bağlam menüsü tarayıcıda çizilir: kopyala, kes, yapıştır, tümünü seç, bağlantı ve görsel satırları, sayfayı çevir (Google Translate), WebKit ile incele, asistana ekle. Cmd+C/V/X/A/Z kendi Edit menü öğelerimizle egui alanlarına, Servo'ya ve WebKit'e yönlenir. |
+| Asistan | Yanıtlar Markdown olarak çizilir (`md.rs`). Panel kenarda, sayfanın üstünde yüzer ya da kendi sekmesinde (`about:chat`). Kırpma aracı sayfadan seçilen bölgeyi görsel olarak, "Attach to assistant" seçili metni ekler; ikisi de modele veri olarak gider. Yeni sekmede açık sekmeler ve son sayfalar (yalnız başlık ve adres) bağlam olur. Alt+Enter adres çubuğundaki metni asistana sorar. |
+| Shield | uBlock Origin'in varsayılan listeleri: EasyList, EasyPrivacy ve uBlock filtreleri. WebKit tek kural listesinde 140 bin kuralla sınırlı; Servo tarafı tümünü kullanır. |
+| Bas-konuş | Option+Space basılıyken `inert-dictate` (Swift, Apple Speech; dil destekliyorsa cihaz üzerinde) dinler, bırakınca metin klavyenin olduğu yere yazılır. |
+
+Yapılmayanlar: Chrome eklentilerini içe aktarma (Inert eklenti çalıştırmaz), Gmail gibi uygulama bağlantıları, passkey (WebKit'te Apple'ın tarayıcılara verdiği yetki gerekir; Servo'da WebAuthn yok), WebKit sayfalarında kırpma ve yüzen asistan. Bu turdaki değişikliklerden sonra tam UI testi koşturulmadı; kısa görsel tur 2/2.
+
