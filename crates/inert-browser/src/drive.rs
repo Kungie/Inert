@@ -118,9 +118,9 @@ impl Driver {
             Pause(1200),
             expect("signin.visible", 3000, |b| !b.profile.onboarded),
             Shot(s("d01-signin")),
+            Click(s("signin:claude")),
             Click(s("look:blue")),
             Click(s("look:next")),
-            Click(s("signin:claude")),
             expect("signin.claude_selected", 2000, |b| b.signin.provider == Some(crate::profile::Provider::Claude)),
             Click(s("signin:skip")),
             // Step 2: import from Chrome (a fake Chrome profile in demo mode).
@@ -376,9 +376,9 @@ impl Driver {
         let steps = if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("bank-idle") {
             vec![
                 Pause(1200),
-                Click(s("look:blue")),
+                Click(s("signin:claude")),
+            Click(s("look:blue")),
             Click(s("look:next")),
-            Click(s("signin:claude")),
                 Click(s("signin:skip")),
                 Click(s("import:skip")),
                 expect("signin.done_with_claude", 2000, |b| b.profile.onboarded),
@@ -391,9 +391,9 @@ impl Driver {
             // A real (non-demo) run: the actual Mullvad state and a live search.
             vec![
                 Pause(1500),
-                Click(s("look:blue")),
+                Click(s("signin:claude")),
+            Click(s("look:blue")),
             Click(s("look:next")),
-            Click(s("signin:claude")),
                 Click(s("signin:skip")),
                 Pause(300),
                 Shot(s("r00-import")),
@@ -417,9 +417,9 @@ impl Driver {
             // Onboarding import from a profile a real Chrome wrote (see INERT_IMPORT_DIR).
             vec![
                 Pause(1200),
-                Click(s("look:blue")),
+                Click(s("signin:claude")),
+            Click(s("look:blue")),
             Click(s("look:next")),
-            Click(s("signin:claude")),
                 Click(s("signin:skip")),
                 expect("import.step", 2000, |b| b.signin.import_step),
                 Click(s("import:go")),
@@ -441,9 +441,9 @@ impl Driver {
             let signin = std::env::var("INERT_DEMO_VPN").as_deref() == Ok("logged-out");
             let mut v = vec![
                 Pause(1200),
-                Click(s("look:blue")),
+                Click(s("signin:claude")),
+            Click(s("look:blue")),
             Click(s("look:next")),
-            Click(s("signin:claude")),
                 Click(s("signin:skip")),
                 Click(s("import:skip")),
                 expect("signin.done", 2000, |b| b.profile.onboarded),
@@ -634,9 +634,9 @@ fn look_steps() -> Vec<Step> {
     vec![
         Pause(1200),
         Shot(s("l00-signin")),
-        Click(s("look:blue")),
+        Click(s("signin:claude")),
+            Click(s("look:blue")),
             Click(s("look:next")),
-            Click(s("signin:claude")),
         Pause(300),
         Shot(s("l00b-key")),
         Click(s("signin:skip")),

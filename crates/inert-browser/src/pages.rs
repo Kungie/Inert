@@ -132,7 +132,8 @@ impl Browser {
         let clearing = p.add(egui::Shape::Noop);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(col).layout(Layout::top_down(Align::Min)));
         let ui = &mut child;
-        if !self.signin.look_done {
+        // The landing comes first; the look is asked once a provider is picked.
+        if !self.signin.look_done && self.signin.provider.is_some() {
             ui.add_space((col.height() - 640.0).max(0.0) * 0.5);
             theme::panel_frame(26, 32.0).show(ui, |ui| {
                 ui.set_width(600.0);
