@@ -609,3 +609,10 @@ Doğrulama: UI testi 80/80 (demo profili, Servo). Yeni özelliklerden gizli sekm
 - **Uygulamanın kendi izinleriyle uçtan uca denetim** (`open -a Inert.app --args …`, yalnız sayılar yazılır): `--touchid-check` bu Mac'te Touch ID'nin kurulu ve sorulabilir olduğunu gösterdi (istem gösterilmedi; parmakla onay kullanıcıda). `--import-run` okunabilen ilk tarayıcıdan (Dia) geçici bir profile 31 yer imi ve 4989 geçmiş satırı aktardı, kaydedilen profilde 38 yer imi (7 hazır yer imiyle). Geçici profil silindi. Chrome, macOS Tam Disk Erişimi verilene kadar okunamıyor.
 - **Tek düzen, iki durum (2026-11-11):** ayrı "sekmeler kenarda / üstte" ayarı kalktı. Kenar çubuğu açıkken sekmeler orada; kapalıyken (Cmd+S) üstte bir şeritte. Adres çubuğu her iki durumda geri/ileri/yenile düğmelerinden araçlara kadar uzanıyor. Kurulumdaki seçim kenar çubuğunun başlangıç durumunu belirliyor. UI testi 80/80.
 
+### 18.7 Gmail, Google ile giriş, passkey (2026-11-11)
+
+- **Gmail'de mailler boş görünüyordu:** uBlock Origin'in genel gizleme kuralı `##.ads`, Gmail'in mesaj kabını (`div.adn.ads`) gizliyordu. uBO bu kuralı site istisnalarıyla uygular; WebKit kural biçimine çevrilince istisna kayboluyor. Genel gizleme kuralları (site adı olmayan `css-display-none`) artık derlenmiyor; ağ engelleme ve siteye özel gizleme kalıyor (`inert-adblock-v3`). Gerçek site turuna kontrol eklendi.
+- **Google ile giriş boş açılıyordu:** açılır pencere sekmede açılıyordu, açan sayfayla bağı (`window.opener`) kopuyordu. Giriş sağlayıcılarının adresleri ve boyut verilen açılır pencereler artık gerçek pencere olarak açılıyor (wry `NewWindowResponse::Allow`). Kullanıcı tıklaması gerektirdiği için otomatik testte denenmedi.
+- **Passkey:** WebKit'in passkey ve güvenlik anahtarı desteği, Apple'ın yalnız onayladığı tarayıcılara verdiği `com.apple.developer.web-browser.public-key-credential` iznini ve Developer ID imzasını istiyor. İzin alınana kadar menüde "Open in Safari (passkeys)" var.
+- Doğrulama: gerçek site turu 40/40, UI testi 80/80.
+

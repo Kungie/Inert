@@ -23,7 +23,7 @@ const LISTS: [(&str, &str); 7] = [
 ];
 /// WebKit accepts at most 150k rules per list; stay below it.
 const MAX_RULES: usize = 140_000;
-const RULES_VERSION: &str = "inert-adblock-v2";
+const RULES_VERSION: &str = "inert-adblock-v3";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum State {
@@ -75,6 +75,16 @@ pub fn prepare(tx: Sender<crate::app::Event>, ctx: eframe::egui::Context) {
                 set.add_filter_list(text, adblock::lists::ParseOptions::default());
             }
             let (mut rules, _) = set.into_content_blocking().map_err(|_| anyhow::anyhow!("conversion failed"))?;
+            // Generic hiding rules (no site named) are left out. uBlock Origin
+            // applies them with per-site exceptions WebKit's rule format loses
+            // ("##.ads" hid Gmail's message bodies, `div.adn.ads`). Network
+            // blocking and site-specific hiding stay.
+            rules.retain(|r| {
+                let v = serde_json::to_value(r).unwrap_or_default();
+                let hide = v.pointer("/action/type").and_then(|t| t.as_str()) == Some("css-display-none");
+                let sited = v.pointer("/trigger/if-domain").and_then(|d| d.as_array()).is_some_and(|a| !a.is_empty());
+                !hide || sited
+            });
             if rules.len() > MAX_RULES {
                 rules.truncate(MAX_RULES);
             }

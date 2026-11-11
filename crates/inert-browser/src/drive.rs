@@ -534,6 +534,15 @@ impl Driver {
                 Pause(2500),
                 probe("String(window.__ad)"),
                 expect("real.shield_blocks_ad_script", 5000, |b| b.probe.as_deref() == Some("blocked")),
+                // Gmail wraps each message in `div.adn.ads`: generic hiding must not hide it.
+                Setup(Box::new(|b| {
+                    if let Some(Kind::Web(w)) = b.active_tab().map(|t| &t.kind) {
+                        crate::web::js(w, "var d=document.createElement('div');d.className='adn ads';d.id='mailbody';d.textContent='mail';document.body.appendChild(d);");
+                    }
+                })),
+                Pause(500),
+                probe("getComputedStyle(document.getElementById('mailbody')).display"),
+                expect("real.shield_leaves_gmail_message_visible", 5000, |b| b.probe.as_deref() == Some("block")),
                 Setup(Box::new(|b| {
                     let id = b.active;
                     b.close_tab(id);
@@ -676,6 +685,15 @@ impl Driver {
                 Pause(2500),
                 probe("String(window.__ad)"),
                 expect("real.shield_blocks_ad_script", 5000, |b| b.probe.as_deref() == Some("blocked")),
+                // Gmail wraps each message in `div.adn.ads`: generic hiding must not hide it.
+                Setup(Box::new(|b| {
+                    if let Some(Kind::Web(w)) = b.active_tab().map(|t| &t.kind) {
+                        crate::web::js(w, "var d=document.createElement('div');d.className='adn ads';d.id='mailbody';d.textContent='mail';document.body.appendChild(d);");
+                    }
+                })),
+                Pause(500),
+                probe("getComputedStyle(document.getElementById('mailbody')).display"),
+                expect("real.shield_leaves_gmail_message_visible", 5000, |b| b.probe.as_deref() == Some("block")),
                 Setup(Box::new(|b| {
                     let id = b.active;
                     b.close_tab(id);

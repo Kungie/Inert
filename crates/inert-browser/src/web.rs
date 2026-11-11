@@ -114,7 +114,15 @@ pub fn create(frame: &eframe::Frame, tab: u64, url: &str, rect: egui::Rect, tx: 
             let _ = t2.send(Event::WebTitle { tab, title });
             c2.request_repaint();
         })
-        .with_new_window_req_handler(move |url, _| {
+        .with_new_window_req_handler(move |url, features| {
+            // Sign-in popups ("Sign in with Google", Apple, Microsoft…) talk
+            // back to the page that opened them, so they open as real popup
+            // windows with their opener. Everything else becomes a tab.
+            let host = url::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_default();
+            let auth = ["accounts.google.com", "appleid.apple.com", "login.microsoftonline.com", "login.live.com", "www.facebook.com", "github.com", "api.twitter.com", "x.com", "discord.com", "auth0.com", "okta.com"].iter().any(|h| host == *h || host.ends_with(&format!(".{h}")));
+            if auth || features.size.is_some() || url == "about:blank" || url.is_empty() {
+                return wry::NewWindowResponse::Allow;
+            }
             let _ = t3.send(Event::OpenTab { url, background: false });
             c3.request_repaint();
             wry::NewWindowResponse::Deny

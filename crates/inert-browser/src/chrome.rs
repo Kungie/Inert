@@ -2147,6 +2147,10 @@ impl Browser {
             self.popover = Popover::None;
             self.ask_page(crate::app::Ask::Captions, crate::page_js::CAPTIONS);
         }
+        if item(ui, Icon::Globe, "Open in Safari (passkeys)", "") {
+            self.popover = Popover::None;
+            self.open_in_safari();
+        }
         if item(ui, Icon::Code, "Developer tools", "Opt+Cmd+I") {
             self.devtools();
             self.popover = Popover::None;
@@ -2868,6 +2872,17 @@ impl Browser {
             return;
         }
         self.ask_page(crate::app::Ask::Readable, crate::page_js::READABLE);
+    }
+
+    /// Passkeys need an entitlement Apple gives only to browsers it approves;
+    /// until Inert has one, a page that wants a passkey opens in Safari.
+    pub fn open_in_safari(&mut self) {
+        let url = self.active_tab().map(|t| t.url()).unwrap_or_default();
+        if !url.starts_with("http") {
+            self.toast("Open a web page first");
+            return;
+        }
+        let _ = std::process::Command::new("/usr/bin/open").args(["-a", "Safari", &url]).spawn();
     }
 
     /// Opens the active page in Google Translate, into the Mac's language.
