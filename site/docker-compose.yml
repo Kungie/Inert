@@ -1,0 +1,19 @@
+# inert website: Caddy serves ./public, and a Cloudflare Tunnel publishes it
+# without opening a port. No domain yet: the tunnel is a "quick tunnel" and
+# its address (https://<words>.trycloudflare.com) is in `docker compose logs cloudflared`.
+# With a domain: create a named tunnel and switch the command to
+# `tunnel --no-autoupdate --config /etc/cloudflared/config.yml run`, like gut-site.
+services:
+  site:
+    image: caddy:2-alpine
+    volumes:
+      - ./public:/srv:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.4
+    command: tunnel --no-autoupdate --url http://site:80
+    depends_on:
+      - site
+    restart: unless-stopped

@@ -126,6 +126,7 @@ Gece raporu (görsel özet): https://claude.ai/artifact/BERyRh213X8xgAk2CSKnMD
   - Her ikisinde de bir landing sayfası ve dört Geist çeşidinin rollerini gösteren bir font sayfası var.
   - Logo için beş yön (Claude Design, 2026-11-11): https://claude.ai/artifact/77VfBiVqByPrh4av3w7Ry6. **Seçilen: 05 Held caret** (iki köşeli parantez arasında duran metin imleci). Tarayıcıda, uygulama simgesinde ve web sitesinde bu kullanılıyor.
   - Web sitesi (Claude Design, 2026-11-11): https://claude.ai/artifact/3CT8d6uFZxtVjHDn2DgFbq. İki sayfa: Browser (mavi, açılış sayfası) ve Protocol (koyu). Az yazı, çok ekran görüntüsü.
+  - Sitenin kodu `site/` klasöründe (düz HTML). Ev sunucusunda (citadel, `~/inert-site`) Caddy ile sunuluyor, Cloudflare quick tunnel ile yayında; alan adı alınınca adlandırılmış tünele geçilecek. Ayrıntı: `site/README.md`.
 
 ## Açık sorular
 - İlk geliştirme ve test platformu macOS (tarayıcı çapraz platform olsa da).

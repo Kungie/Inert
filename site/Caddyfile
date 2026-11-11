@@ -1,0 +1,12 @@
+# The Inert website: static files, nothing else.
+:80 {
+	root * /srv
+	encode zstd gzip
+	file_server
+	header /shots/* Cache-Control "public, max-age=86400"
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+	}
+}

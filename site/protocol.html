@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The inert:// protocol</title>
+<meta name="description" content="inert:// sites send a signed description of the screen, never code.">
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#05060B}
+a{color:#B0C4FF}a:hover{color:#DDE5FF}
+</style>
+</head>
+<body>
+<div style="background: #05060B; color: #ECEEF5; font-family: 'Geist', system-ui, sans-serif; overflow: hidden">
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+<defs>
+<symbol id="caretp" viewBox="0 0 100 100">
+<path d="M37 22 H24 V78 H37" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"></path>
+<path d="M63 22 H76 V78 H63" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"></path>
+<rect x="46.5" y="32" width="7" height="36" rx="3.5" fill="currentColor"></rect>
+</symbol>
+</defs>
+</svg>
+
+<header style="max-width: 1240px; margin: 0 auto; padding: 22px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px 28px">
+<a href="index.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: #FFFFFF">
+<svg role="img" aria-label="Inert" viewBox="0 0 100 100" style="width: 34px; height: 34px; color: #6E90FF"><use href="#caretp"></use></svg>
+<span style="font-size: 20px; font-weight: 600; letter-spacing: -0.4px">Inert</span>
+</a>
+<nav aria-label="Main" style="display: flex; gap: 6px; flex: 1">
+<a href="index.html" style="padding: 8px 14px; border-radius: 18px; text-decoration: none; font-size: 14px; font-weight: 500; color: #A0A7BC">Browser</a>
+<a href="protocol.html" style="padding: 8px 14px; border-radius: 18px; background: #161A26; text-decoration: none; font-size: 14px; font-weight: 500; color: #FFFFFF">Protocol</a>
+</nav>
+<a href="#spec" style="padding: 11px 20px; border-radius: 22px; background: #1F4DFF; color: #FFFFFF; text-decoration: none; font-size: 14px; font-weight: 600">Read the spec</a>
+</header>
+
+<section style="position: relative; max-width: 1240px; margin: 0 auto; padding: 64px 24px 0">
+<div aria-hidden="true" style="position: absolute; inset: 0 0 auto 0; height: 380px; font-family: 'Geist Mono', monospace; font-size: 12px; line-height: 17px; letter-spacing: 7px; white-space: pre; color: rgba(110,144,255,0.22); overflow: hidden">i n e r t : / / b a n k . e x a m p l e   s c r e e n   o v e r v i e w   s i g n e d
+a c t i o n   t r a n s f e r   { t o ,   a m o u n t ,   n o t e }   v e r i f i e d
+r e s u l t   o k   ·   n o   c o d e   r a n   ·   m a n i f e s t   v 3   p i n n e d
+: = + - : .       . : - = + : = + - : .       . : - = + : = + - : .       . : - = +
+i n e r t : / / s h o p . e x a m p l e   s c r e e n   c a t a l o g   s i g n e d
+a c t i o n   a d d _ t o _ c a r t   { p r o d u c t }   v e r i f i e d   ·   o k
+. : = + - : . : = + - : . : = + - : . : = + - : . : = + - : . : = + - : . : = + - :
+i n e r t : / / n o t e s . e x a m p l e   s c r e e n   l i s t   s i g n e d
+a c t i o n   a d d   { t i t l e ,   c a t e g o r y }   v e r i f i e d   ·   o k
+- : .   : = + - : .   : = + - : .   : = + - : .   : = + - : .   : = + - : .   : = +
+t l s   1 . 3   ·   x 2 5 5 1 9 m l k e m 7 6 8   ·   e d 2 5 5 1 9   ·   c b o r
+s c r e e n   ·   a c t i o n   ·   r e s u l t   ·   s c r e e n   ·   a c t i o n
+: = + - : .       . : - = + : = + - : .       . : - = + : = + - : .       . : - = +
+i n e r t : / / b a n k . e x a m p l e   s c r e e n   o v e r v i e w   s i g n e d
+a c t i o n   t r a n s f e r   { t o ,   a m o u n t ,   n o t e }   v e r i f i e d
+r e s u l t   o k   ·   n o   c o d e   r a n   ·   m a n i f e s t   v 3   p i n n e d
+: = + - : .       . : - = + : = + - : .       . : - = + : = + - : .       . : - = +
+i n e r t : / / s h o p . e x a m p l e   s c r e e n   c a t a l o g   s i g n e d
+a c t i o n   a d d _ t o _ c a r t   { p r o d u c t }   v e r i f i e d   ·   o k
+. : = + - : . : = + - : . : = + - : . : = + - : . : = + - : . : = + - : . : = + - :
+i n e r t : / / n o t e s . e x a m p l e   s c r e e n   l i s t   s i g n e d
+a c t i o n   a d d   { t i t l e ,   c a t e g o r y }   v e r i f i e d   ·   o k</div>
+<div style="position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 18px">
+<span style="padding: 7px 14px; border-radius: 16px; background: #05060B; font-family: 'Geist Mono', monospace; font-size: 12px; letter-spacing: 2px; color: #B0C4FF">INERT:// · AN APPLICATION PROTOCOL</span>
+<h1 style="margin: 0; padding: 8px 20px; background: #05060B; border-radius: 24px; font-size: clamp(44px, 7vw, 88px); line-height: 1; font-weight: 500; letter-spacing: -0.04em">Descriptions, never code.</h1>
+<p style="margin: 0; padding: 4px 16px; background: #05060B; border-radius: 14px; font-size: 19px; color: #A0A7BC; max-width: 640px">Sites send a signed list of what is on the screen. The browser checks it, then draws it. Nothing from the site runs on your Mac.</p>
+</div>
+<div style="position: relative; margin: 56px auto 0; max-width: 1180px; border-radius: 22px; padding: 10px; background: #111522; border: 1px solid #242A3C; box-shadow: 0 40px 90px rgba(0,0,0,0.6)">
+<img fetchpriority="high" src="shots/l02-bank.png" alt="Inert Bank, a demo inert:// site, drawn by the browser from a signed screen" style="display: block; width: 100%; height: auto; border-radius: 14px">
+</div>
+</section>
+
+<section id="spec" style="max-width: 1240px; margin: 0 auto; padding: 120px 24px 0">
+<h2 style="margin: 0 0 32px; font-size: clamp(32px, 4vw, 48px); font-weight: 500; letter-spacing: -0.03em">Three messages. That's the whole web app.</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px">
+<div style="border-radius: 22px; background: #0E111A; border: 1px solid #242A3C; padding: 26px; display: flex; flex-direction: column; gap: 14px">
+<span style="font-family: 'Geist Mono', monospace; font-size: 12px; letter-spacing: 2px; color: #6E90FF">01 · SCREEN</span>
+<strong style="font-size: 22px; font-weight: 500">What to show</strong>
+<pre style="margin: 0; padding: 14px; border-radius: 12px; background: #05060B; font-family: 'Geist Mono', monospace; font-size: 12.5px; line-height: 1.6; color: #C7D0EA; white-space: pre-wrap">screen  overview
+slot    total   decimal
+slot    accounts list ≤ 10
+button  Send money → transfer</pre>
+</div>
+<div style="border-radius: 22px; background: #0E111A; border: 1px solid #242A3C; padding: 26px; display: flex; flex-direction: column; gap: 14px">
+<span style="font-family: 'Geist Mono', monospace; font-size: 12px; letter-spacing: 2px; color: #6E90FF">02 · ACTION</span>
+<strong style="font-size: 22px; font-weight: 500">What you did</strong>
+<pre style="margin: 0; padding: 14px; border-radius: 12px; background: #05060B; font-family: 'Geist Mono', monospace; font-size: 12.5px; line-height: 1.6; color: #C7D0EA; white-space: pre-wrap">action  transfer
+to      string ≤ 34
+amount  0.01 … 10000.00
+note    string ≤ 140</pre>
+</div>
+<div style="border-radius: 22px; background: #0E111A; border: 1px solid #242A3C; padding: 26px; display: flex; flex-direction: column; gap: 14px">
+<span style="font-family: 'Geist Mono', monospace; font-size: 12px; letter-spacing: 2px; color: #6E90FF">03 · RESULT</span>
+<strong style="font-size: 22px; font-weight: 500">What happened</strong>
+<pre style="margin: 0; padding: 14px; border-radius: 12px; background: #05060B; font-family: 'Geist Mono', monospace; font-size: 12.5px; line-height: 1.6; color: #C7D0EA; white-space: pre-wrap">result  ok
+next    screen overview
+checked against
+        manifest v3 ✓</pre>
+</div>
+</div>
+</section>
+
+<section style="max-width: 1240px; margin: 0 auto; padding: 120px 24px 0">
+<h2 style="margin: 0 0 32px; font-size: clamp(32px, 4vw, 48px); font-weight: 500; letter-spacing: -0.03em">Whole kinds of attack, gone by design.</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px">
+<div style="border-radius: 20px; background: #0E111A; border: 1px solid #242A3C; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+<svg aria-hidden="true" viewBox="0 0 24 24" style="width: 24px; height: 24px" fill="none" stroke="#6E90FF" stroke-width="1.6" stroke-linecap="round"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"></path><path d="M4 20L20 4"></path></svg>
+<strong style="font-size: 17px; font-weight: 500">No scripts</strong><span style="font-size: 14px; color: #A0A7BC">No JavaScript, HTML or plugins reach the browser.</span>
+</div>
+<div style="border-radius: 20px; background: #0E111A; border: 1px solid #242A3C; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+<svg aria-hidden="true" viewBox="0 0 24 24" style="width: 24px; height: 24px" fill="none" stroke="#6E90FF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12H4z"></path><path d="M8 13l3 3 5-6"></path></svg>
+<strong style="font-size: 17px; font-weight: 500">Signed manifest</strong><span style="font-size: 14px; color: #A0A7BC">Every screen must match what the site signed.</span>
+</div>
+<div style="border-radius: 20px; background: #0E111A; border: 1px solid #242A3C; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+<svg aria-hidden="true" viewBox="0 0 24 24" style="width: 24px; height: 24px" fill="none" stroke="#6E90FF" stroke-width="1.6" stroke-linecap="round"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>
+<strong style="font-size: 17px; font-weight: 500">No fake fields</strong><span style="font-size: 14px; color: #A0A7BC">A hacked server can't add a password box.</span>
+</div>
+<div style="border-radius: 20px; background: #0E111A; border: 1px solid #242A3C; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+<svg aria-hidden="true" viewBox="0 0 24 24" style="width: 24px; height: 24px" fill="none" stroke="#6E90FF" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+<strong style="font-size: 17px; font-weight: 500">Typed actions</strong><span style="font-size: 14px; color: #A0A7BC">Servers accept only the fields they declared.</span>
+</div>
+<div style="border-radius: 20px; background: #0E111A; border: 1px solid #242A3C; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+<svg aria-hidden="true" viewBox="0 0 24 24" style="width: 24px; height: 24px" fill="none" stroke="#6E90FF" stroke-width="1.6" stroke-linecap="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"></path></svg>
+<strong style="font-size: 17px; font-weight: 500">Post-quantum TLS</strong><span style="font-size: 14px; color: #A0A7BC">TLS 1.3 with X25519 + ML-KEM-768.</span>
+</div>
+<div style="border-radius: 20px; background: #0E111A; border: 1px solid #242A3C; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+<svg aria-hidden="true" viewBox="0 0 24 24" style="width: 24px; height: 24px" fill="none" stroke="#6E90FF" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3"></path></svg>
+<strong style="font-size: 17px; font-weight: 500">Built for agents</strong><span style="font-size: 14px; color: #A0A7BC">AI reads the signed tree, not scraped pixels.</span>
+</div>
+</div>
+</section>
+
+<section style="max-width: 1240px; margin: 0 auto; padding: 120px 24px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 40px">
+<div style="flex: 1 1 340px; display: flex; flex-direction: column; gap: 14px">
+<span style="font-family: 'Geist Mono', monospace; font-size: 12px; letter-spacing: 2px; color: #6E90FF">THE LOCK MEANS SOMETHING</span>
+<h2 style="margin: 0; font-size: clamp(32px, 4vw, 48px); font-weight: 500; letter-spacing: -0.03em">Green is verified. Orange is the old web.</h2>
+<div style="display: flex; flex-direction: column; gap: 10px; margin-top: 6px">
+<span style="display: flex; align-items: center; gap: 10px; font-size: 15px"><span aria-hidden="true" style="width: 12px; height: 12px; border-radius: 6px; background: #5DDAA5"></span>inert:// site, signed and pinned</span>
+<span style="display: flex; align-items: center; gap: 10px; font-size: 15px"><span aria-hidden="true" style="width: 12px; height: 12px; border-radius: 6px; background: #FFD640"></span>Local development key</span>
+<span style="display: flex; align-items: center; gap: 10px; font-size: 15px"><span aria-hidden="true" style="width: 12px; height: 12px; border-radius: 6px; background: #FF9838"></span>Ordinary HTTPS page</span>
+<span style="display: flex; align-items: center; gap: 10px; font-size: 15px"><span aria-hidden="true" style="width: 12px; height: 12px; border-radius: 6px; background: #FF5C5C"></span>Not encrypted, or failed checks</span>
+</div>
+</div>
+<div style="flex: 999 1 560px; min-width: 0; border-radius: 22px; padding: 10px; background: #111522; border: 1px solid #242A3C">
+<img loading="lazy" src="shots/l05-omnibox.png" alt="The address bar on an inert:// page, with its colored lock" style="display: block; width: 100%; height: auto; border-radius: 14px">
+</div>
+</section>
+
+<section style="max-width: 1240px; margin: 0 auto; padding: 120px 24px 0">
+<div style="border-radius: 28px; background: #1F4DFF; padding: 56px 32px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 18px; color: #FFFFFF">
+<svg aria-hidden="true" viewBox="0 0 100 100" style="width: 64px; height: 64px"><use href="#caretp"></use></svg>
+<h2 style="margin: 0; font-size: clamp(30px, 4vw, 46px); font-weight: 500; letter-spacing: -0.03em">See it in the browser.</h2>
+<a href="index.html" style="padding: 15px 26px; border-radius: 26px; background: #FFFFFF; color: #1434CC; text-decoration: none; font-size: 15px; font-weight: 600">Meet Inert Browser</a>
+</div>
+</section>
+
+<footer style="max-width: 1240px; margin: 0 auto; padding: 72px 24px 48px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px 28px; font-size: 13px; color: #A0A7BC">
+<span style="display: flex; align-items: center; gap: 8px; color: #ECEEF5"><svg aria-hidden="true" viewBox="0 0 100 100" style="width: 22px; height: 22px; color: #6E90FF"><use href="#caretp"></use></svg>Inert</span>
+<span style="flex: 1; font-family: 'Geist Mono', monospace; letter-spacing: 1.5px; font-size: 11px">SCREEN · ACTION · RESULT · CBOR · ED25519</span>
+<a href="index.html" style="text-decoration: none">← The browser</a>
+</footer>
+</div>
+</body>
+</html>
