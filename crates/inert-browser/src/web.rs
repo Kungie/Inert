@@ -275,6 +275,24 @@ pub mod mac {
         }
     }
 
+    /// Whether this Mac can confirm the user (Touch ID, Watch or password),
+    /// and whether Touch ID itself is set up. Asks nothing of the user.
+    pub fn touch_id_available() -> (bool, bool) {
+        let Some(cls) = objc2::runtime::AnyClass::get(c"LAContext") else { return (false, false) };
+        unsafe {
+            let ctx: *mut AnyObject = msg_send![cls, new];
+            if ctx.is_null() {
+                return (false, false);
+            }
+            let nil: *mut *mut AnyObject = std::ptr::null_mut();
+            // 2: device owner (Touch ID or password); 1: biometrics only.
+            let owner: objc2::runtime::Bool = msg_send![ctx, canEvaluatePolicy: 2isize, error: nil];
+            let bio: objc2::runtime::Bool = msg_send![ctx, canEvaluatePolicy: 1isize, error: nil];
+            let _: () = msg_send![ctx, release];
+            (owner.as_bool(), bio.as_bool())
+        }
+    }
+
     /// The clipboard's change counter (it moves whenever something is copied).
     pub fn pasteboard_count() -> isize {
         let Some(cls) = objc2::runtime::AnyClass::get(c"NSPasteboard") else { return 0 };

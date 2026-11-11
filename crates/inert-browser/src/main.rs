@@ -50,6 +50,40 @@ fn main() -> eframe::Result {
         drive::save_png(std::path::Path::new(out), &art::icon_image(n));
         return Ok(());
     }
+    // `--touchid-check <file>`: whether Touch ID can be asked (asks nothing).
+    #[cfg(target_os = "macos")]
+    if let Some(out) = args.iter().position(|a| a == "--touchid-check").and_then(|i| args.get(i + 1)) {
+        let (owner, bio) = web::mac::touch_id_available();
+        let _ = std::fs::write(out, format!("device owner check available: {owner}\ntouch id set up: {bio}\n"));
+        return Ok(());
+    }
+    // `--import-run <profile-dir> <file>`: imports bookmarks and history from
+    // the first readable browser into a throwaway profile; writes counts.
+    if let Some(i) = args.iter().position(|a| a == "--import-run") {
+        let (Some(dir), Some(out)) = (args.get(i + 1), args.get(i + 2)) else { return Ok(()) };
+        let line = match import::sources().into_iter().next() {
+            Some(src) => {
+                let r = import::run(&src, import::What { bookmarks: true, history: true, passwords: false, cookies: false, settings: false });
+                let mut p = profile::Profile::first_run();
+                let before = p.bookmarks.len();
+                for b in r.bookmarks {
+                    if !p.bookmarks.iter().any(|x| x.url == b.url) {
+                        p.bookmarks.insert(0, b);
+                    }
+                }
+                let added = p.bookmarks.len() - before;
+                p.history.extend(r.history);
+                // SAFETY of data: written only to the throwaway folder given.
+                unsafe { std::env::set_var("INERT_PROFILE_DIR", dir) };
+                p.save(false);
+                let saved = std::fs::read_to_string(std::path::Path::new(dir).join("profile.json")).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).and_then(|v| v["bookmarks"].as_array().map(|a| a.len())).unwrap_or(0);
+                format!("source {}: bookmarks imported {added}, bookmarks in saved profile {saved}, history rows {}, errors {:?}\n", src.browser, p.history.len(), r.errors)
+            }
+            None => "no readable browser\n".into(),
+        };
+        let _ = std::fs::write(out, line);
+        return Ok(());
+    }
     // `--import-check <file>`: what the Chrome import can see on this Mac,
     // as counts only (nothing from the browser's data is written out).
     if let Some(out) = args.iter().position(|a| a == "--import-check").and_then(|i| args.get(i + 1)) {
