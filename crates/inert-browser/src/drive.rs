@@ -1118,7 +1118,7 @@ fn look_steps() -> Vec<Step> {
         Shot(s("l16-private")),
         Setup(Box::new(|b| {
             b.close_private_tabs();
-            b.profile.settings.tabs_top = true;
+            b.profile.settings.sidebar = false;
             b.add_tab("inert://bank.example", None, true, None);
         })),
         Pause(2500),

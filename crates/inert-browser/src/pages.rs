@@ -330,9 +330,10 @@ impl Browser {
                 }
             }
         });
-        // Where the tabs live.
+        // Where the tabs start: in the sidebar, or on top with the sidebar
+        // closed. Cmd+S switches between the two at any time.
         ui.add_space(14.0);
-        ui.label(theme::label("Tabs"));
+        ui.label(theme::label("Tabs (Cmd+S switches)"));
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -341,7 +342,7 @@ impl Browser {
                 let resp = ui.interact(r, Id::unique(("layout", top)), Sense::click());
                 crate::drive::reg(key, r);
                 let h = ctx.animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.12);
-                let on = self.profile.settings.tabs_top == top;
+                let on = self.profile.settings.sidebar != top;
                 let p = ui.painter();
                 p.rect_filled(r, 14.0, RAISED.lerp_to_gamma(HOVER, h));
                 p.rect_stroke(r, 14.0, Stroke::new(1.0, if on { WHITE } else { LINE }), egui::StrokeKind::Inside);
@@ -352,7 +353,7 @@ impl Browser {
                 }
                 p.text(pos2(r.left() + 38.0, r.center().y), egui::Align2::LEFT_CENTER, name, FontId::new(14.0, sans_medium()), FG);
                 if resp.clicked() {
-                    self.profile.settings.tabs_top = top;
+                    self.profile.settings.sidebar = !top;
                     self.dirty = true;
                 }
             }
@@ -1138,7 +1139,7 @@ impl Browser {
         if ui.checkbox(&mut self.profile.settings.bookmarks_bar, "Show bookmarks bar").changed() {
             self.dirty = true;
         }
-        if ui.checkbox(&mut self.profile.settings.sidebar, "Show the tab sidebar (Cmd+S)").changed() {
+        if ui.checkbox(&mut self.profile.settings.sidebar, "Tabs in the sidebar (off: tabs on top) · Cmd+S").changed() {
             self.dirty = true;
         }
 

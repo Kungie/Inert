@@ -127,7 +127,8 @@ pub struct Settings {
     /// The sidebar's width in points (dragged at its edge).
     #[serde(default = "side_w")]
     pub sidebar_w: f32,
-    /// Tabs in a strip on top instead of the sidebar.
+    /// Unused since 2026-11-11: the tabs follow the sidebar (open: in it;
+    /// closed: on top). Kept so older profiles still load.
     #[serde(default)]
     pub tabs_top: bool,
     /// Assistant panel: 0 sidebar, 1 floating.

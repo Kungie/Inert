@@ -1998,7 +1998,7 @@ impl eframe::App for Browser {
         #[cfg(target_os = "macos")]
         if !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
             // Centered on the toolbar's line, or on the tab strip's when tabs are on top.
-            let y = if self.profile.onboarded && self.profile.settings.tabs_top { crate::chrome::STRIP_H as f64 / 2.0 } else { crate::chrome::LIGHTS.1 };
+            let y = if self.profile.onboarded && !self.profile.settings.sidebar { crate::chrome::STRIP_H as f64 / 2.0 } else { crate::chrome::LIGHTS.1 };
             let at = web::mac::traffic_lights(frame, crate::chrome::LIGHTS.0, y);
             if std::env::var_os("INERT_DEBUG_LIGHTS").is_some() && ctx.cumulative_pass_nr() % 120 == 5 {
                 eprintln!("traffic lights: close button center = {at:?}");

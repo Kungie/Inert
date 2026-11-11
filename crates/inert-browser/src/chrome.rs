@@ -143,8 +143,10 @@ impl Browser {
     pub fn chrome(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let win = ui.max_rect();
-        let top = self.profile.settings.tabs_top;
-        let side_t = if top { 0.0 } else { ease(ctx.animate_bool_with_time(Id::unique("side-open"), self.profile.settings.sidebar, 0.28)) };
+        // One layout, two states: with the sidebar open the tabs live in it;
+        // with it closed they move to a strip along the top.
+        let top = !self.profile.settings.sidebar;
+        let side_t = ease(ctx.animate_bool_with_time(Id::unique("side-open"), self.profile.settings.sidebar, 0.28));
         let side_full = self.profile.settings.sidebar_w.clamp(SIDE_MIN, SIDE_MAX);
         let side_w = (side_full * side_t).round();
         // An empty bookmarks bar takes no room.
@@ -1056,7 +1058,7 @@ impl Browser {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
         let ui = &mut child;
         ui.spacing_mut().item_spacing.x = 2.0;
-        if side_t < 0.5 && !top {
+        if side_t < 0.5 {
             let tg = icons::button(ui, Icon::Sidebar, 30.0, "Show sidebar  Cmd+S");
             crate::drive::reg("sidebar", tg.rect);
             if tg.clicked() {
@@ -1087,8 +1089,8 @@ impl Browser {
         // The address bar: centered in what is left, never wider than it reads well.
         let right_w = 5.0 * 32.0 + 8.0;
         let avail = ui.available_width() - right_w;
-        // With tabs on top it runs the whole width of the header.
-        let w = if top { avail.max(200.0) } else { avail.clamp(200.0, 820.0) };
+        // The address bar runs the whole header, from the nav buttons to the tools.
+        let w = avail.max(200.0);
         let pad = ((avail - w) / 2.0).max(0.0);
         ui.add_space(pad);
         self.omnibox(ui, w);
