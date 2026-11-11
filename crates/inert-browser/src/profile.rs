@@ -21,8 +21,9 @@ impl Provider {
     }
     pub fn default_model(self) -> &'static str {
         match self {
-            Provider::Claude => "claude-opus-5-5",
-            Provider::Gpt => "gpt-5",
+            // The everyday tier of each: same price ($2 / $10 per MTok).
+            Provider::Claude => "claude-sonnet-5-5",
+            Provider::Gpt => "gpt-6.1-sol",
         }
     }
 }
@@ -107,6 +108,10 @@ pub struct Settings {
     /// The tab sidebar is showing (Cmd+S hides it).
     #[serde(default = "yes")]
     pub sidebar: bool,
+    /// Dark look (dark frame, blue glyphs) instead of the blue frame.
+    /// `None` until the user picks one on first run.
+    #[serde(default)]
+    pub dark: Option<bool>,
 }
 
 impl Default for Settings {
@@ -125,6 +130,7 @@ impl Default for Settings {
             cookie_banners: true,
             cookie_block: Vec::new(),
             sidebar: true,
+            dark: None,
         }
     }
 }

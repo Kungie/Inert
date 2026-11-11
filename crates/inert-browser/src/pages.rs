@@ -94,7 +94,7 @@ impl Browser {
         let rect = ui.max_rect();
         let ctx = ui.ctx().clone();
         let p = ui.painter().clone();
-        p.rect_filled(rect, 0.0, BLUE);
+        p.rect_filled(rect, 0.0, theme::frame());
         crate::art::glyphs(&p, &ctx, rect, ctx.pointer_latest_pos(), &crate::art::Glyphs::hero(ctx.input(|i| i.time) as f32));
         if ctx.input(|i| i.focused) {
             ctx.request_repaint_after(std::time::Duration::from_millis(170));
@@ -106,15 +106,15 @@ impl Browser {
         }
         // Corner tags, as on the card this theme comes from.
         let m = 72.0;
-        p.rect_filled(Rect::from_min_max(pos2(rect.left() + m - 16.0, rect.top() + 56.0), pos2(rect.left() + m + 150.0, rect.top() + 112.0)), 28.0, BLUE);
-        crate::art::mark(&p, pos2(rect.left() + m + 15.0, rect.top() + 84.0), 15.0, WHITE);
-        p.text(pos2(rect.left() + m + 42.0, rect.top() + 84.0), egui::Align2::LEFT_CENTER, "INERT", FontId::new(22.0, pixel()), WHITE);
-        p.rect_filled(Rect::from_min_max(pos2(rect.right() - m - 80.0, rect.top() + 60.0), pos2(rect.right() - m + 16.0, rect.top() + 108.0)), 16.0, BLUE);
+        p.rect_filled(Rect::from_min_max(pos2(rect.left() + m - 16.0, rect.top() + 52.0), pos2(rect.left() + m + 170.0, rect.top() + 116.0)), 28.0, theme::frame());
+        crate::art::logo(&p, &ctx, Rect::from_min_size(pos2(rect.left() + m, rect.top() + 60.0), Vec2::splat(48.0)), ctx.input(|i| i.time) as f32, theme::frame());
+        p.text(pos2(rect.left() + m + 62.0, rect.top() + 84.0), egui::Align2::LEFT_CENTER, "INERT", FontId::new(22.0, pixel()), WHITE);
+        p.rect_filled(Rect::from_min_max(pos2(rect.right() - m - 80.0, rect.top() + 60.0), pos2(rect.right() - m + 16.0, rect.top() + 108.0)), 16.0, theme::frame());
         p.text(pos2(rect.right() - m, rect.top() + 76.0), egui::Align2::RIGHT_CENTER, "INERT://", FontId::new(11.0, mono()), WHITE);
         p.text(pos2(rect.right() - m, rect.top() + 92.0), egui::Align2::RIGHT_CENTER, "2026", FontId::new(11.0, mono()), WHITE);
         let foot = p.layout_no_wrap("RUST · SERVO · TLS 1.3 + ML-KEM".to_owned(), FontId::new(10.5, mono()), WHITE);
         let fr = Rect::from_min_size(pos2(rect.right() - m - foot.size().x, rect.bottom() - 40.0 - foot.size().y), foot.size());
-        p.rect_filled(fr.expand2(vec2(14.0, 9.0)), 14.0, BLUE);
+        p.rect_filled(fr.expand2(vec2(14.0, 9.0)), 14.0, theme::frame());
         p.galley(fr.min, foot, WHITE);
 
         let col = Rect::from_min_max(pos2(rect.left() + m, rect.top() + 130.0), pos2(rect.right() - m, rect.bottom() - 40.0));
@@ -122,6 +122,14 @@ impl Browser {
         let clearing = p.add(egui::Shape::Noop);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(col).layout(Layout::top_down(Align::Min)));
         let ui = &mut child;
+        if self.profile.settings.dark.is_none() {
+            ui.add_space((col.height() - 420.0).max(0.0) * 0.5);
+            theme::panel_frame(26, 32.0).show(ui, |ui| {
+                ui.set_width(600.0);
+                self.look_picker(ui, true);
+            });
+            return;
+        }
         if self.signin.import_step {
             ui.add_space((col.height() - 560.0).max(0.0) * 0.5);
             theme::panel_frame(26, 32.0).show(ui, |ui| {
@@ -154,7 +162,7 @@ impl Browser {
                 ui.add_space(16.0);
                 ui.label(theme::label_c("No account. No email. No tracking.", glass(0.85)));
                 let block = Rect::from_min_max(pos2(col.left(), top), pos2(col.left() + 700.0, ui.cursor().top())).expand2(vec2(28.0, 22.0));
-                p.set(clearing, egui::Shape::rect_filled(block, 30.0, BLUE));
+                p.set(clearing, egui::Shape::rect_filled(block, 30.0, theme::frame()));
             }
             Some(prov) => {
                 let (who, hint, console) = match prov {
@@ -165,7 +173,7 @@ impl Browser {
                 let mut finish = false;
                 theme::panel_frame(26, 32.0).show(ui, |ui| {
                     ui.set_width(600.0);
-                    ui.label(theme::label_c("Step 1 of 2 · Your model", ACCENT));
+                    ui.label(theme::label_c("Step 2 of 3 · Your model", ACCENT));
                     ui.add_space(10.0);
                     ui.label(theme::title(&format!("Connect {}.", prov.name()), 38.0));
                     ui.add_space(8.0);
@@ -224,6 +232,65 @@ impl Browser {
         }
     }
 
+    /// Blue or dark: two previews of the window. On first run it is the
+    /// opening question; in Settings it switches live.
+    fn look_picker(&mut self, ui: &mut Ui, first_run: bool) {
+        if first_run {
+            ui.label(theme::label_c("Step 1 of 3 · Look", ACCENT));
+            ui.add_space(10.0);
+            ui.label(theme::title("How should Inert look?", 38.0));
+            ui.add_space(8.0);
+            ui.label(RichText::new("Blue is bright and loud. Dark keeps the letters blue on near-black and is easier on the eyes. You can change it later in Settings.").font(FontId::new(15.0, sans())).color(MUTED));
+            ui.add_space(22.0);
+        }
+        let ctx = ui.ctx().clone();
+        let cur = self.profile.settings.dark;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 14.0;
+            for (dark, name, key) in [(false, "Blue", "look:blue"), (true, "Dark", "look:dark")] {
+                // Ids of their own: the previews paint a lot, and the two
+                // cards must never share a response.
+                let (r, _) = ui.allocate_exact_size(vec2(262.0, 176.0), Sense::hover());
+                let resp = ui.interact(r, Id::unique(("look-card", dark)), Sense::click());
+                crate::drive::reg(key, r);
+                let h = ctx.animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.14);
+                let on = cur == Some(dark);
+                let p = ui.painter().clone();
+                // A small window: frame, sidebar lines, page card.
+                let pv = Rect::from_min_size(r.min, vec2(r.width(), 136.0)).translate(vec2(0.0, -2.0 * h));
+                let fc = if dark { theme::FRAME_DARK } else { BLUE };
+                p.rect_filled(pv, 16.0, fc);
+                let was = theme::is_dark();
+                theme::set_dark(dark);
+                crate::art::glyphs(&p, &ctx, pv.shrink(4.0), None, &crate::art::Glyphs::hero(ctx.input(|i| i.time) as f32 * 0.5));
+                theme::set_dark(was);
+                let card = Rect::from_min_max(pv.min + vec2(78.0, 26.0), pv.max - vec2(10.0, 10.0));
+                p.rect_filled(card, 10.0, BG);
+                for i in 0..4 {
+                    let y = pv.top() + 34.0 + i as f32 * 14.0;
+                    p.rect_filled(Rect::from_min_size(pos2(pv.left() + 12.0, y), vec2(54.0 - i as f32 * 6.0, 6.0)), 3.0, glass(if i == 1 { 0.6 } else { 0.25 }));
+                }
+                p.rect_filled(Rect::from_min_size(pos2(pv.left() + 86.0, pv.top() + 9.0), vec2(card.width() - 16.0, 10.0)), 5.0, well(0.5));
+                crate::chrome::round_corners(&p, pv, 16.0, PANEL);
+                p.rect_stroke(pv, 16.0, Stroke::new(if on { 2.0 } else { 1.0 }, if on { WHITE } else { glass(0.12 + 0.2 * h) }), egui::StrokeKind::Outside);
+                let ly = pv.bottom() + 22.0;
+                p.circle_stroke(pos2(r.left() + 9.0, ly), 7.0, Stroke::new(1.4, if on { WHITE } else { MUTED }));
+                if on {
+                    p.circle_filled(pos2(r.left() + 9.0, ly), 3.5, WHITE);
+                }
+                p.text(pos2(r.left() + 24.0, ly), egui::Align2::LEFT_CENTER, name, FontId::new(15.0, sans_medium()), FG);
+                if resp.clicked() {
+                    self.profile.settings.dark = Some(dark);
+                    theme::set_dark(dark);
+                    self.dirty = true;
+                }
+            }
+        });
+        if ctx.input(|i| i.focused) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(170));
+        }
+    }
+
     // ------------------------------------------------------------------ pages
 
     pub fn page(&mut self, ui: &mut Ui, p: Page) {
@@ -256,7 +323,7 @@ impl Browser {
         // The hero: the glyph card itself, alive under the cursor.
         let (hero, _) = ui.allocate_exact_size(vec2(w, 268.0), Sense::hover());
         let p = ui.painter().clone();
-        p.rect_filled(hero, 0.0, BLUE);
+        p.rect_filled(hero, 0.0, theme::frame());
         crate::art::glyphs(&p, &ctx, hero, ctx.pointer_latest_pos(), &crate::art::Glyphs::hero(ctx.input(|i| i.time) as f32));
         if ctx.input(|i| i.focused) {
             ctx.request_repaint_after(std::time::Duration::from_millis(170));
@@ -266,15 +333,15 @@ impl Browser {
         let job = egui::text::LayoutJob::simple(head.to_owned(), FontId::new(34.0, sans()), WHITE, f32::INFINITY);
         let galley = ui.fonts_mut(|f| f.layout_job(job));
         let at = pos2(hero.left() + 30.0, hero.bottom() - 62.0 - galley.size().y);
-        p.rect_filled(Rect::from_min_size(at, galley.size()).expand2(vec2(18.0, 12.0)), 18.0, BLUE);
+        p.rect_filled(Rect::from_min_size(at, galley.size()).expand2(vec2(18.0, 12.0)), 18.0, theme::frame());
         p.galley(at, galley, WHITE);
         let tag = Rect::from_min_max(pos2(hero.right() - 120.0, hero.top() + 18.0), pos2(hero.right() - 14.0, hero.top() + 60.0));
-        p.rect_filled(tag, 12.0, BLUE);
+        p.rect_filled(tag, 12.0, theme::frame());
         p.text(pos2(hero.right() - 28.0, hero.top() + 32.0), egui::Align2::RIGHT_CENTER, "INERT://", FontId::new(11.0, mono()), WHITE);
         p.text(pos2(hero.right() - 28.0, hero.top() + 47.0), egui::Align2::RIGHT_CENTER, "NEW TAB", FontId::new(11.0, mono()), WHITE);
-        let mk = pos2(hero.left() + 46.0, hero.top() + 44.0);
-        p.circle_filled(mk, 26.0, BLUE);
-        crate::art::mark(&p, mk, 15.0, WHITE);
+        let lr = Rect::from_min_size(hero.min + vec2(22.0, 20.0), Vec2::splat(48.0));
+        p.rect_filled(lr.expand(8.0), 18.0, theme::frame());
+        crate::art::logo(&p, &ctx, lr, ctx.input(|i| i.time) as f32, theme::frame());
         crate::chrome::round_corners(&p, hero, 26.0, BG);
 
         // The composer overlaps the hero's lower edge.
@@ -747,7 +814,10 @@ impl Browser {
             ui.ctx().data_mut(|d| d.insert_temp(key, k));
         }
 
-        section(ui, "02", "Search");
+        section(ui, "02", "Look");
+        self.look_picker(ui, false);
+
+        section(ui, "03", "Search");
         ui.horizontal(|ui| {
             for e in SearchEngine::ALL {
                 if ui.selectable_label(self.profile.settings.search == e, e.name()).clicked() {
@@ -777,7 +847,7 @@ impl Browser {
         }
         ui.label(theme::muted("Applies to tabs opened from now on. Any page can switch engines from its site security panel."));
 
-        section(ui, "03", "Privacy & Shield");
+        section(ui, "04", "Privacy & Shield");
         let mut on = self.profile.settings.adblock;
         if ui.checkbox(&mut on, "Block ads & trackers on web pages (EasyList + EasyPrivacy)").changed() {
             self.profile.settings.adblock = on;
@@ -812,20 +882,20 @@ impl Browser {
             self.dirty = true;
         }
 
-        section(ui, "04", "Extensions");
+        section(ui, "05", "Extensions");
         self.extensions_settings(ui);
 
-        section(ui, "05", "Passwords & import");
+        section(ui, "06", "Passwords & import");
         self.passwords_settings(ui);
 
-        section(ui, "06", "VPN");
+        section(ui, "07", "VPN");
         let s = self.vpn.status.clone();
         ui.label(theme::body(if s.installed { "Mullvad is installed. Open the VPN pill at the foot of the sidebar to connect or pick a location." } else { "Install Mullvad VPN to enable the built-in VPN." }));
         if s.installed {
             ui.label(theme::muted(&format!("Status: {}{}", s.state, if s.connected() { format!(" · {}, {}", s.city, s.country) } else { String::new() })));
         }
 
-        section(ui, "07", "Performance");
+        section(ui, "08", "Performance");
         if ui.checkbox(&mut self.profile.settings.memory_saver, "Memory saver: unload web tabs unused for 15 minutes (Inbox tabs stay awake)").changed() {
             self.dirty = true;
         }
@@ -836,7 +906,7 @@ impl Browser {
             self.dirty = true;
         }
 
-        section(ui, "08", "About");
+        section(ui, "09", "About");
         ui.label(theme::body("Inert Browser 0.1 — Rust, egui + wgpu, Servo and WebKit for the unsecured web."));
         ui.label(theme::muted("inert:// protocol v1 · TLS 1.3 with X25519MLKEM768 · Ed25519-signed manifests."));
         ui.label(theme::muted("Typefaces: Geist Sans, Mono, Pixel and Serif by Vercel (SIL Open Font License)."));

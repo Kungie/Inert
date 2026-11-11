@@ -5,8 +5,24 @@
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, RichText, Stroke, vec2};
 use std::sync::Arc;
 
-// The frame: the window itself.
+// The frame: the window itself. Blue, or near-black in the dark look.
 pub const BLUE: Color32 = Color32::from_rgb(31, 77, 255);
+pub const FRAME_DARK: Color32 = Color32::from_rgb(5, 6, 11);
+
+static DARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_dark(on: bool) {
+    DARK.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn is_dark() -> bool {
+    DARK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The window frame's color for the current look.
+pub fn frame() -> Color32 {
+    if is_dark() { FRAME_DARK } else { BLUE }
+}
 pub const BLUE_DEEP: Color32 = Color32::from_rgb(20, 52, 204);
 // Dark surfaces: content card, popovers, panels.
 pub const BG: Color32 = Color32::from_rgb(9, 11, 18);

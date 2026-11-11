@@ -139,7 +139,7 @@ impl Browser {
         // The frame is one blue card. Its glyph map shows on the sidebar and
         // the bars; the page card covers the rest.
         let p = ui.painter().clone();
-        p.rect_filled(win, 0.0, BLUE);
+        p.rect_filled(win, 0.0, theme::frame());
         let ptr = ctx.pointer_latest_pos();
         let g = crate::art::Glyphs::frame();
         crate::art::glyphs(&p, &ctx, Rect::from_min_max(win.min, pos2(win.left() + side_w, win.bottom())), ptr, &g);
@@ -178,7 +178,7 @@ impl Browser {
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(card).layout(Layout::top_down(Align::Min)));
             child.set_clip_rect(card);
             self.content(&mut child);
-            round_corners(&p, card, CARD_R, BLUE);
+            round_corners(&p, card, CARD_R, theme::frame());
             p.rect_stroke(card, CARD_R, Stroke::new(1.0, glass(0.16)), egui::StrokeKind::Inside);
         });
         self.popovers(&ctx);
@@ -2044,6 +2044,43 @@ impl Browser {
         }
     }
 
+    /// Cut / copy / paste / select all / undo / redo from the Edit menu
+    /// (and their shortcuts). A focused WebKit page gets the native action;
+    /// everything else, egui's fields and Servo pages included, gets egui
+    /// input on the next frame.
+    fn edit_command(&mut self, what: &str) {
+        let egui_focus = self.ctx.memory(|m| m.focused().is_some());
+        #[cfg(target_os = "macos")]
+        if !egui_focus {
+            if let Some(Kind::Web(w)) = self.active_tab().map(|t| &t.kind) {
+                if let Some(v) = &w.view {
+                    crate::web::mac::edit_action(v, what);
+                    return;
+                }
+            }
+        }
+        let _ = egui_focus;
+        let cmd = egui::Modifiers::COMMAND;
+        let key = |k: egui::Key, m: egui::Modifiers| {
+            [true, false].map(|pressed| egui::Event::Key { key: k, physical_key: Some(k), pressed, repeat: false, modifiers: m })
+        };
+        match what {
+            "copy" => self.pending_input.push(egui::Event::Copy),
+            "cut" => self.pending_input.push(egui::Event::Cut),
+            "paste" => {
+                #[cfg(target_os = "macos")]
+                if let Some(t) = crate::web::mac::clipboard_text() {
+                    self.pending_input.push(egui::Event::Paste(t));
+                }
+            }
+            "select-all" => self.pending_input.extend(key(egui::Key::A, cmd)),
+            "undo" => self.pending_input.extend(key(egui::Key::Z, cmd)),
+            "redo" => self.pending_input.extend(key(egui::Key::Z, cmd | egui::Modifiers::SHIFT)),
+            _ => {}
+        }
+        self.ctx.request_repaint();
+    }
+
     pub fn on_menu(&mut self, id: &str) {
         match id {
             "new-tab" => {
@@ -2056,6 +2093,7 @@ impl Browser {
             }
             "reopen" => self.reopen_closed(),
             "sidebar" => self.toggle_sidebar(),
+            s if s.starts_with("edit-") => self.edit_command(&s[5..]),
             "focus-omnibox" => self.omni.focus = true,
             "reload" => self.reload(),
             "back" => self.go_back(),

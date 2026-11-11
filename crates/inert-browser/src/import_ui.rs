@@ -15,6 +15,48 @@ impl Browser {
     /// Source picker, checkboxes, Import button and the result. `onboarding`
     /// adds Skip / Continue, which finish the first run.
     pub fn import_panel(&mut self, ui: &mut Ui, onboarding: bool) {
+        if self.import.sources.is_empty() && !self.import.blocked.is_empty() {
+            // The data is there, but macOS protects it until the user allows it.
+            let names = self.import.blocked.join(", ");
+            ui.label(theme::label_c("macOS is protecting this data", WARN));
+            ui.add_space(6.0);
+            ui.label(theme::body(&format!("{names} is on this Mac, but macOS keeps other apps out of its data. Allow Inert once:")));
+            ui.add_space(8.0);
+            for (n, t) in [("1", "Open Privacy & Security → Full Disk Access."), ("2", "Turn on Inert (add it with + if it isn't listed)."), ("3", "Come back and press Try again.")] {
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                    ui.painter().circle_filled(r.center(), 10.0, BLUE);
+                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, n, FontId::new(11.0, mono()), WHITE);
+                    ui.label(theme::body(t));
+                });
+            }
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                let o = big(ui, "Open Privacy settings", true);
+                crate::drive::reg("import:privacy", o.rect);
+                if o.clicked() {
+                    let _ = std::process::Command::new("open").arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles").spawn();
+                }
+                let t = big(ui, "Try again", false);
+                crate::drive::reg("import:retry", t.rect);
+                if t.clicked() {
+                    self.import.sources = import::sources();
+                    self.import.blocked = import::blocked();
+                    self.import.pick = 0;
+                }
+                if onboarding {
+                    let s = big(ui, "Skip", false);
+                    crate::drive::reg("import:skip", s.rect);
+                    if s.clicked() {
+                        self.finish_onboarding();
+                    }
+                }
+            });
+            ui.add_space(10.0);
+            ui.label(theme::muted("Inert reads only the browser's own files, and only when you press Import. You can turn the access off again afterwards."));
+            return;
+        }
         if self.import.sources.is_empty() {
             ui.label(theme::body("No Chrome, Brave, Edge, Arc, Vivaldi or Chromium profile was found on this Mac."));
             if onboarding {
@@ -225,7 +267,7 @@ impl Browser {
 
     /// Step 2 of onboarding, in the sign-in screen's style.
     pub fn import_screen(&mut self, ui: &mut Ui) {
-        ui.label(theme::label_c("Step 2 of 2 · Import", ACCENT));
+        ui.label(theme::label_c("Step 3 of 3 · Import", ACCENT));
         ui.add_space(10.0);
         ui.label(theme::title("Bring Chrome with you.", 38.0));
         ui.add_space(8.0);

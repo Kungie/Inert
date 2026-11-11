@@ -95,6 +95,17 @@ pub fn sources() -> Vec<Source> {
     out
 }
 
+/// Browsers whose data folder exists but macOS won't let Inert read
+/// (Privacy & Security protects other apps' data).
+pub fn blocked() -> Vec<&'static str> {
+    let Some(base) = dirs::data_dir() else { return Vec::new() };
+    [("Chrome", "Google/Chrome"), ("Brave", "BraveSoftware/Brave-Browser"), ("Edge", "Microsoft Edge"), ("Arc", "Arc/User Data"), ("Vivaldi", "Vivaldi"), ("Chromium", "Chromium")]
+        .into_iter()
+        .filter(|(_, rel)| matches!(std::fs::read_dir(base.join(rel)), Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied))
+        .map(|(n, _)| n)
+        .collect()
+}
+
 /// Profiles under a Chromium "User Data" folder (names from `Local State`).
 pub fn profiles_in(root: &Path, browser: &str, keychain: (String, String)) -> Vec<Source> {
     let names: Value = std::fs::read_to_string(root.join("Local State")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);

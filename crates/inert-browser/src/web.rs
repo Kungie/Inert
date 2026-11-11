@@ -200,6 +200,44 @@ pub mod mac {
         const ENCODING: Encoding = Encoding::Struct("CGRect", &[Pt::ENCODING, Sz::ENCODING]);
     }
 
+    /// Sends an Edit-menu action (cut:, copy:, paste:, selectAll:, undo:,
+    /// redo:) to a web view.
+    pub fn edit_action(view: &wry::WebView, what: &str) {
+        use wry::WebViewExtMacOS;
+        let wv = view.webview();
+        let nil: *mut AnyObject = std::ptr::null_mut();
+        unsafe {
+            match what {
+                "cut" => { let _: () = msg_send![&*wv, cut: nil]; }
+                "copy" => { let _: () = msg_send![&*wv, copy: nil]; }
+                "paste" => { let _: () = msg_send![&*wv, paste: nil]; }
+                "select-all" => { let _: () = msg_send![&*wv, selectAll: nil]; }
+                "undo" | "redo" => {
+                    let um: *mut AnyObject = msg_send![&*wv, undoManager];
+                    if !um.is_null() {
+                        if what == "undo" { let _: () = msg_send![um, undo]; } else { let _: () = msg_send![um, redo]; }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The text on the system clipboard, if there is any.
+    pub fn clipboard_text() -> Option<String> {
+        use objc2::runtime::AnyClass;
+        let cls = AnyClass::get(c"NSPasteboard")?;
+        let ty = objc2_foundation::NSString::from_str("public.utf8-plain-text");
+        unsafe {
+            let pb: *mut AnyObject = msg_send![cls, generalPasteboard];
+            if pb.is_null() {
+                return None;
+            }
+            let s: *mut objc2_foundation::NSString = msg_send![pb, stringForType: &*ty];
+            s.as_ref().map(|s| s.to_string())
+        }
+    }
+
     /// Rounds a web view's corners so it fits the page card.
     pub fn round(view: &wry::WebView, radius: f64) {
         use wry::WebViewExtMacOS;

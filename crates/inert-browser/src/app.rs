@@ -222,6 +222,7 @@ pub struct Browser {
     pub shot: Option<crate::shot::Shot>,
     pub driver: Option<crate::drive::Driver>,
     pub overlay_rects: Vec<egui::Rect>,
+    pub pending_input: Vec<egui::Event>,
     pub content_rect: egui::Rect,
     pub sites: Vec<(String, String)>,
     /// Servo, created on first use.
@@ -246,6 +247,8 @@ pub struct ImportState {
     /// What the last import brought over, one line per kind.
     pub summary: Vec<String>,
     pub errors: Vec<String>,
+    /// Browsers whose data folder macOS wouldn't let Inert read.
+    pub blocked: Vec<&'static str>,
 }
 
 impl Browser {
@@ -260,6 +263,7 @@ impl Browser {
             let _ = std::fs::remove_dir_all(Profile::dir(true));
         }
         let profile = Profile::load(demo);
+        theme::set_dark(profile.settings.dark == Some(true));
         let (tx, rx) = channel();
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("tokio runtime");
         let menu = crate::menu::AppMenu::install(tx.clone(), ctx.clone());
@@ -298,6 +302,7 @@ impl Browser {
             shot: shot_dir.map(crate::shot::Shot::new),
             driver: drive_dir.map(crate::drive::Driver::new),
             overlay_rects: Vec::new(),
+            pending_input: Vec::new(),
             content_rect: egui::Rect::NOTHING,
             sites: Vec::new(),
             servo: None,
@@ -311,6 +316,7 @@ impl Browser {
         };
         b.refresh_sites();
         b.import.sources = crate::import::sources();
+        b.import.blocked = crate::import::blocked();
         if demo {
             // The demo profile imports from a fake Chrome profile, never the real one.
             match crate::import::write_fixture(&Profile::dir(true).join("chrome-demo"), "demo-safe-storage") {
@@ -1166,6 +1172,9 @@ thread_local! {
 
 impl eframe::App for Browser {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // Edit-menu commands (Cmd+C/V/X/A/Z) arrive as menu events; they
+        // reach egui's text fields as input on the next frame.
+        raw.events.append(&mut self.pending_input);
         if let Some(d) = &mut self.driver {
             d.inject(raw);
         }

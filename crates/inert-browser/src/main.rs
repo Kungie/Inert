@@ -40,6 +40,14 @@ fn main() -> eframe::Result {
     let demo = args.iter().any(|a| a == "--demo");
     let shot = args.iter().position(|a| a == "--shot").and_then(|i| args.get(i + 1)).map(std::path::PathBuf::from);
     let drive = args.iter().position(|a| a == "--drive").and_then(|i| args.get(i + 1)).map(std::path::PathBuf::from);
+    // `--write-icon <png> [size]`: the app icon, for scripts/bundle.sh.
+    if let Some(out) = args.iter().position(|a| a == "--write-icon").and_then(|i| args.get(i + 1)) {
+        let n = args.iter().position(|a| a == "--write-icon").and_then(|i| args.get(i + 2)).and_then(|s| s.parse().ok()).unwrap_or(1024);
+        drive::save_png(std::path::Path::new(out), &art::icon_image(n));
+        return Ok(());
+    }
+    let icon = art::icon_image(256);
+    let icon = egui::IconData { rgba: icon.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect(), width: 256, height: 256 };
 
     let mut vp = egui::ViewportBuilder::default()
         .with_title("Inert")
@@ -48,7 +56,8 @@ fn main() -> eframe::Result {
         .with_fullsize_content_view(true)
         .with_titlebar_shown(false)
         .with_title_shown(false)
-        .with_transparent(false);
+        .with_transparent(false)
+        .with_icon(icon);
     if shot.is_some() || drive.is_some() {
         // INERT_SHOT_RECT="x,y,w,h" (points) — must match scripts/walkthrough.sh.
         let r: Vec<f32> = std::env::var("INERT_SHOT_RECT").unwrap_or_else(|_| "40,40,1440,900".into()).split(',').filter_map(|v| v.trim().parse().ok()).collect();

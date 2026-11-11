@@ -38,17 +38,35 @@ pub struct Glyphs {
     pub lens: f32,
     /// Share of the field that stays empty (0..1).
     pub sea: f32,
+    /// A second ink: some glyphs take this color instead (two-tone maps).
+    pub alt: Option<Color32>,
+}
+
+/// Blue glyph ink for the dark look.
+fn blue_ink(a: f32) -> Color32 {
+    Color32::from_rgba_unmultiplied(70, 112, 255, (a * 255.0) as u8)
 }
 
 impl Glyphs {
     /// The quiet map on the window frame.
     pub fn frame() -> Self {
-        Glyphs { color: theme::glass(0.15), size: 9.0, time: 0.0, lens: 0.7, sea: 0.56 }
+        let color = if theme::is_dark() { blue_ink(0.30) } else { theme::glass(0.15) };
+        Glyphs { color, size: 9.0, time: 0.0, lens: 0.7, sea: 0.56, alt: None }
     }
 
-    /// The bright map on a hero card.
+    /// The bright map on a hero card. In the dark look the letters are blue
+    /// on near-black, with a few white ones.
     pub fn hero(time: f32) -> Self {
-        Glyphs { color: theme::glass(0.62), size: 9.5, time, lens: 1.0, sea: 0.47 }
+        if theme::is_dark() {
+            Glyphs { color: blue_ink(0.85), size: 9.5, time, lens: 1.0, sea: 0.47, alt: Some(theme::glass(0.55)) }
+        } else {
+            Glyphs { color: theme::glass(0.62), size: 9.5, time, lens: 1.0, sea: 0.47, alt: None }
+        }
+    }
+
+    /// The logo tile: blue and white letters flowing behind the keyhole.
+    pub fn logo(time: f32, size: f32) -> Self {
+        Glyphs { color: blue_ink(0.95), size, time, lens: 0.0, sea: 0.40, alt: Some(theme::glass(0.85)) }
     }
 }
 
@@ -74,8 +92,11 @@ pub fn glyphs(p: &Painter, ctx: &egui::Context, rect: Rect, pointer: Option<Pos2
     // The cursor only matters inside (or just outside) this rect.
     let pointer = pointer.filter(|pt| g.lens > 0.0 && rect.expand(reach).contains(*pt));
     let mut row = String::with_capacity(((c1 - c0).max(0) * 2) as usize);
+    let mut row2 = String::with_capacity(((c1 - c0).max(0) * 2) as usize);
     for y in r0..r1 {
         row.clear();
+        row2.clear();
+        let mut any2 = false;
         let py = y as f32 * rh;
         let near_row = pointer.is_some_and(|pt| (py - pt.y).abs() < reach);
         let mut any = false;
@@ -101,20 +122,139 @@ pub fn glyphs(p: &Painter, ctx: &egui::Context, rect: Rect, pointer: Option<Pos2
                 any = true;
                 RAMP[(i as usize).min(RAMP.len() - 1)]
             };
-            row.push(ch as char);
+            // Two-tone maps send some letters to the second ink, in streaks
+            // that drift with the map.
+            let second = g.alt.is_some() && ch != b' ' && noise(x as f32 * 0.21 + t * 0.4, y as f32 * 0.5) > 0.62;
+            if second {
+                row.push(' ');
+                row2.push(ch as char);
+                any2 = true;
+            } else {
+                row.push(ch as char);
+                row2.push(' ');
+            }
             row.push(' ');
+            row2.push(' ');
         }
         if any {
             p.text(pos2(c0 as f32 * cell, py), egui::Align2::LEFT_TOP, &row, font.clone(), g.color);
         }
+        if let (true, Some(c2)) = (any2, g.alt) {
+            p.text(pos2(c0 as f32 * cell, py), egui::Align2::LEFT_TOP, &row2, font.clone(), c2);
+        }
     }
 }
 
-/// The Inert mark: the letter I, sealed in a ring.
+/// The Inert mark: a keyhole sealed in a ring.
 pub fn mark(p: &Painter, c: Pos2, r: f32, color: Color32) {
-    let s = egui::Stroke::new((r * 0.17).max(1.4), color);
-    p.circle_stroke(c, r, s);
-    p.line_segment([pos2(c.x, c.y - r * 0.48), pos2(c.x, c.y + r * 0.48)], s);
+    p.circle_stroke(c, r, egui::Stroke::new((r * 0.13).max(1.3), color));
+    let head = pos2(c.x, c.y - r * 0.16);
+    p.circle_filled(head, r * 0.25, color);
+    let slot = vec![pos2(c.x - r * 0.10, c.y - r * 0.06), pos2(c.x + r * 0.10, c.y - r * 0.06), pos2(c.x + r * 0.21, c.y + r * 0.50), pos2(c.x - r * 0.21, c.y + r * 0.50)];
+    p.add(egui::Shape::convex_polygon(slot, color, egui::Stroke::NONE));
+}
+
+/// The logo: a rounded tile of blue and white letters flowing behind the
+/// keyhole. `bg` is what the tile sits on (its corners are painted with it).
+pub fn logo(p: &Painter, ctx: &egui::Context, r: Rect, time: f32, bg: Color32) {
+    let rad = r.width() * 0.24;
+    p.rect_filled(r, rad, Color32::from_rgb(8, 14, 46));
+    let size = (r.width() / 9.0).clamp(4.0, 10.0);
+    glyphs(p, ctx, r, None, &Glyphs::logo(time, size));
+    let c = r.center();
+    p.circle_filled(c, r.width() * 0.30, Color32::from_rgb(8, 14, 46));
+    mark(p, c, r.width() * 0.24, theme::WHITE);
+    crate::chrome::round_corners(p, r, rad, bg);
+}
+
+/// 5×7 pixel letters for the app icon (drawn without a font engine).
+const PIX: [(u8, [&str; 7]); 10] = [
+    (b'I', ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "#####"]),
+    (b'N', ["#...#", "##..#", "#.#.#", "#.#.#", "#..##", "#...#", "#...#"]),
+    (b'E', ["#####", "#....", "#....", "####.", "#....", "#....", "#####"]),
+    (b'R', ["####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"]),
+    (b'T', ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."]),
+    (b'$', ["..#..", ".####", "#.#..", ".###.", "..#.#", "####.", "..#.."]),
+    (b'+', [".....", "..#..", "..#..", "#####", "..#..", "..#..", "....."]),
+    (b'=', [".....", ".....", "#####", ".....", "#####", ".....", "....."]),
+    (b'-', [".....", ".....", ".....", "#####", ".....", ".....", "....."]),
+    (b':', [".....", "..#..", ".....", ".....", ".....", "..#..", "....."]),
+];
+
+/// The app icon as an image: the logo tile on macOS's icon grid.
+pub fn icon_image(n: usize) -> egui::ColorImage {
+    let nf = n as f32;
+    let mut px = vec![Color32::TRANSPARENT; n * n];
+    // macOS icon grid: an 824/1024 rounded square, centered.
+    let (lo, hi) = (nf * 100.0 / 1024.0, nf * 924.0 / 1024.0);
+    let rad = nf * 185.0 / 1024.0;
+    let inside = |x: f32, y: f32| {
+        let cx = x.clamp(lo + rad, hi - rad);
+        let cy = y.clamp(lo + rad, hi - rad);
+        (x - cx).powi(2) + (y - cy).powi(2) <= rad * rad && x >= lo && x <= hi && y >= lo && y <= hi
+    };
+    let navy = [8u8, 14, 46];
+    let blue = [70u8, 112, 255];
+    // Letter grid: cells of 7×9 "pixels" of size `u`.
+    let u = (nf / 240.0).max(1.0);
+    let (cw, ch) = (7.0 * u, 9.0 * u);
+    let c = nf / 2.0;
+    let ring_r = nf * 0.21;
+    let ring_w = nf * 0.028;
+    let clear_r = nf * 0.27;
+    for y in 0..n {
+        for x in 0..n {
+            // 4×4 samples per pixel for smooth edges.
+            let mut acc = [0f32; 4];
+            for sy in 0..4 {
+                for sx in 0..4 {
+                    let fx = x as f32 + (sx as f32 + 0.5) / 4.0;
+                    let fy = y as f32 + (sy as f32 + 0.5) / 4.0;
+                    if !inside(fx, fy) {
+                        continue;
+                    }
+                    let mut col = navy;
+                    let d = ((fx - c).powi(2) + (fy - c).powi(2)).sqrt();
+                    if d > clear_r {
+                        // Flowing letters: a diagonal band field.
+                        let (gx, gy) = ((fx / cw).floor(), (fy / ch).floor());
+                        let v = field(gx * 0.16 + gy * 0.05, gy * 0.20);
+                        if v > 0.47 {
+                            let pick = hash(gx as i32, gy as i32);
+                            let depth = ((v - 0.47) / 0.53 * 2.4).min(1.0);
+                            let k = ((depth * 0.7 + pick * 0.3) * (PIX.len() - 1) as f32) as usize;
+                            let glyph = &PIX[k.min(PIX.len() - 1)].1;
+                            let (lx, ly) = (((fx - gx * cw) / u) as usize, ((fy - gy * ch) / u) as usize);
+                            if lx < 5 && ly < 7 && glyph[ly].as_bytes()[lx] == b'#' {
+                                col = if noise(gx * 0.3, gy * 0.6) > 0.6 { [235, 240, 255] } else { blue };
+                            }
+                        }
+                    }
+                    // The ring and the keyhole.
+                    if (d - ring_r).abs() < ring_w / 2.0 {
+                        col = [255, 255, 255];
+                    }
+                    let (kx, ky) = (fx - c, fy - c);
+                    let head = (kx.powi(2) + (ky + ring_r * 0.16).powi(2)).sqrt() < ring_r * 0.25;
+                    let t = (ky + ring_r * 0.06) / (ring_r * 0.56);
+                    let slot = (0.0..=1.0).contains(&t) && kx.abs() < ring_r * (0.10 + 0.11 * t);
+                    if head || slot {
+                        col = [255, 255, 255];
+                    }
+                    acc[0] += col[0] as f32;
+                    acc[1] += col[1] as f32;
+                    acc[2] += col[2] as f32;
+                    acc[3] += 1.0;
+                }
+            }
+            if acc[3] > 0.0 {
+                let a = acc[3] / 16.0;
+                let k = 1.0 / acc[3];
+                px[y * n + x] = Color32::from_rgba_unmultiplied((acc[0] * k) as u8, (acc[1] * k) as u8, (acc[2] * k) as u8, (a * 255.0) as u8);
+            }
+        }
+    }
+    egui::ColorImage::new([n, n], px)
 }
 
 /// Placeholder pattern for images still loading.

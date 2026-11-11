@@ -55,13 +55,17 @@ impl AppMenu {
                 "Edit",
                 true,
                 &[
-                    &PredefinedMenuItem::undo(None),
-                    &PredefinedMenuItem::redo(None),
+                    // Our own items, not AppKit's: AppKit's send cut:/copy:/paste:
+                    // to the first responder, which for egui's text fields is a
+                    // view that ignores them, so Cmd+V never reached a field.
+                    // `Browser::edit_command` routes them (see chrome.rs).
+                    &item("edit-undo", "Undo", cmd, Some(Code::KeyZ)),
+                    &item("edit-redo", "Redo", cmd_shift, Some(Code::KeyZ)),
                     &PredefinedMenuItem::separator(),
-                    &PredefinedMenuItem::cut(None),
-                    &PredefinedMenuItem::copy(None),
-                    &PredefinedMenuItem::paste(None),
-                    &PredefinedMenuItem::select_all(None),
+                    &item("edit-cut", "Cut", cmd, Some(Code::KeyX)),
+                    &item("edit-copy", "Copy", cmd, Some(Code::KeyC)),
+                    &item("edit-paste", "Paste", cmd, Some(Code::KeyV)),
+                    &item("edit-select-all", "Select All", cmd, Some(Code::KeyA)),
                     &PredefinedMenuItem::separator(),
                     &item("find", "Find…", cmd, Some(Code::KeyF)),
                 ],
