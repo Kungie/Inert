@@ -449,7 +449,7 @@ impl Browser {
         }
     }
 
-    /// The Shield, next to the VPN pill: lit when it is blocking here.
+    /// The Shield, in the toolbar: lit when it is blocking here.
     fn shield_button(&mut self, ui: &mut Ui) {
         let off_here = self.site_here().is_some_and(|s| self.profile.settings.adblock_off.contains(&s));
         let (c, tip, lit) = match (&self.ad.state, self.profile.settings.adblock) {
@@ -483,7 +483,6 @@ impl Browser {
     fn sidebar_footer(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.x = 2.0;
         self.vpn_pill(ui);
-        self.shield_button(ui);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             self.ai_button(ui);
@@ -533,11 +532,10 @@ impl Browser {
         let full = ui.max_rect();
         let ctx = ui.ctx().clone();
         self.frame_drag(ui, full, "strip-drag");
-        let right = Rect::from_min_max(pos2(full.right() - 210.0, full.top()), pos2(full.right() - 10.0, full.bottom()));
+        let right = Rect::from_min_max(pos2(full.right() - 176.0, full.top()), pos2(full.right() - 10.0, full.bottom()));
         let mut ru = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)));
         ru.spacing_mut().item_spacing.x = 4.0;
         self.ai_button(&mut ru);
-        self.shield_button(&mut ru);
         self.vpn_pill(&mut ru);
 
         let tabs = Rect::from_min_max(pos2(full.left() + LEFT_INSET, full.top()), pos2(right.left() - 8.0, full.bottom()));
@@ -1064,7 +1062,7 @@ impl Browser {
         ui.spacing_mut().item_spacing.x = 2.0;
         ui.add_space(8.0);
         // The address bar: centered in what is left, never wider than it reads well.
-        let right_w = 4.0 * 32.0 + 8.0;
+        let right_w = 5.0 * 32.0 + 8.0;
         let avail = ui.available_width() - right_w;
         // With tabs on top it runs the whole width of the header.
         let w = if top { avail.max(200.0) } else { avail.clamp(200.0, 820.0) };
@@ -1093,6 +1091,7 @@ impl Browser {
             self.cookies_refresh();
             self.open_popover(Popover::Cookies, rc.rect);
         }
+        self.shield_button(ui);
         let r = icons::button(ui, Icon::Menu, 30.0, "Menu");
         crate::drive::reg("menu", r.rect);
         if r.clicked() {
@@ -2252,6 +2251,8 @@ impl Browser {
         egui::Area::new(Id::unique("toast")).pivot(egui::Align2::CENTER_BOTTOM).fixed_pos(pos2(r.center().x, r.bottom() - 18.0 + 10.0 * (1.0 - a))).order(egui::Order::Tooltip).interactable(false).show(ctx, |ui| {
             ui.multiply_opacity(a);
             egui::Frame::new().fill(RAISED).stroke(Stroke::new(1.0, glass(0.14))).corner_radius(20).inner_margin(egui::Margin::symmetric(18, 10)).shadow(theme::shadow()).show(ui, |ui| {
+                // One line, however long: the pill grows instead of wrapping.
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 ui.label(RichText::new(t).font(FontId::new(13.0, sans())).color(FG));
             });
         });

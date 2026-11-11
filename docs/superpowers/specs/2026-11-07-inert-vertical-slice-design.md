@@ -563,3 +563,35 @@ WebKit sayfalarında bilinen eksikler: kırpma aracı ve yüzen asistan çalış
 
 Aynı gün: Servo'ya ekran ölçeği iletiliyor (Retina'da sayfalar yarı boyutta çiziliyordu); Shield sol altta VPN'in yanında, "bu sitede" ve "her yerde" anahtarlarıyla (`adblock_off`); sekmeler üstteyken adres çubuğu başlık boyunca uzanır; adı silinen grup yalnız ikonuyla görünür; kurulum sırası açılış → model → görünüm → izinler ve aktarım.
 
+### 18.5 Gizli sekmeler, sayfa araçları ve asistan eklemeleri (2026-11-11)
+
+| Özellik | Nasıl çalışıyor | Sınırı |
+|---|---|---|
+| Gizli sekme (Shift+Cmd+N) | WebKit görünümü, kendi geçici veri deposuyla; diske yazılmaz, başka sekmeyle paylaşılmaz. Geçmişe, Rewind'e, oturuma girmez; site simgesi istenmez. | Yalnız WebKit. Servo tek çerez kavanozu kullandığı için gizli sekmede kullanılmaz. |
+| Her sekme ayrı | Her gizli sekmenin deposu ayrıdır. | Normal sekmeler ortak depoyu kullanır. |
+| Kendini siler | Boşta kalma süresi dolunca gizli sekmeler kapanır (ayar: asla, 5, 15, 30, 60 dk). | Süre, tarayıcıdaki son girdiye göre ölçülür. |
+| İndirmeler kaybolur | Gizli sekmeden inen dosya, sekme kapanınca silinir; İndirilenler'de "Keep" ile tutulur. | — |
+| Pano temizlenir | İlk gizli sekme açılırken panonun sayacı alınır; son gizli sekme kapanırken değişmişse pano boşaltılır. | Kopyalamanın hangi uygulamada yapıldığına bakılmaz. |
+| Panik tuşu (Ctrl+Opt+Cmd+H) | Tüm gizli sekmeleri kapatır, pencereyi simge durumuna alır. | — |
+| Konumumu gizle | Sayfa betiği: konum isteği her zaman "reddedildi" yanıtı alır. | Ağ adresinden çıkan konumu VPN gizler. Betik düzeyinde bir engel. |
+| Kamera ve mikrofon | wry izin işleyicisi "sor" döndürür; WebKit her seferinde sorar. | Gerçek bir sitede denenmedi. |
+| Her zaman gizli siteler | Listedeki site (eTLD+1) normal sekmede açılmaz, gizli sekmeye yönlenir. Ayarlar'dan ya da kilit panelinden eklenir. | — |
+| Gizli favoriler | Anahtar Zinciri'nde tutulur, yer imleri sayfasında Touch ID'den sonra görünür, gizli sekmede açılır. 5 dakikada yeniden kilitlenir. | Touch ID gerçek cihazda denenmedi (demo profili onay verir). |
+| Touch ID kilidi | Ayar açıksa Inert arka plana geçince gizli sekmeler örtülür; Touch ID açar. Gizli sekme görünürken pencere ekran görüntüsüne ve paylaşımına kapatılır (`sharingType`). | Aynı. |
+| Bölünmüş görünüm | Etkin sayfa solda, ikinci sayfa sağda; başlıkta yer değiştir ve kapat. | Sağ bölme WebKit ve inert:// sayfalarını gösterir; Servo ve Inert'in kendi sayfaları solda kalır. |
+| Rewind | Ziyaret edilen sayfanın metni (6000 karakter, en çok 1500 sayfa) `rewind.json` içinde bu Mac'te tutulur; Geçmiş'teki arama sayfa içlerinde de arar. | Gizli sekmeler hatırlanmaz. |
+| Tüm sekmelere sor | Asistan kutusundaki "All tabs" ya da yeni sekmedeki hazır sorular: açık her sayfanın metni toplanır (4 sn sınır), tek soruyla modele gider. | Uyuyan sekmeler yalnız başlık ve adresle katılır. |
+| Özetle | Menü ve sağ tık: sayfa metni modele gider. | Video özeti yok. |
+| Yerinde çeviri | Sayfanın metin düğümleri (en çok 260 parça, 14 bin karakter) kullanıcının modeliyle çevrilir ve yerine yazılır. Anahtar yoksa Google Translate sekmesi açılır. | Uzun sayfalarda yalnız ilk kısım çevrilir. |
+| Anında yanıt | Adres çubuğunda toplama-çarpma burada hesaplanır; kısa bilgiler, web önerileri açıksa DuckDuckGo'nun anında yanıt servisinden gelir. | — |
+| Sesli oku | Seçim, yoksa makale metni macOS `say` ile okunur; tekrar basınca durur. | Sistem sesi ve dili. |
+| Resim içinde resim | Sayfadaki en büyük video için WebKit'in PiP kipi. | Gerçek sitede denenmedi. |
+| Altyazı | Videonun kendi altyazı izlerini (ve YouTube'un altyazı düğmesini) açar. | Canlı konuşma tanıma değil: altyazısı olmayan videoda bir şey yapmaz. |
+| Sakin kip | YouTube, X, Instagram ve TikTok'ta Shorts, akış ve öneri bölümlerini gizleyen stil. | Sitelerin kendi işaretlemesine bağlı; değişirse güncellenmeli. |
+
+Aynı tur: adres çubuğundaki güvenlik göstergesi yalnız renkli kilit (yeşil: doğrulanmış inert://, sarı: yerel geliştirme anahtarı ya da doğrulanıyor, turuncu: sıradan HTTPS sayfası, kırmızı açık kilit: şifresiz ya da doğrulama başarısız); ayrıntı tıklayınca açılır. Sayfa kaydırma sınırını aşınca açılan boşluk `overscroll-behavior: none` ile kapatıldı. Yer imi yokken yer imi çubuğu yer kaplamaz. İçe aktarma kaynaklarına Dia eklendi.
+
+İçe aktarma ve izinler: uygulama kalıcı bir imzayla imzalanmadığı için macOS, her yeni derlemede Tam Disk Erişimi iznini unutuyor. Anahtar Zinciri'nde "Inert Dev" adlı bir kod imzalama sertifikası varsa `scripts/bundle.sh` onu kullanır ve izin kalıcı olur.
+
+Doğrulama: UI testi 80/80 (demo profili, Servo). Yeni özelliklerden gizli sekme, anında yanıt, bölünmüş görünüm, gizli favoriler ve Shield paneli testte; gerisi gerçek sitelerde elle denenmedi.
+

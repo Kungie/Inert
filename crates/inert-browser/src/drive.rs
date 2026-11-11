@@ -370,6 +370,50 @@ impl Driver {
             Click(s("clear:All time")),
             Click(s("clear:go")),
             expect("history.clear_all", 3000, |b| b.profile.visits.is_empty() && b.profile.history.is_empty()),
+            // Private tabs: opened with the shortcut, sealed, and gone without a trace.
+            Press(Key::N, Modifiers::COMMAND | Modifiers::SHIFT),
+            expect("private.tab_opens", 2000, |b| b.active_tab().is_some_and(|t| t.private)),
+            Pause(300),
+            Shot(s("d11-private-tab")),
+            // Instant answers: a sum typed in the address bar.
+            Click(s("omnibox")),
+            Type(s("12*(3+4)")),
+            expect("instant.sum_in_address_bar", 2000, |b| b.omni.sugg.iter().any(|x| x.kind == crate::omnibox::Kind::Answer && x.title == "= 84")),
+            Pause(300),
+            Shot(s("d12-instant-answer")),
+            Press(Key::Escape, Modifiers::NONE),
+            Setup(Box::new(|b| {
+                b.close_private_tabs();
+            })),
+            expect("private.tabs_erased", 2000, |b| !b.tabs.iter().any(|t| t.private)),
+            // The sidebar settles after the row folds away.
+            Pause(500),
+            // Split view: two inert pages side by side.
+            Click(s("tab:Inert Bank")),
+            expect("split.bank_ready", 15000, |b| inert_on(b, "overview")),
+            Click(s("tab:Inert Notes")),
+            expect("split.notes_ready", 15000, |b| inert_on(b, "list")),
+            Click(s("menu")),
+            Click(s("menu:Split view")),
+            expect("split.two_panes", 2000, |b| b.split.is_some() && b.split != Some(b.active)),
+            Pause(500),
+            Shot(s("d13-split-view")),
+            Click(s("split:close")),
+            expect("split.closes", 2000, |b| b.split.is_none()),
+            // Secret favorites: locked until Touch ID (the demo profile answers yes).
+            Setup(Box::new(|b| {
+                b.add_secret_favorite();
+                b.add_tab("about:bookmarks", None, true, None);
+            })),
+            Pause(400),
+            Click(s("secrets:unlock")),
+            expect("secrets.unlock_shows_list", 3000, |b| b.secrets.as_ref().is_some_and(|(l, _)| l.len() == 1)),
+            Pause(300),
+            Shot(s("d14-secret-favorites")),
+            // The lock in the address bar and the Shield by the VPN pill still open their panels.
+            Click(s("shield")),
+            expect("shield.panel_with_site_switches", 2000, |b| b.popover == Popover::Shield),
+            Press(Key::Escape, Modifiers::NONE),
         ];
         // INERT_DRIVE_SCENARIO=bank-idle: sign in, open Inert Bank, then stay
         // on it for 30 s with the window drawing (memory baseline, spec §16).
