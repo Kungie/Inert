@@ -10,6 +10,7 @@ mod app;
 mod art;
 mod chrome;
 mod cookies;
+mod dictate;
 mod drive;
 mod favicon;
 mod md;

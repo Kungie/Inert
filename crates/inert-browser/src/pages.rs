@@ -948,7 +948,7 @@ impl Browser {
 
         section(ui, "04", "Privacy & Shield");
         let mut on = self.profile.settings.adblock;
-        if ui.checkbox(&mut on, "Block ads & trackers on web pages (EasyList + EasyPrivacy)").changed() {
+        if ui.checkbox(&mut on, "Block ads & trackers on web pages (EasyList, EasyPrivacy, uBlock Origin filters)").changed() {
             self.profile.settings.adblock = on;
             self.dirty = true;
             if on && !matches!(self.ad.state, adblock::State::Ready(_)) {
@@ -1096,7 +1096,7 @@ impl Browser {
                 let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
                 icons::paint(ui.painter(), r, Icon::Shield, OK);
                 ui.label(theme::label_c("Shield", OK));
-                ui.label(theme::muted("Ad & tracker blocking — EasyList + EasyPrivacy, both engines."));
+                ui.label(theme::muted("Ad & tracker blocking — uBlock Origin's default lists, both engines."));
             });
         });
         ui.add_space(10.0);

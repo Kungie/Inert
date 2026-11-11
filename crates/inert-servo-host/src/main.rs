@@ -272,7 +272,7 @@ fn build_blocker() -> Receiver<adblock::Engine> {
         let dir = dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("Inert").join("adblock");
         let mut set = adblock::lists::FilterSet::new(false);
         let mut any = false;
-        for name in ["easylist", "easyprivacy"] {
+        for name in ["easylist", "easyprivacy", "ublock-filters", "ublock-unbreak", "ublock-quick-fixes", "ublock-badware", "ublock-privacy"] {
             if let Ok(t) = std::fs::read_to_string(dir.join(format!("{name}.txt"))) {
                 set.add_filter_list(t, adblock::lists::ParseOptions::default());
                 any = true;

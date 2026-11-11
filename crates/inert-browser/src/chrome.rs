@@ -203,6 +203,7 @@ impl Browser {
             self.ai_floating(&ctx);
         }
         self.clip_ui(&ctx);
+        self.dictation_ui(&ctx);
         self.popovers(&ctx);
         self.page_menu_ui(&ctx);
         self.omnibox_dropdown(&ctx);
@@ -1834,7 +1835,7 @@ impl Browser {
         ui.add_space(6.0);
         let (h, d) = match (&self.ad.state, self.profile.settings.adblock) {
             (_, false) => ("Shield is off".to_owned(), "Ads and trackers load normally on web pages.".to_owned()),
-            (adblock::State::Ready(n), _) => ("Shield is on".to_owned(), format!("{n} EasyList + EasyPrivacy rules, compiled into WebKit's native content blocker.")),
+            (adblock::State::Ready(n), _) => ("Shield is on".to_owned(), format!("{n} rules from EasyList, EasyPrivacy and uBlock Origin's filters.")),
             (adblock::State::Compiling(n), _) => ("Compiling…".to_owned(), format!("Handing {n} rules to WebKit.")),
             (adblock::State::Failed(e), _) => ("Shield failed".to_owned(), e.clone()),
             _ => ("Preparing…".to_owned(), "Fetching and converting filter lists.".to_owned()),
@@ -2055,6 +2056,49 @@ impl Browser {
     }
 
     // ------------------------------------------------------------------ AI panel
+
+    /// While Option+Space is held: a pill at the foot of the window with a
+    /// live level meter and the words as they are heard.
+    fn dictation_ui(&mut self, ctx: &egui::Context) {
+        let Some(d) = &self.dictation else {
+            ctx.animate_bool_with_time(Id::unique("dictate-in"), false, 0.0);
+            return;
+        };
+        let t = ease(ctx.animate_bool_with_time(Id::unique("dictate-in"), true, 0.18));
+        let now = ctx.input(|i| i.time);
+        let screen = ctx.content_rect();
+        let text = if !d.partial.is_empty() {
+            d.partial.clone()
+        } else if d.stopping {
+            "Finishing…".to_owned()
+        } else if d.live {
+            "Listening… let go of Option when you're done".to_owned()
+        } else {
+            "Starting the microphone…".to_owned()
+        };
+        let live = d.live && !d.stopping;
+        let area = egui::Area::new(Id::unique("dictate")).pivot(egui::Align2::CENTER_BOTTOM).fixed_pos(pos2(screen.center().x, screen.bottom() - 28.0 + 12.0 * (1.0 - t))).order(egui::Order::Tooltip).interactable(false).show(ctx, |ui| {
+            ui.multiply_opacity(t);
+            egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, glass(0.16))).corner_radius(24).inner_margin(egui::Margin::symmetric(18, 12)).shadow(theme::shadow()).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    // Bars that move while the microphone is live.
+                    let (r, _) = ui.allocate_exact_size(vec2(34.0, 22.0), Sense::hover());
+                    for i in 0..5 {
+                        let a = if live { (((now * 7.0) as f32 + i as f32 * 1.3).sin() * 0.5 + 0.5) * 0.8 + 0.2 } else { 0.25 };
+                        let h = 4.0 + 16.0 * a;
+                        let x = r.left() + 3.0 + i as f32 * 7.0;
+                        ui.painter().rect_filled(Rect::from_center_size(pos2(x, r.center().y), vec2(3.5, h)), 1.75, if live { accent().lerp_to_gamma(WHITE, 0.35) } else { MUTED });
+                    }
+                    let mut job = egui::text::LayoutJob::single_section(text, egui::TextFormat::simple(FontId::new(14.0, sans()), FG));
+                    job.wrap = egui::text::TextWrapping::truncate_at_width((screen.width() - 260.0).clamp(200.0, 720.0));
+                    ui.label(job);
+                });
+            });
+        });
+        self.overlay_rects.push(area.response.rect);
+        ctx.request_repaint();
+    }
 
     /// Starts the clip tool: the next drag over the page picks a region.
     pub fn start_clip(&mut self) {
@@ -2722,6 +2766,7 @@ impl Browser {
             }
             "reopen" => self.reopen_closed(),
             "sidebar" => self.toggle_sidebar(),
+            "dictate" => self.dictate_start(),
             s if s.starts_with("edit-") => self.edit_command(&s[5..]),
             "focus-omnibox" => self.omni.focus = true,
             "reload" => self.reload(),

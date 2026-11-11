@@ -11,6 +11,7 @@ APP=target/Inert.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/inert-browser target/release/inert-servo-host "$APP/Contents/MacOS/"
+[ -x target/release/inert-dictate ] && cp target/release/inert-dictate "$APP/Contents/MacOS/"
 ICON=target/icon.iconset
 rm -rf "$ICON" && mkdir -p "$ICON"
 target/release/inert-browser --write-icon target/icon-1024.png 1024
@@ -34,6 +35,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>${VERSION:-0.1.0}</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>Inert listens while you hold Option+Space, to type what you say.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Inert turns what you say while holding Option+Space into text.</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
 PLIST

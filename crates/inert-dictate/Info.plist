@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>dev.inert.browser.dictate</string>
+  <key>CFBundleName</key><string>Inert Dictation</string>
+  <key>NSMicrophoneUsageDescription</key><string>Inert listens while you hold Option+Space, to type what you say.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Inert turns what you say while holding Option+Space into text.</string>
+</dict></plist>

@@ -9,10 +9,21 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-const LISTS: [(&str, &str); 2] = [("easylist", "https://easylist.to/easylist/easylist.txt"), ("easyprivacy", "https://easylist.to/easylist/easyprivacy.txt")];
+/// The lists uBlock Origin ships with by default: EasyList and EasyPrivacy,
+/// plus uBlock Origin's own filters. The first two must download; a uBlock
+/// list that fails to download is skipped until the next refresh.
+const LISTS: [(&str, &str); 7] = [
+    ("easylist", "https://easylist.to/easylist/easylist.txt"),
+    ("ublock-filters", "https://ublockorigin.github.io/uAssets/filters/filters.min.txt"),
+    ("ublock-unbreak", "https://ublockorigin.github.io/uAssets/filters/unbreak.min.txt"),
+    ("ublock-quick-fixes", "https://ublockorigin.github.io/uAssets/filters/quick-fixes.min.txt"),
+    ("ublock-badware", "https://ublockorigin.github.io/uAssets/filters/badware.min.txt"),
+    ("ublock-privacy", "https://ublockorigin.github.io/uAssets/filters/privacy.min.txt"),
+    ("easyprivacy", "https://easylist.to/easylist/easyprivacy.txt"),
+];
 /// WebKit accepts at most 150k rules per list; stay below it.
 const MAX_RULES: usize = 140_000;
-const RULES_VERSION: &str = "inert-adblock-v1";
+const RULES_VERSION: &str = "inert-adblock-v2";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum State {
@@ -48,9 +59,18 @@ pub fn prepare(tx: Sender<crate::app::Event>, ctx: eframe::egui::Context) {
                 let text = if fresh(&p) {
                     std::fs::read_to_string(&p)?
                 } else {
-                    let t = client.get(url).send()?.error_for_status()?.text()?;
-                    std::fs::write(&p, &t)?;
-                    t
+                    match client.get(url).send().and_then(|r| r.error_for_status()).and_then(|r| r.text()) {
+                        Ok(t) => {
+                            std::fs::write(&p, &t)?;
+                            t
+                        }
+                        // An old copy is better than none; only the EasyList pair is required.
+                        Err(e) => match std::fs::read_to_string(&p) {
+                            Ok(t) => t,
+                            Err(_) if name.starts_with("ublock-") => continue,
+                            Err(_) => return Err(e.into()),
+                        },
+                    }
                 };
                 set.add_filter_list(text, adblock::lists::ParseOptions::default());
             }

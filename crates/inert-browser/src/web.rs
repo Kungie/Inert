@@ -223,6 +223,15 @@ pub mod mac {
         }
     }
 
+    /// Whether an Option key is held right now (asked of AppKit, so it
+    /// works whichever view has the keyboard).
+    pub fn option_down() -> bool {
+        let Some(cls) = objc2::runtime::AnyClass::get(c"NSEvent") else { return false };
+        // NSEventModifierFlagOption = 1 << 19
+        let flags: usize = unsafe { msg_send![cls, modifierFlags] };
+        flags & (1 << 19) != 0
+    }
+
     /// Whether the keyboard is in this web view (it, or one of WebKit's
     /// inner views, is the window's first responder).
     pub fn has_focus(view: &wry::WebView) -> bool {

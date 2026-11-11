@@ -68,6 +68,10 @@ impl AppMenu {
                     &item("edit-select-all", "Select All", cmd, Some(Code::KeyA)),
                     &PredefinedMenuItem::separator(),
                     &item("find", "Find…", cmd, Some(Code::KeyF)),
+                    &PredefinedMenuItem::separator(),
+                    // Hold to talk: the key going down starts it; the browser
+                    // watches for Option coming back up.
+                    &item("dictate", "Dictate (hold Option+Space)", Some(Modifiers::ALT), Some(Code::Space)),
                 ],
             )
             .ok()?;

@@ -42,6 +42,8 @@ pub enum Event {
     Clipped { rect: egui::Rect, image: std::sync::Arc<egui::ColorImage> },
     /// The text selected on a page (asked for by "Attach to assistant").
     Selection { tab: u64, text: String },
+    /// Push-to-talk: what the dictation helper heard.
+    Dictate(crate::dictate::Heard),
     /// A Servo page asked for its context menu.
     ServoMenu { tab: u64, actions: Vec<String>, link: Option<String>, image: Option<String>, selection: bool, editable: bool },
 }
@@ -276,6 +278,7 @@ pub struct Browser {
     pub pending_input: Vec<egui::Event>,
     pub favicons: crate::favicon::Favicons,
     pub page_menu: Option<PageMenu>,
+    pub dictation: Option<crate::dictate::Dictation>,
     pub content_rect: egui::Rect,
     pub sites: Vec<(String, String)>,
     /// Servo, created on first use.
@@ -359,6 +362,7 @@ impl Browser {
             pending_input: Vec::new(),
             favicons: crate::favicon::Favicons::new(Profile::dir(demo), demo),
             page_menu: None,
+            dictation: None,
             content_rect: egui::Rect::NOTHING,
             sites: Vec::new(),
             servo: None,
@@ -806,6 +810,7 @@ impl Browser {
                     self.ai.reply_at = self.ctx.input(|i| i.time);
                 }
                 Event::Clipped { rect, image } => self.on_clipped(rect, &image),
+                Event::Dictate(h) => self.on_heard(h),
                 Event::Selection { tab, text } => {
                     let text = text.trim().to_owned();
                     if text.is_empty() {
@@ -1060,6 +1065,65 @@ impl Browser {
                 if list.is_empty() { PageContext::None } else { PageContext::Tabs { list: list.join("\n") } }
             });
             self.send_ai(q, page);
+        }
+    }
+
+    /// Option+Space went down: start listening (once; key repeat is ignored).
+    pub fn dictate_start(&mut self) {
+        if self.dictation.is_some() {
+            return;
+        }
+        match crate::dictate::Dictation::start(&self.tx, &self.ctx) {
+            Ok(d) => self.dictation = Some(d),
+            Err(e) => self.toast(e),
+        }
+    }
+
+    fn on_heard(&mut self, h: crate::dictate::Heard) {
+        use crate::dictate::Heard;
+        match h {
+            Heard::Ready => {
+                if let Some(d) = &mut self.dictation {
+                    d.live = true;
+                }
+            }
+            Heard::Partial(t) => {
+                if let Some(d) = &mut self.dictation {
+                    d.partial = t;
+                }
+            }
+            Heard::Failed(e) => {
+                self.dictation = None;
+                self.toast(e);
+            }
+            Heard::Final(text) => {
+                self.dictation = None;
+                if text.is_empty() {
+                    return;
+                }
+                // Typed where the keyboard is: a WebKit page, an egui field
+                // or Servo page, or else the assistant's composer.
+                #[cfg(target_os = "macos")]
+                if let Some(Kind::Web(w)) = self.active_tab().map(|t| &t.kind) {
+                    if let Some(v) = &w.view {
+                        if web::mac::has_focus(v) {
+                            let lit = serde_json::to_string(&text).unwrap_or_default();
+                            let _ = v.evaluate_script(&format!("document.execCommand('insertText', false, {lit})"));
+                            return;
+                        }
+                    }
+                }
+                if self.ctx.memory(|m| m.focused().is_some()) {
+                    self.pending_input.push(egui::Event::Text(text));
+                } else {
+                    if !self.ai.input.is_empty() && !self.ai.input.ends_with(' ') {
+                        self.ai.input.push(' ');
+                    }
+                    self.ai.input.push_str(&text);
+                    self.ai.open = true;
+                    self.ai.focus = true;
+                }
+            }
         }
     }
 
@@ -1330,6 +1394,14 @@ impl eframe::App for Browser {
         self.overlay_rects.clear();
         let ctx = ui.ctx().clone();
         self.shortcuts(&ctx);
+        // Push-to-talk ends when Option comes back up.
+        #[cfg(target_os = "macos")]
+        if let Some(d) = &mut self.dictation {
+            if !d.stopping && !web::mac::option_down() {
+                d.stop();
+            }
+            ctx.request_repaint_after(Duration::from_millis(40));
+        }
         // The traffic lights sit on the toolbar's line.
         #[cfg(target_os = "macos")]
         if !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
