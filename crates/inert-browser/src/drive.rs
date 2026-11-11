@@ -20,6 +20,16 @@ use std::time::{Duration, Instant};
 thread_local! {
     static ON: Cell<bool> = const { Cell::new(false) };
     static REG: RefCell<HashMap<String, Rect>> = RefCell::new(HashMap::new());
+    static CURSOR: Cell<egui::CursorIcon> = const { Cell::new(egui::CursorIcon::Default) };
+}
+
+/// The cursor the last frame asked for (driver checks only).
+pub fn note_cursor(c: egui::CursorIcon) {
+    CURSOR.with(|x| x.set(c));
+}
+
+fn cursor() -> egui::CursorIcon {
+    CURSOR.with(Cell::get)
 }
 
 /// Records a widget's rect for this frame (first registration wins).
@@ -47,6 +57,8 @@ type Act = Box<dyn Fn(&mut Browser)>;
 enum Step {
     Click(String),
     RightClick(String),
+    /// Moves the pointer over a widget without pressing.
+    Hover(String),
     Type(String),
     Press(Key, Modifiers),
     /// Wait for a condition, then record a pass/fail check with this name.
@@ -150,6 +162,15 @@ impl Driver {
                     b.profile.record_visit("https://github.com/anthropics", "GitHub");
                 }
             })),
+            // Cursors: the I-beam over text fields, the hand over clickable things.
+            Hover(s("omnibox")),
+            expect("cursor.text_over_omnibox", 1500, |_| cursor() == egui::CursorIcon::Text),
+            Hover(s("star")),
+            expect("cursor.hand_over_toolbar_button", 1500, |_| cursor() == egui::CursorIcon::PointingHand),
+            Hover(s("tab:Inert Bank")),
+            expect("cursor.hand_over_tab_row", 1500, |_| cursor() == egui::CursorIcon::PointingHand),
+            Hover(s("menu")),
+            expect("cursor.hand_over_menu_button", 1500, |_| cursor() == egui::CursorIcon::PointingHand),
             // 2. Omnibox: typed text completes inline and shows suggestions.
             Click(s("omnibox")),
             expect("omnibox.focused", 2000, |b| b.omni.editing),
@@ -169,6 +190,10 @@ impl Driver {
             expect("bank.secured_badge", 1000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Inert(it)) if it.key_id.starts_with("ed25519:"))),
             Click(s("link:Send money →")),
             expect("bank.transfer_screen", 8000, |b| inert_on(b, "transfer")),
+            Hover(s("input:to")),
+            expect("cursor.text_over_page_input", 1500, |_| cursor() == egui::CursorIcon::Text),
+            Hover(s("btn:Send")),
+            expect("cursor.hand_over_page_button", 1500, |_| cursor() == egui::CursorIcon::PointingHand),
             Click(s("input:to")),
             Type(s("DE89 3704 0044 0532 0130 00")),
             Click(s("input:amount")),
@@ -437,6 +462,24 @@ impl Driver {
                 expect("bank.overview_verified", 15000, |b| inert_on(b, "overview")),
                 Pause(30000),
                 expect("bank.still_verified", 1000, |b| inert_on(b, "overview")),
+            ]
+        } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("hold") {
+            // Signs in, opens INERT_HOLD_URL and waits (for checks from outside,
+            // such as the native cursor over a WebKit page).
+            let url = std::env::var("INERT_HOLD_URL").unwrap_or_else(|_| "https://example.com/".into());
+            let secs: u64 = std::env::var("INERT_HOLD_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
+            vec![
+                Pause(1500),
+                Click(s("signin:claude")),
+                Click(s("signin:skip")),
+                Click(s("look:blue")),
+                Click(s("look:next")),
+                Click(s("import:skip")),
+                expect("hold.signed_in", 3000, |b| b.profile.onboarded),
+                Setup(Box::new(move |b| {
+                    b.add_tab(&url, None, true, None);
+                })),
+                Pause(secs * 1000),
             ]
         } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("real-web") {
             // The new features against real sites, in WebKit, on a throwaway
@@ -961,6 +1004,7 @@ impl Driver {
         }
         enum Do {
             Click(String, bool),
+            Hover(String),
             Type(String),
             Key(Key, Modifiers),
             Expect(String, bool, u64),
@@ -971,6 +1015,7 @@ impl Driver {
         let what = match &self.steps[self.i] {
             Step::Click(k) => Do::Click(k.clone(), false),
             Step::RightClick(k) => Do::Click(k.clone(), true),
+            Step::Hover(k) => Do::Hover(k.clone()),
             Step::Type(t) => Do::Type(t.clone()),
             Step::Press(k, m) => Do::Key(*k, *m),
             Step::Expect(n, cond, t) => Do::Expect(n.clone(), cond(b), *t),
@@ -984,6 +1029,15 @@ impl Driver {
                 Some(r) => self.click(r.center(), if right { PointerButton::Secondary } else { PointerButton::Primary }),
                 None if elapsed < Duration::from_millis(4000) => next = false,
                 None => self.record(&format!("click:{k}"), false, "widget not found on screen".into()),
+            },
+            Do::Hover(k) => match lookup(&k) {
+                Some(r) => {
+                    self.queue.push_back(vec![Event::PointerMoved(r.center())]);
+                    self.queue.push_back(vec![]);
+                    self.queue.push_back(vec![]);
+                }
+                None if elapsed < Duration::from_millis(4000) => next = false,
+                None => self.record(&format!("hover:{k}"), false, "widget not found on screen".into()),
             },
             Do::Type(t) => {
                 for ch in t.chars() {

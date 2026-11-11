@@ -2022,6 +2022,8 @@ impl eframe::App for Browser {
         let overlay = locked || self.popover != Popover::None || (!self.omni.sugg.is_empty() && self.omni.editing) || egui::Popup::is_any_open(&ctx) || self.rename.is_some() || self.confirming() || self.page_menu.is_some();
         let hide = self.overlay_gate(overlay);
         self.sync_webviews(frame, content, hide);
+        #[cfg(target_os = "macos")]
+        web::mac::web_cursor(frame);
         self.memory_saver();
         self.settle_loading();
         self.after_frame(&ctx, frame);
@@ -2046,6 +2048,8 @@ impl Browser {
     }
 
     fn after_frame(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        hand_cursor(ctx);
+        crate::drive::note_cursor(ctx.output(|o| o.cursor_icon));
         if std::env::var_os("INERT_DEBUG_FRAMES").is_some() && ctx.cumulative_pass_nr() % 60 == 0 {
             eprintln!("frame {} at {:?}", ctx.cumulative_pass_nr(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
         }
@@ -2082,5 +2086,19 @@ impl Browser {
     /// Deletes every cookie and site data in both engines (filled in by `cookies.rs`).
     pub fn clear_all_cookies(&mut self) {
         crate::cookies::clear_all(self);
+    }
+}
+
+/// Anything that is only clickable (buttons, tab rows, chips, cards, menu
+/// rows) shows the pointing hand. Text fields set the I-beam themselves, and
+/// areas that also drag (window frame, page surface, sidebar edge) keep theirs.
+fn hand_cursor(ctx: &egui::Context) {
+    if ctx.output(|o| o.cursor_icon) != egui::CursorIcon::Default {
+        return;
+    }
+    let hovered: Vec<egui::Id> = ctx.interaction_snapshot(|s| s.hovered.iter().copied().collect());
+    let clickable = hovered.into_iter().filter_map(|id| ctx.read_response(id)).any(|r| r.enabled() && r.sense.senses_click() && !r.sense.senses_drag() && r.contains_pointer());
+    if clickable {
+        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 }

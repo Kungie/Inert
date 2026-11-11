@@ -345,6 +345,57 @@ pub mod mac {
         flags & (1 << 19) != 0
     }
 
+    /// WebKit sets its own cursor (the hand over links, the I-beam over text),
+    /// but the window's cursor rect (egui's cursor over the whole view) puts
+    /// the arrow back. While the mouse is over a web view the window's cursor
+    /// rects are off; back over our own UI they come back on.
+    /// Returns whether the mouse is over a web view.
+    pub fn web_cursor(frame: &eframe::Frame) -> bool {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use std::cell::Cell;
+        thread_local!(static OFF: Cell<bool> = const { Cell::new(false) });
+        let Ok(handle) = frame.window_handle() else { return false };
+        let RawWindowHandle::AppKit(h) = handle.as_raw() else { return false };
+        let view = h.ns_view.as_ptr() as *mut AnyObject;
+        let (Some(ev), Some(wk)) = (objc2::runtime::AnyClass::get(c"NSEvent"), objc2::runtime::AnyClass::get(c"WKWebView")) else { return false };
+        unsafe {
+            let window: *mut AnyObject = msg_send![view, window];
+            if window.is_null() {
+                return false;
+            }
+            let content: *mut AnyObject = msg_send![window, contentView];
+            if content.is_null() {
+                return false;
+            }
+            let screen: Pt = msg_send![ev, mouseLocation];
+            let in_window: Pt = msg_send![window, convertPointFromScreen: screen];
+            let sup: *mut AnyObject = msg_send![content, superview];
+            // hitTest: takes a point in the superview's coordinates.
+            let p: Pt = if sup.is_null() { in_window } else { msg_send![sup, convertPoint: in_window, fromView: std::ptr::null::<AnyObject>()] };
+            let mut hit: *mut AnyObject = msg_send![content, hitTest: p];
+            let mut over = false;
+            while !hit.is_null() {
+                let is_wk: bool = msg_send![hit, isKindOfClass: wk as *const _];
+                if is_wk {
+                    over = true;
+                    break;
+                }
+                hit = msg_send![hit, superview];
+            }
+            OFF.with(|off| {
+                if over && !off.get() {
+                    let _: () = msg_send![window, disableCursorRects];
+                    off.set(true);
+                } else if !over && off.get() {
+                    let _: () = msg_send![window, enableCursorRects];
+                    let _: () = msg_send![window, invalidateCursorRectsForView: view];
+                    off.set(false);
+                }
+            });
+            over
+        }
+    }
+
     /// Whether the keyboard is in this web view (it, or one of WebKit's
     /// inner views, is the window's first responder).
     pub fn has_focus(view: &wry::WebView) -> bool {

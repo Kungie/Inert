@@ -146,6 +146,7 @@ pub fn install_style(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
         let v = &mut style.visuals;
         v.dark_mode = true;
+        v.interact_cursor = Some(egui::CursorIcon::PointingHand);
         v.panel_fill = BG;
         v.window_fill = PANEL;
         v.extreme_bg_color = RAISED;
