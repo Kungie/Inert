@@ -556,8 +556,8 @@ impl Driver {
                 Setup(Box::new(|b| {
                     b.add_tab("https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4", None, true, None);
                 })),
-                // A bare video file never reports "finished loading"; its view is enough.
-                expect("real.video_loads", 30000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some() && w.url.contains("flower.mp4"))),
+                // A bare video file: WebKit sends no "finished"; the page's own readyState settles it.
+                web_ready("real.video_loads", "flower.mp4"),
                 Pause(2500),
                 probe(crate::page_js::PIP),
                 expect("real.pip_starts", 6000, |b| b.probe.as_deref() == Some("on")),

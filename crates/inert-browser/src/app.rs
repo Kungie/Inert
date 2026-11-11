@@ -380,6 +380,7 @@ pub struct Browser {
     pub servo_error: Option<String>,
     pub servo_restarts: u32,
     pub last_relief: Instant,
+    last_settle: Instant,
     /// Tabs closing in the strip (animation only).
     pub closing: Vec<crate::chrome::Ghost>,
     pub cookie: crate::cookies::State,
@@ -463,6 +464,7 @@ impl Browser {
             servo_error: None,
             servo_restarts: 0,
             last_relief: Instant::now(),
+            last_settle: Instant::now(),
             private_clip: None,
             private_locked: false,
             secrets: None,
@@ -1760,6 +1762,28 @@ impl Browser {
         self.last_save = Instant::now();
     }
 
+    /// WebKit never reports "finished" for some documents (a video or
+    /// image opened directly). While the active tab has been loading for a
+    /// while, ask the page itself; when it says complete, the load is done.
+    fn settle_loading(&mut self) {
+        if self.last_settle.elapsed() < Duration::from_millis(1500) {
+            return;
+        }
+        self.last_settle = Instant::now();
+        let id = self.active;
+        let Some(Kind::Web(w)) = self.tab(id).map(|t| &t.kind) else { return };
+        let (Some(v), true) = (&w.view, w.loading) else { return };
+        let url = w.url.clone();
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        let _ = v.evaluate_script_with_callback("document.readyState", move |s| {
+            if s.contains("complete") {
+                let _ = tx.send(Event::WebLoad { tab: id, started: false, url: url.clone() });
+                ctx.request_repaint();
+            }
+        });
+        self.ctx.request_repaint_after(Duration::from_millis(1600));
+    }
+
     fn memory_saver(&mut self) {
         if self.last_relief.elapsed() > Duration::from_secs(3) {
             self.last_relief = Instant::now();
@@ -1999,6 +2023,7 @@ impl eframe::App for Browser {
         let hide = self.overlay_gate(overlay);
         self.sync_webviews(frame, content, hide);
         self.memory_saver();
+        self.settle_loading();
         self.after_frame(&ctx, frame);
     }
 
