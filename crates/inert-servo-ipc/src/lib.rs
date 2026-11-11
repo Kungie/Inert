@@ -21,7 +21,15 @@ pub enum Cmd {
     /// Makes `view` the one that is painted (the active tab).
     Show { view: u64 },
     Close { view: u64 },
-    Resize { w: u32, h: u32 },
+    /// Size in device pixels, and how many of them make one CSS pixel
+    /// (2 on a Retina display). Without the scale a page lays itself out
+    /// twice as wide and draws at half size.
+    Resize {
+        w: u32,
+        h: u32,
+        #[serde(default = "one")]
+        scale: f32,
+    },
     Back { view: u64 },
     Forward { view: u64 },
     Reload { view: u64 },
@@ -99,4 +107,8 @@ pub struct CookieJson {
     /// "Strict", "Lax" or "None".
     #[serde(default)]
     pub same_site: Option<String>,
+}
+
+fn one() -> f32 {
+    1.0
 }

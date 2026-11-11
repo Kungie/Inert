@@ -64,6 +64,7 @@ pub struct Host {
     shown: Cell<u64>,
     adblock: Cell<Option<bool>>,
     allow: RefCell<Vec<String>>,
+    scale: Cell<f32>,
     pub pid: u32,
 }
 
@@ -101,7 +102,7 @@ impl Host {
             let ectx = ectx.clone();
             std::thread::Builder::new().name("servo-ipc".into()).spawn(move || reader(stdout, shared, tx, ectx)).map_err(|e| e.to_string())?;
         }
-        Ok(Host { inner: Rc::new(Inner { stdin: RefCell::new(stdin), shared, next_req: Cell::new(1), child: RefCell::new(child) }), size: Cell::new((0, 0)), texture: RefCell::new(None), shown: Cell::new(0), adblock: Cell::new(None), allow: RefCell::new(Vec::new()), pid })
+        Ok(Host { inner: Rc::new(Inner { stdin: RefCell::new(stdin), shared, next_req: Cell::new(1), child: RefCell::new(child) }), size: Cell::new((0, 0)), texture: RefCell::new(None), shown: Cell::new(0), adblock: Cell::new(None), allow: RefCell::new(Vec::new()), scale: Cell::new(0.0), pid })
     }
 
     /// True once the host process has exited (crash or kill).
@@ -372,9 +373,10 @@ pub fn show(ui: &mut Ui, host: &Host, tab: u64, v: &View, overlay: bool) {
         host.inner.send(&Cmd::Show { view: tab });
         host.size.set((0, 0));
     }
-    if host.size.get() != want {
+    if host.size.get() != want || host.scale.get() != ppp {
         host.size.set(want);
-        host.inner.send(&Cmd::Resize { w: want.0, h: want.1 });
+        host.scale.set(ppp);
+        host.inner.send(&Cmd::Resize { w: want.0, h: want.1, scale: ppp });
     }
     let frame = host.inner.shared.lock().ok().and_then(|mut s| if s.frame.as_ref().is_some_and(|f| f.view == tab) { s.frame.take() } else { None });
     if let Some(f) = frame {

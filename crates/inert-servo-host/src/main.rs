@@ -366,6 +366,7 @@ fn main() {
     let mut views: HashMap<u64, Entry> = HashMap::new();
     let mut active: Option<u64> = None;
     let mut size = (1024u32, 768u32);
+    let mut scale = 1.0f32;
     let mut settle = 0u32;
     let mut seq = 0u64;
     let _ = out.send(Ev::Ready { shm: shm_path.to_string_lossy().into_owned() });
@@ -401,7 +402,7 @@ fn main() {
                     let frame = Rc::new(Cell::new(true));
                     let menu = Rc::new(RefCell::new(None));
                     let d = Rc::new(Delegate { id: view, out: out.clone(), frame: frame.clone(), blocker: blocker.clone(), menu: menu.clone(), page: RefCell::new(u.host_str().unwrap_or_default().to_ascii_lowercase()) });
-                    let wv = WebViewBuilder::new(&servo, ctx.clone()).url(u).delegate(d).build();
+                    let wv = WebViewBuilder::new(&servo, ctx.clone()).url(u).delegate(d).hidpi_scale_factor(euclid::Scale::new(scale)).build();
                     // Pages see prefers-color-scheme: dark, like the rest of Inert.
                     wv.notify_theme_change(servo::Theme::Dark);
                     views.insert(view, Entry { view: wv, frame, menu });
@@ -418,6 +419,7 @@ fn main() {
                         }
                         if let Some(e) = views.get(&view) {
                             e.view.show();
+                            e.view.set_hidpi_scale_factor(euclid::Scale::new(scale));
                             e.view.resize(dpi::PhysicalSize::new(size.0, size.1));
                             e.view.set_focused(true);
                         }
@@ -431,9 +433,11 @@ fn main() {
                         active = None;
                     }
                 }
-                Cmd::Resize { w, h } => {
+                Cmd::Resize { w, h, scale: s } => {
                     size = (w.clamp(1, 3840), h.clamp(1, 2160));
+                    scale = s.clamp(0.5, 4.0);
                     if let Some(e) = active.and_then(|a| views.get(&a)) {
+                        e.view.set_hidpi_scale_factor(euclid::Scale::new(scale));
                         // Only through the WebView: Servo resizes context and viewport together.
                         e.view.resize(dpi::PhysicalSize::new(size.0, size.1));
                     }

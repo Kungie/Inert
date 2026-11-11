@@ -504,9 +504,10 @@ impl Browser {
 
     /// A group in the top strip: a chip in the group's color.
     fn top_group(&mut self, ui: &mut Ui, g: &crate::profile::GroupDef, count: usize, color: Color32, open: f32) {
-        let icon = group_icon(g.kind);
+        // A nameless group is just its icon (a folder, if it has none of its own).
+        let icon = group_icon(g.kind).or(g.name.is_empty().then_some(Icon::Folder));
         let galley = ui.painter().layout_no_wrap(g.name.clone(), FontId::new(11.5, sans_medium()), BG);
-        let w = galley.size().x + if icon.is_some() { 34.0 } else { 20.0 } + if count > 0 { 16.0 } else { 0.0 };
+        let w = 20.0 + if icon.is_some() { 12.0 } else { 0.0 } + if icon.is_some() && !g.name.is_empty() { 5.0 } else { 0.0 } + galley.size().x + if count > 0 { 18.0 } else { 0.0 };
         let (rect, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
         let resp = ui.interact(rect, Id::unique(("group-row", g.id)), Sense::click());
         crate::drive::reg(format!("group:{}", g.name), rect);
@@ -951,29 +952,32 @@ impl Browser {
                 self.toggle_sidebar();
             }
         }
-        let rb = icons::button_c(ui, Icon::Back, 30.0, "Back  Cmd+[", WHITE, self.can_go(true));
+        ui.spacing_mut().item_spacing.x = 5.0;
+        let rb = nav_button(ui, Icon::Back, "Back  Cmd+[", self.can_go(true));
         crate::drive::reg("back", rb.rect);
         if rb.clicked() {
             self.go_back();
         }
-        let rf = icons::button_c(ui, Icon::Forward, 30.0, "Forward  Cmd+]", WHITE, self.can_go(false));
+        let rf = nav_button(ui, Icon::Forward, "Forward  Cmd+]", self.can_go(false));
         crate::drive::reg("forward", rf.rect);
         if rf.clicked() {
             self.go_forward();
         }
         let loading = self.active_tab().is_some_and(|t| t.loading());
         if loading {
-            if icons::button(ui, Icon::Stop, 30.0, "Stop").clicked() {
+            if nav_button(ui, Icon::Stop, "Stop", true).clicked() {
                 self.stop();
             }
-        } else if icons::button(ui, Icon::Reload, 30.0, "Reload  Cmd+R").clicked() {
+        } else if nav_button(ui, Icon::Reload, "Reload  Cmd+R", true).clicked() {
             self.reload();
         }
+        ui.spacing_mut().item_spacing.x = 2.0;
         ui.add_space(8.0);
         // The address bar: centered in what is left, never wider than it reads well.
         let right_w = 4.0 * 32.0 + 8.0;
         let avail = ui.available_width() - right_w;
-        let w = avail.clamp(200.0, 820.0);
+        // With tabs on top it runs the whole width of the header.
+        let w = if top { avail.max(200.0) } else { avail.clamp(200.0, 820.0) };
         let pad = ((avail - w) / 2.0).max(0.0);
         ui.add_space(pad);
         self.omnibox(ui, w);
@@ -2064,10 +2068,8 @@ impl Browser {
         });
         if done {
             if let Some(g) = self.profile.groups.iter_mut().find(|g| g.id == gid) {
+                // An empty name is allowed: the group then shows only its icon.
                 g.name = name.trim().chars().take(32).collect();
-                if g.name.is_empty() {
-                    g.name = "Group".into();
-                }
             }
             self.dirty = true;
             self.rename = None;
@@ -2933,4 +2935,21 @@ fn ui_language() -> &'static str {
         let first: String = text.chars().skip_while(|c| !c.is_ascii_alphabetic()).take_while(|c| c.is_ascii_alphabetic()).collect();
         if (2..=3).contains(&first.len()) { first.to_ascii_lowercase() } else { "en".into() }
     })
+}
+
+/// Back, forward, reload: always on a glass disc, so they read as buttons.
+fn nav_button(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(32.0), if enabled { Sense::click() } else { Sense::hover() });
+    let resp = resp.on_hover_text(tip);
+    let ctx = ui.ctx();
+    let h = ctx.animate_bool_with_time(resp.id.with("hover"), resp.hovered() && enabled, 0.14);
+    let down = ctx.animate_bool_with_time(resp.id.with("down"), resp.is_pointer_button_down_on() && enabled, 0.08);
+    let p = ui.painter();
+    p.circle_filled(rect.center(), 16.0 - down, glass(if enabled { 0.14 + 0.10 * h + 0.08 * down } else { 0.06 }));
+    let c = if enabled { WHITE } else { glass(0.45) };
+    // Drawn twice, a hair apart, for a bolder stroke.
+    let r = rect.shrink(8.5 + down * 0.5);
+    icons::paint(p, r, icon, c);
+    icons::paint(p, r.translate(vec2(0.35, 0.0)), icon, c);
+    resp
 }

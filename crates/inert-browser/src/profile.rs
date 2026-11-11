@@ -260,7 +260,15 @@ impl Profile {
 
     pub fn load(demo: bool) -> Profile {
         let p = Self::dir(demo).join("profile.json");
-        std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(Profile::first_run)
+        let mut prof: Profile = std::fs::read_to_string(&p).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(Profile::first_run);
+        // An earlier build turned a cleared group name into "Group". A
+        // cleared name means "icon only", so the built-in groups get that.
+        for g in &mut prof.groups {
+            if g.name == "Group" && g.kind != GroupKind::Normal {
+                g.name.clear();
+            }
+        }
+        prof
     }
 
     pub fn save(&self, demo: bool) {

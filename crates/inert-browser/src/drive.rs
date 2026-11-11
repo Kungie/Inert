@@ -387,6 +387,23 @@ impl Driver {
                 Pause(30000),
                 expect("bank.still_verified", 1000, |b| inert_on(b, "overview")),
             ]
+        } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("web") {
+            // One Servo page, for checking how it is drawn (scale, corners).
+            vec![
+                Pause(1200),
+                Click(s("signin:claude")),
+                Click(s("signin:skip")),
+                Click(s("look:blue")),
+                Click(s("look:next")),
+                Click(s("import:skip")),
+                expect("signin.done", 2000, |b| b.profile.onboarded),
+                Click(s("omnibox")),
+                Type(s("example.com")),
+                Press(Key::Enter, Modifiers::NONE),
+                expect("web.servo_renders_page", 20000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.sv.is_some() && !w.loading && w.title == "Example Domain")),
+                Pause(1200),
+                Shot(s("w01-servo")),
+            ]
         } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("real") {
             // A real (non-demo) run: the actual Mullvad state and a live search.
             vec![
