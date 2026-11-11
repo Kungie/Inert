@@ -30,6 +30,8 @@ pub enum Cmd {
     Eval { view: u64, req: u64, script: String },
     Input { view: u64, ev: Input },
     Adblock { on: bool },
+    /// Sites (eTLD+1) where the user turned blocking off.
+    AdblockAllow { sites: Vec<String> },
     /// The filter lists were (re)cached: rebuild the blocking engine.
     LoadFilters,
     /// Cookies Servo would send to `url` (values are left out).

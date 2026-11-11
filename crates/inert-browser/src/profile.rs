@@ -121,6 +121,9 @@ pub struct Settings {
     /// Assistant panel: 0 sidebar, 1 floating.
     #[serde(default)]
     pub ai_mode: u8,
+    /// Sites (eTLD+1) where the Shield is turned off.
+    #[serde(default)]
+    pub adblock_off: Vec<String>,
     /// The "log in to all your sites" nudge was dismissed.
     #[serde(default)]
     pub import_nudge_off: bool,
@@ -146,6 +149,7 @@ impl Default for Settings {
             accent: 0,
             tabs_top: false,
             ai_mode: 0,
+            adblock_off: Vec::new(),
             import_nudge_off: false,
         }
     }

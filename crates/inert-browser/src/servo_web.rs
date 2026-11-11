@@ -63,6 +63,7 @@ pub struct Host {
     texture: RefCell<Option<TextureHandle>>,
     shown: Cell<u64>,
     adblock: Cell<Option<bool>>,
+    allow: RefCell<Vec<String>>,
     pub pid: u32,
 }
 
@@ -100,12 +101,20 @@ impl Host {
             let ectx = ectx.clone();
             std::thread::Builder::new().name("servo-ipc".into()).spawn(move || reader(stdout, shared, tx, ectx)).map_err(|e| e.to_string())?;
         }
-        Ok(Host { inner: Rc::new(Inner { stdin: RefCell::new(stdin), shared, next_req: Cell::new(1), child: RefCell::new(child) }), size: Cell::new((0, 0)), texture: RefCell::new(None), shown: Cell::new(0), adblock: Cell::new(None), pid })
+        Ok(Host { inner: Rc::new(Inner { stdin: RefCell::new(stdin), shared, next_req: Cell::new(1), child: RefCell::new(child) }), size: Cell::new((0, 0)), texture: RefCell::new(None), shown: Cell::new(0), adblock: Cell::new(None), allow: RefCell::new(Vec::new()), pid })
     }
 
     /// True once the host process has exited (crash or kill).
     pub fn dead(&self) -> bool {
         self.inner.shared.lock().map(|s| s.dead).unwrap_or(true)
+    }
+
+    /// Sites where blocking is off (sent when the list changes).
+    pub fn set_adblock_allow(&self, sites: &[String]) {
+        if *self.allow.borrow() != sites {
+            *self.allow.borrow_mut() = sites.to_vec();
+            self.inner.send(&Cmd::AdblockAllow { sites: sites.to_vec() });
+        }
     }
 
     pub fn set_adblock(&self, on: bool) {

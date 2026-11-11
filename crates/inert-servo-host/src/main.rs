@@ -43,6 +43,8 @@ struct Blocker {
     engine: RefCell<Option<adblock::Engine>>,
     enabled: Cell<bool>,
     blocked: Cell<u64>,
+    /// Sites where the user turned blocking off.
+    allow: RefCell<Vec<String>>,
 }
 
 struct Delegate {
@@ -52,6 +54,8 @@ struct Delegate {
     blocker: Rc<Blocker>,
     /// The context menu the page is waiting on, until the browser answers.
     menu: Rc<RefCell<Option<servo::ContextMenu>>>,
+    /// Host of the page this view shows (for per-site blocking).
+    page: RefCell<String>,
 }
 
 const MENU_ACTIONS: [(&str, servo::ContextMenuAction); 11] = [
@@ -96,6 +100,7 @@ impl WebViewDelegate for Delegate {
         }
     }
     fn notify_url_changed(&self, _w: WebView, url: url::Url) {
+        *self.page.borrow_mut() = url.host_str().unwrap_or_default().to_ascii_lowercase();
         let _ = self.out.send(Ev::Url { view: self.id, url: url.to_string() });
     }
     fn notify_page_title_changed(&self, _w: WebView, title: Option<String>) {
@@ -149,6 +154,13 @@ impl WebViewDelegate for Delegate {
     fn load_web_resource(&self, _w: WebView, load: servo::WebResourceLoad) {
         if !self.blocker.enabled.get() {
             return;
+        }
+        // The user turned blocking off for this page's site.
+        {
+            let page = self.page.borrow();
+            if !page.is_empty() && self.blocker.allow.borrow().iter().any(|s| *page == *s || page.ends_with(&format!(".{s}"))) {
+                return;
+            }
         }
         let req = load.request();
         if req.is_for_main_frame {
@@ -388,7 +400,7 @@ fn main() {
                     let Ok(u) = url::Url::parse(&url) else { continue };
                     let frame = Rc::new(Cell::new(true));
                     let menu = Rc::new(RefCell::new(None));
-                    let d = Rc::new(Delegate { id: view, out: out.clone(), frame: frame.clone(), blocker: blocker.clone(), menu: menu.clone() });
+                    let d = Rc::new(Delegate { id: view, out: out.clone(), frame: frame.clone(), blocker: blocker.clone(), menu: menu.clone(), page: RefCell::new(u.host_str().unwrap_or_default().to_ascii_lowercase()) });
                     let wv = WebViewBuilder::new(&servo, ctx.clone()).url(u).delegate(d).build();
                     // Pages see prefers-color-scheme: dark, like the rest of Inert.
                     wv.notify_theme_change(servo::Theme::Dark);
@@ -470,6 +482,7 @@ fn main() {
                     }
                 }
                 Cmd::Adblock { on } => blocker.enabled.set(on),
+                Cmd::AdblockAllow { sites } => *blocker.allow.borrow_mut() = sites,
                 Cmd::LoadFilters => {
                     if blocker.engine.borrow().is_none() && blocker_rx.is_none() {
                         blocker_rx = Some(build_blocker());

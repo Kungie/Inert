@@ -1256,6 +1256,7 @@ impl Browser {
     pub fn sync_webviews(&mut self, frame: &eframe::Frame, content: egui::Rect, overlay: bool) {
         let active = self.active;
         let adblock_on = self.profile.settings.adblock;
+        let off_sites = self.profile.settings.adblock_off.clone();
         #[cfg(target_os = "macos")]
         let list = self.ad.list.clone();
         let tx = self.tx.clone();
@@ -1302,6 +1303,7 @@ impl Browser {
         }
         if let Some(h) = &self.servo {
             h.set_adblock(self.profile.settings.adblock);
+            h.set_adblock_allow(&self.profile.settings.adblock_off);
         }
         let servo_ok = self.servo.is_some();
         for t in &mut self.tabs {
@@ -1351,6 +1353,8 @@ impl Browser {
             }
             #[cfg(target_os = "macos")]
             if let Some(v) = &w.view {
+                // The Shield can be off for this tab's site.
+                let adblock_on = adblock_on && !off_sites.contains(&crate::cookies::site_of(&crate::cookies::host_of(&w.url)));
                 match (&list, adblock_on, w.has_adblock) {
                     (Some(l), true, false) => {
                         adblock::mac::attach(v, l);

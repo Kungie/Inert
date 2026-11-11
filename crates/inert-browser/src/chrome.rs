@@ -363,6 +363,34 @@ impl Browser {
         }
     }
 
+    /// The site of the active web page (eTLD+1), if it is one.
+    fn site_here(&self) -> Option<String> {
+        match self.active_tab().map(|t| &t.kind) {
+            Some(Kind::Web(w)) => Some(crate::cookies::site_of(&crate::cookies::host_of(&w.url))).filter(|s| !s.is_empty()),
+            _ => None,
+        }
+    }
+
+    /// The Shield, next to the VPN pill: lit when it is blocking here.
+    fn shield_button(&mut self, ui: &mut Ui) {
+        let off_here = self.site_here().is_some_and(|s| self.profile.settings.adblock_off.contains(&s));
+        let (c, tip, lit) = match (&self.ad.state, self.profile.settings.adblock) {
+            (_, false) => (glass(0.5), "Shield is off everywhere".to_owned(), false),
+            _ if off_here => (glass(0.5), "Shield is off on this site".to_owned(), false),
+            (adblock::State::Ready(n), _) => (WHITE, format!("Shield on — {n} ad & tracker rules"), true),
+            (adblock::State::Failed(e), _) => (Color32::from_rgb(255, 196, 196), format!("Shield failed: {e}"), false),
+            _ => (WARN, "Shield is preparing filter lists…".to_owned(), false),
+        };
+        let r = icons::button_c(ui, Icon::Shield, 30.0, &tip, c, true);
+        crate::drive::reg("shield", r.rect);
+        if lit {
+            ui.painter().circle_filled(pos2(r.rect.right() - 7.0, r.rect.top() + 8.0), 2.6, OK);
+        }
+        if r.clicked() {
+            self.open_popover(Popover::Shield, r.rect);
+        }
+    }
+
     fn ai_button(&mut self, ui: &mut Ui) {
         let air = icons::button_c(ui, Icon::Spark, 30.0, "Assistant  Cmd+J", if self.ai.open { WHITE } else { glass(0.8) }, true);
         crate::drive::reg("ai", air.rect);
@@ -377,6 +405,7 @@ impl Browser {
     fn sidebar_footer(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.x = 2.0;
         self.vpn_pill(ui);
+        self.shield_button(ui);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             self.ai_button(ui);
@@ -426,10 +455,11 @@ impl Browser {
         let full = ui.max_rect();
         let ctx = ui.ctx().clone();
         self.frame_drag(ui, full, "strip-drag");
-        let right = Rect::from_min_max(pos2(full.right() - 176.0, full.top()), pos2(full.right() - 10.0, full.bottom()));
+        let right = Rect::from_min_max(pos2(full.right() - 210.0, full.top()), pos2(full.right() - 10.0, full.bottom()));
         let mut ru = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)));
         ru.spacing_mut().item_spacing.x = 4.0;
         self.ai_button(&mut ru);
+        self.shield_button(&mut ru);
         self.vpn_pill(&mut ru);
 
         let tabs = Rect::from_min_max(pos2(full.left() + LEFT_INSET, full.top()), pos2(right.left() - 8.0, full.bottom()));
@@ -941,7 +971,7 @@ impl Browser {
         }
         ui.add_space(8.0);
         // The address bar: centered in what is left, never wider than it reads well.
-        let right_w = 5.0 * 32.0 + 8.0;
+        let right_w = 4.0 * 32.0 + 8.0;
         let avail = ui.available_width() - right_w;
         let w = avail.clamp(200.0, 820.0);
         let pad = ((avail - w) / 2.0).max(0.0);
@@ -968,21 +998,6 @@ impl Browser {
         if rc.clicked() {
             self.cookies_refresh();
             self.open_popover(Popover::Cookies, rc.rect);
-        }
-        let (shield_c, tip) = match (&self.ad.state, self.profile.settings.adblock) {
-            (_, false) => (glass(0.55), "Shield is off".to_owned()),
-            (adblock::State::Ready(n), _) => (WHITE, format!("Shield on — {n} ad & tracker rules")),
-            (adblock::State::Failed(e), _) => (Color32::from_rgb(255, 196, 196), format!("Shield failed: {e}")),
-            _ => (WARN, "Shield is preparing filter lists…".to_owned()),
-        };
-        let r = icons::button_c(ui, Icon::Shield, 30.0, &tip, shield_c, true);
-        crate::drive::reg("shield", r.rect);
-        if matches!((&self.ad.state, self.profile.settings.adblock), (adblock::State::Ready(_), true)) {
-            // A lit dot says the shield is up.
-            ui.painter().circle_filled(pos2(r.rect.right() - 7.0, r.rect.top() + 8.0), 2.6, OK);
-        }
-        if r.clicked() {
-            self.open_popover(Popover::Shield, r.rect);
         }
         let r = icons::button(ui, Icon::Menu, 30.0, "Menu");
         crate::drive::reg("menu", r.rect);
@@ -1849,14 +1864,39 @@ impl Browser {
         ui.add_space(6.0);
         ui.label(theme::muted("inert:// sites never need it — they can't load third-party code."));
         ui.add_space(8.0);
+        // On this site.
+        if let Some(site) = self.site_here() {
+            let mut here = !self.profile.settings.adblock_off.contains(&site);
+            let r = ui.add_enabled(self.profile.settings.adblock, egui::Checkbox::new(&mut here, format!("Block on {site}")));
+            crate::drive::reg("shield:site", r.rect);
+            if r.changed() {
+                if here {
+                    self.profile.settings.adblock_off.retain(|s| *s != site);
+                } else {
+                    self.profile.settings.adblock_off.push(site);
+                }
+                self.dirty = true;
+                // The page loads again under the new rule.
+                self.reload();
+            }
+        } else {
+            ui.label(theme::muted("Open a web page to turn the Shield off for just that site."));
+        }
+        // Everywhere.
         let mut on = self.profile.settings.adblock;
-        if ui.checkbox(&mut on, "Block ads & trackers on web pages").changed() {
+        let r = ui.checkbox(&mut on, "Block ads & trackers everywhere");
+        crate::drive::reg("shield:all", r.rect);
+        if r.changed() {
             self.profile.settings.adblock = on;
             self.dirty = true;
             if on && !matches!(self.ad.state, adblock::State::Ready(_)) {
                 self.ad.state = adblock::State::Preparing;
                 adblock::prepare(self.tx.clone(), self.ctx.clone());
             }
+        }
+        if !self.profile.settings.adblock_off.is_empty() {
+            ui.add_space(4.0);
+            ui.label(theme::muted(&format!("Off on: {}", self.profile.settings.adblock_off.join(", "))));
         }
     }
 
