@@ -11,6 +11,7 @@ mod art;
 mod chrome;
 mod cookies;
 mod drive;
+mod favicon;
 mod icons;
 mod import;
 mod import_ui;

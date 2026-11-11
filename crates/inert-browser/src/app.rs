@@ -36,6 +36,22 @@ pub enum Event {
     Consent { tab: u64, what: String },
     WkCookies(Vec<inert_servo_ipc::CookieJson>),
     Imported(Box<crate::import::Imported>),
+    /// A site icon arrived (raw image bytes).
+    Favicon { host: String, bytes: Vec<u8> },
+    /// A Servo page asked for its context menu.
+    ServoMenu { tab: u64, actions: Vec<String>, link: Option<String>, image: Option<String>, selection: bool, editable: bool },
+}
+
+/// The context menu of a web page, drawn by the browser.
+pub struct PageMenu {
+    pub tab: u64,
+    pub at: egui::Pos2,
+    pub opened: Instant,
+    pub actions: Vec<String>,
+    pub link: Option<String>,
+    pub image: Option<String>,
+    pub selection: bool,
+    pub editable: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,6 +239,8 @@ pub struct Browser {
     pub driver: Option<crate::drive::Driver>,
     pub overlay_rects: Vec<egui::Rect>,
     pub pending_input: Vec<egui::Event>,
+    pub favicons: crate::favicon::Favicons,
+    pub page_menu: Option<PageMenu>,
     pub content_rect: egui::Rect,
     pub sites: Vec<(String, String)>,
     /// Servo, created on first use.
@@ -303,6 +321,8 @@ impl Browser {
             driver: drive_dir.map(crate::drive::Driver::new),
             overlay_rects: Vec::new(),
             pending_input: Vec::new(),
+            favicons: crate::favicon::Favicons::new(Profile::dir(demo), demo),
+            page_menu: None,
             content_rect: egui::Rect::NOTHING,
             sites: Vec::new(),
             servo: None,
@@ -700,6 +720,8 @@ impl Browser {
                         self.profile.record_visit(&url, &title);
                         self.dirty = true;
                         self.after_web_load(tab, &url);
+                        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+                        self.favicons.want(&url, &tx, &ctx);
                     }
                     if tab == self.active && !self.omni.editing {
                         self.omni.text = url;
@@ -770,6 +792,17 @@ impl Browser {
                 }
                 Event::AdblockFailed(e) => self.ad.state = adblock::State::Failed(e),
                 Event::Menu(id) => self.on_menu(&id),
+                Event::Favicon { host, bytes } => self.favicons.put(&host, &bytes),
+                Event::ServoMenu { tab, actions, link, image, selection, editable } => {
+                    if tab == self.active {
+                        let at = self.ctx.pointer_latest_pos().unwrap_or(self.content_rect.center());
+                        self.page_menu = Some(PageMenu { tab, at, opened: Instant::now(), actions, link, image, selection, editable });
+                    } else if let Some(Kind::Web(w)) = self.tab(tab).map(|t| &t.kind) {
+                        if let Some(sv) = &w.sv {
+                            sv.menu_pick(None);
+                        }
+                    }
+                }
                 Event::ServoCookies { req, list } => self.on_servo_cookies(req, list),
                 Event::WkCookies(list) => self.on_wk_cookies(list),
                 Event::Imported(r) => self.apply_import(*r),

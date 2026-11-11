@@ -167,17 +167,19 @@ impl Browser {
         });
     }
 
-    pub fn apply_import(&mut self, r: Imported) {
+    pub fn apply_import(&mut self, mut r: Imported) {
         self.import.running = false;
         let mut summary = Vec::new();
-        let p = &mut self.profile;
-        // Bookmarks: new ones go after Inert's, no duplicates.
-        let before = p.bookmarks.len();
-        for b in r.bookmarks {
-            if !p.bookmarks.iter().any(|x| x.url == b.url) {
-                p.bookmarks.push(b);
-            }
+        // Site icons from Chrome's cache (no network).
+        for (host, png) in std::mem::take(&mut r.favicons) {
+            self.favicons.put(&host, &png);
         }
+        let p = &mut self.profile;
+        // Bookmarks: the user's own come first (they fill the bookmarks bar),
+        // Inert's starters after them; no duplicates.
+        let before = p.bookmarks.len();
+        let mine: Vec<_> = r.bookmarks.into_iter().filter(|b| !p.bookmarks.iter().any(|x| x.url == b.url)).collect();
+        p.bookmarks.splice(0..0, mine);
         let nb = p.bookmarks.len() - before;
         if nb > 0 {
             summary.push(plural(nb, "bookmark"));

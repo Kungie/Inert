@@ -223,6 +223,30 @@ pub mod mac {
         }
     }
 
+    /// Whether the keyboard is in this web view (it, or one of WebKit's
+    /// inner views, is the window's first responder).
+    pub fn has_focus(view: &wry::WebView) -> bool {
+        use wry::WebViewExtMacOS;
+        let wv = view.webview();
+        unsafe {
+            let window: *mut AnyObject = msg_send![&*wv, window];
+            if window.is_null() {
+                return false;
+            }
+            let fr: *mut AnyObject = msg_send![window, firstResponder];
+            let me = &*wv as *const _ as *const AnyObject;
+            if fr.is_null() {
+                return false;
+            }
+            if fr as *const AnyObject == me {
+                return true;
+            }
+            // An inner view of the web view.
+            let is_view: bool = msg_send![fr, isKindOfClass: objc2::runtime::AnyClass::get(c"NSView").map(|c| c as *const _).unwrap_or(std::ptr::null())];
+            is_view && msg_send![fr, isDescendantOf: me]
+        }
+    }
+
     /// The text on the system clipboard, if there is any.
     pub fn clipboard_text() -> Option<String> {
         use objc2::runtime::AnyClass;

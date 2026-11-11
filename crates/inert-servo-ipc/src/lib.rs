@@ -38,6 +38,8 @@ pub enum Cmd {
     ClearCookies { sites: Vec<String> },
     /// Adds cookies (the Chrome import): (url the cookie belongs to, cookie).
     SetCookies { list: Vec<(String, CookieJson)> },
+    /// Answers `Ev::Menu`: the action the user picked, or `None` to dismiss.
+    MenuPick { view: u64, action: Option<String> },
     Quit,
 }
 
@@ -52,6 +54,8 @@ pub enum Input {
     /// Named keys only ("Enter", "Backspace", "ArrowLeft", …).
     Key { key: String, down: bool, shift: bool, ctrl: bool, alt: bool, meta: bool },
     Text { s: String },
+    /// "copy", "cut", "paste" or "select_all" on the page's selection.
+    Edit { action: String },
     Focus,
 }
 
@@ -72,6 +76,9 @@ pub enum Ev {
     /// The blocking engine is built and in use.
     ShieldReady,
     Cookies { req: u64, list: Vec<CookieJson> },
+    /// The page asked for a context menu. `actions` are the ones Servo
+    /// offers here ("Copy", "Paste", "CopyLink", …).
+    Menu { view: u64, actions: Vec<String>, link: Option<String>, image: Option<String>, selection: bool, editable: bool },
     Log { msg: String },
 }
 

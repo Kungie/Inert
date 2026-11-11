@@ -78,6 +78,13 @@ fn tab_icon(k: &Kind) -> (Icon, Color32) {
     }
 }
 
+/// A site icon, with softly rounded corners.
+pub fn favicon(p: &egui::Painter, tex: egui::TextureId, c: egui::Pos2, side: f32, alpha: f32) {
+    let r = Rect::from_center_size(c, Vec2::splat(side));
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    p.add(egui::epaint::RectShape::filled(r, side * 0.22, WHITE.gamma_multiply(alpha)).with_texture(tex, uv));
+}
+
 fn spinner(p: &egui::Painter, c: egui::Pos2, time: f32) {
     p.circle_stroke(c, 5.5, Stroke::new(1.2, glass(0.25)));
     let a = time * 6.0;
@@ -182,6 +189,7 @@ impl Browser {
             p.rect_stroke(card, CARD_R, Stroke::new(1.0, glass(0.16)), egui::StrokeKind::Inside);
         });
         self.popovers(&ctx);
+        self.page_menu_ui(&ctx);
         self.omnibox_dropdown(&ctx);
         self.ntp_dropdown(&ctx);
         self.rename_modal(&ctx);
@@ -471,6 +479,11 @@ impl Browser {
         let title = t.title();
         let loading = t.loading();
         let (icon, icon_c) = tab_icon(&t.kind);
+        let fav = match &t.kind {
+            Kind::Web(w) => Some(w.url.clone()),
+            _ => None,
+        }
+        .and_then(|u| self.favicons.get(&ctx, &u));
         let (rect, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
         let resp = ui.interact(rect, Id::unique(("tab-row", id)), Sense::click());
         crate::drive::reg(format!("tab:{title}"), rect);
@@ -485,6 +498,8 @@ impl Browser {
         }
         if loading {
             spinner(p, body.center(), ctx.input(|i| i.time) as f32);
+        } else if let Some(tex) = fav {
+            favicon(p, tex, body.center(), 18.0, 1.0);
         } else {
             icons::paint(p, Rect::from_center_size(body.center(), Vec2::splat(16.0)), icon, icon_c);
         }
@@ -509,6 +524,11 @@ impl Browser {
         let title = t.title();
         let loading = t.loading();
         let (icon, icon_c) = tab_icon(&t.kind);
+        let fav = match &t.kind {
+            Kind::Web(w) => Some(w.url.clone()),
+            _ => None,
+        }
+        .and_then(|u| self.favicons.get(&ctx, &u));
         let t0 = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(Id::unique(("tab-born", id)), || if animate_new { now } else { now - 10.0 }));
         let grow = ease(((now - t0) / 0.22) as f32);
         if grow < 1.0 {
@@ -542,6 +562,8 @@ impl Browser {
         let ic = pos2(body.left() + 16.0 + if group.is_some() { 6.0 } else { 0.0 }, body.center().y);
         if loading {
             spinner(&p, ic, now as f32);
+        } else if let Some(tex) = fav {
+            favicon(&p, tex, ic, 16.0, k);
         } else {
             icons::paint(&p, Rect::from_center_size(ic, Vec2::splat(14.0)), icon, icon_c.gamma_multiply(k));
         }
@@ -1026,7 +1048,10 @@ impl Browser {
                 if bh > 0.0 {
                     ui.painter().rect_filled(rect, 11.0, glass(0.12 * bh));
                 }
-                icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 12.0, rect.center().y), Vec2::splat(11.0)), if inert { Icon::Lock } else { Icon::Globe }, icon_c);
+                match self.favicons.get(ui.ctx(), &b.url) {
+                    Some(tex) => favicon(ui.painter(), tex, pos2(rect.left() + 12.0, rect.center().y), 14.0, 1.0),
+                    None => icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 12.0, rect.center().y), Vec2::splat(11.0)), if inert { Icon::Lock } else { Icon::Globe }, icon_c),
+                }
                 let mut job = egui::text::LayoutJob::single_section(b.title.clone(), egui::TextFormat::simple(FontId::new(12.0, sans()), glass(0.82 + 0.18 * bh)));
                 job.wrap = egui::text::TextWrapping::truncate_at_width(150.0);
                 let g = ui.fonts_mut(|f| f.layout_job(job));
@@ -1633,6 +1658,10 @@ impl Browser {
             self.find = Some(String::new());
             self.popover = Popover::None;
         }
+        if item(ui, Icon::Globe, "Translate this page", "") {
+            self.translate_page();
+            self.popover = Popover::None;
+        }
         if item(ui, Icon::Code, "Developer tools", "Opt+Cmd+I") {
             self.devtools();
             self.popover = Popover::None;
@@ -1917,7 +1946,7 @@ impl Browser {
             return;
         }
         // Servo-backed web pages are drawn by Inert itself.
-        let overlay = self.popover != Popover::None || (self.omni.editing && !self.omni.sugg.is_empty()) || egui::Popup::is_any_open(ui.ctx()) || self.rename.is_some();
+        let overlay = self.popover != Popover::None || (self.omni.editing && !self.omni.sugg.is_empty()) || egui::Popup::is_any_open(ui.ctx()) || self.rename.is_some() || self.page_menu.is_some();
         if let (Some(Kind::Web(w)), Some(host)) = (self.tabs.iter().find(|t| t.id == id).map(|t| &t.kind), &self.servo) {
             if let Some(sv) = &w.sv {
                 crate::drive::reg("servo:surface", ui.max_rect());
@@ -2044,22 +2073,154 @@ impl Browser {
         }
     }
 
+    /// Opens the active page in Google Translate, into the Mac's language.
+    pub fn translate_page(&mut self) {
+        let Some(Kind::Web(w)) = self.active_tab().map(|t| &t.kind) else {
+            self.toast("Translate works on web pages");
+            return;
+        };
+        let u: String = url::form_urlencoded::byte_serialize(w.url.as_bytes()).collect();
+        let to = ui_language();
+        self.add_tab(&format!("https://translate.google.com/translate?sl=auto&tl={to}&u={u}"), None, true, None);
+    }
+
+    /// The context menu of a Servo page: Servo says what applies here
+    /// (copy, paste, the link under the pointer…), Inert adds its own rows.
+    fn page_menu_ui(&mut self, ctx: &egui::Context) {
+        let Some(m) = &self.page_menu else { return };
+        let (tab, at, fresh) = (m.tab, m.at, m.opened.elapsed() < Duration::from_millis(200));
+        let has = |a: &str| m.actions.iter().any(|x| x == a);
+        // (label, what it does)
+        enum Do {
+            Servo(&'static str),
+            OpenTab(String),
+            CopyText(String),
+            Translate,
+            Inspect,
+            Sep,
+        }
+        let mut rows: Vec<(&str, Do)> = Vec::new();
+        if let Some(l) = &m.link {
+            rows.push(("Open link in new tab", Do::OpenTab(l.clone())));
+            rows.push(("Copy link", Do::CopyText(l.clone())));
+            rows.push(("", Do::Sep));
+        }
+        if let Some(i) = &m.image {
+            rows.push(("Open image in new tab", Do::OpenTab(i.clone())));
+            rows.push(("Copy image address", Do::CopyText(i.clone())));
+            rows.push(("", Do::Sep));
+        }
+        if has("Cut") && m.editable && m.selection {
+            rows.push(("Cut", Do::Servo("Cut")));
+        }
+        if has("Copy") && m.selection {
+            rows.push(("Copy", Do::Servo("Copy")));
+        }
+        if has("Paste") && m.editable {
+            rows.push(("Paste", Do::Servo("Paste")));
+        }
+        if has("SelectAll") {
+            rows.push(("Select all", Do::Servo("SelectAll")));
+        }
+        rows.push(("", Do::Sep));
+        if has("GoBack") {
+            rows.push(("Back", Do::Servo("GoBack")));
+        }
+        if has("GoForward") {
+            rows.push(("Forward", Do::Servo("GoForward")));
+        }
+        rows.push(("Reload", Do::Servo("Reload")));
+        rows.push(("", Do::Sep));
+        rows.push(("Translate this page", Do::Translate));
+        rows.push(("Inspect (opens in WebKit)", Do::Inspect));
+        let screen = ctx.content_rect();
+        let pos = pos2(at.x.min(screen.right() - 250.0), at.y.min(screen.bottom() - rows.len() as f32 * 30.0 - 20.0));
+        let t = ctx.animate_bool_with_time(Id::unique("page-menu-anim"), true, 0.12);
+        let mut picked: Option<usize> = None;
+        let area = egui::Area::new(Id::unique("page-menu")).fixed_pos(pos).order(egui::Order::Foreground).show(ctx, |ui| {
+            ui.multiply_opacity(t);
+            theme::panel_frame(14, 6.0).show(ui, |ui| {
+                ui.set_width(230.0);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (i, (label, what)) in rows.iter().enumerate() {
+                    if matches!(what, Do::Sep) {
+                        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
+                        ui.painter().line_segment([pos2(r.left() + 8.0, r.center().y), pos2(r.right() - 8.0, r.center().y)], Stroke::new(1.0, LINE));
+                        continue;
+                    }
+                    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
+                    let resp = ui.interact(r, Id::unique(("page-menu-row", i)), Sense::click());
+                    crate::drive::reg(format!("page:{label}"), r);
+                    let h = ui.ctx().animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.08);
+                    if h > 0.0 {
+                        ui.painter().rect_filled(r, 9.0, HOVER.gamma_multiply(h));
+                    }
+                    ui.painter().text(pos2(r.left() + 12.0, r.center().y), egui::Align2::LEFT_CENTER, *label, FontId::new(13.0, sans()), FG);
+                    if resp.clicked() {
+                        picked = Some(i);
+                    }
+                }
+            });
+        });
+        self.overlay_rects.push(area.response.rect);
+        let outside = ctx.input(|i| i.pointer.any_pressed()) && ctx.pointer_latest_pos().is_some_and(|p| !area.response.rect.contains(p));
+        let close = (outside && !fresh) || ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        if picked.is_none() && !close {
+            return;
+        }
+        let choice = picked.map(|i| rows.swap_remove(i).1);
+        // Servo is told first: its menu is answered exactly once.
+        let servo_action = match &choice {
+            Some(Do::Servo(a)) => Some(*a),
+            _ => None,
+        };
+        if let Some(Kind::Web(w)) = self.tab(tab).map(|t| &t.kind) {
+            if let Some(sv) = &w.sv {
+                sv.menu_pick(servo_action);
+            }
+        }
+        match choice {
+            Some(Do::OpenTab(u)) => {
+                self.add_tab(&u, None, false, None);
+            }
+            Some(Do::CopyText(s)) => ctx.copy_text(s),
+            Some(Do::Translate) => self.translate_page(),
+            Some(Do::Inspect) => {
+                if let Some(Kind::Web(w)) = self.tab_mut(tab).map(|t| &mut t.kind) {
+                    w.discard();
+                    w.engine = Some(crate::profile::Engine::WebKit);
+                }
+                self.toast("Opened with WebKit. Right-click → Inspect Element, or Opt+Cmd+I.");
+            }
+            _ => {}
+        }
+        self.page_menu = None;
+        ctx.animate_bool_with_time(Id::unique("page-menu-anim"), false, 0.0);
+    }
+
     /// Cut / copy / paste / select all / undo / redo from the Edit menu
     /// (and their shortcuts). A focused WebKit page gets the native action;
     /// everything else, egui's fields and Servo pages included, gets egui
     /// input on the next frame.
     fn edit_command(&mut self, what: &str) {
-        let egui_focus = self.ctx.memory(|m| m.focused().is_some());
-        #[cfg(target_os = "macos")]
-        if !egui_focus {
-            if let Some(Kind::Web(w)) = self.active_tab().map(|t| &t.kind) {
-                if let Some(v) = &w.view {
+        let focus = self.ctx.memory(|m| m.focused());
+        if let Some(Kind::Web(w)) = self.active_tab().map(|t| &t.kind) {
+            // A WebKit page that holds the keyboard gets the native action.
+            #[cfg(target_os = "macos")]
+            if let Some(v) = &w.view {
+                if crate::web::mac::has_focus(v) {
                     crate::web::mac::edit_action(v, what);
                     return;
                 }
             }
+            // A Servo page with the keyboard: Servo's own clipboard actions.
+            if let Some(sv) = &w.sv {
+                if focus == Some(Id::unique(("servo-surface", self.active))) {
+                    sv.edit(&what.replace('-', "_"));
+                    return;
+                }
+            }
         }
-        let _ = egui_focus;
         let cmd = egui::Modifiers::COMMAND;
         let key = |k: egui::Key, m: egui::Modifiers| {
             [true, false].map(|pressed| egui::Event::Key { key: k, physical_key: Some(k), pressed, repeat: false, modifiers: m })
@@ -2208,4 +2369,15 @@ fn side_card(ui: &mut Ui) -> Ui {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(card.shrink(16.0)).layout(Layout::top_down(Align::Min)));
     child.set_clip_rect(card);
     child
+}
+
+/// The Mac's first preferred language ("tr", "en", "de"…), for Translate.
+fn ui_language() -> &'static str {
+    static LANG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    LANG.get_or_init(|| {
+        let out = std::process::Command::new("/usr/bin/defaults").args(["read", "-g", "AppleLanguages"]).output().ok();
+        let text = out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        let first: String = text.chars().skip_while(|c| !c.is_ascii_alphabetic()).take_while(|c| c.is_ascii_alphabetic()).collect();
+        if (2..=3).contains(&first.len()) { first.to_ascii_lowercase() } else { "en".into() }
+    })
 }

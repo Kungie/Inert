@@ -225,6 +225,7 @@ fn reader(stdout: std::process::ChildStdout, shared: Arc<Mutex<Shared>>, tx: Sen
                 }
             }
             Ev::Cookies { req, list } => send(Event::ServoCookies { req, list }),
+            Ev::Menu { view, actions, link, image, selection, editable } => send(Event::ServoMenu { tab: view, actions, link, image, selection, editable }),
             Ev::Log { msg } => tracing::debug!("servo-host: {msg}"),
         }
         ectx.request_repaint();
@@ -256,6 +257,14 @@ impl View {
     }
     pub fn zoom(&self, z: f32) {
         self.inner.send(&Cmd::Zoom { view: self.id, z });
+    }
+    /// "copy", "cut", "paste" or "select_all" on the page.
+    pub fn edit(&self, action: &str) {
+        self.inner.send(&Cmd::Input { view: self.id, ev: Input::Edit { action: action.to_owned() } });
+    }
+    /// Answers the page's context menu: an action Servo offered, or `None`.
+    pub fn menu_pick(&self, action: Option<&str>) {
+        self.inner.send(&Cmd::MenuPick { view: self.id, action: action.map(str::to_owned) });
     }
     pub fn eval(&self, script: &str) {
         self.inner.send(&Cmd::Eval { view: self.id, req: 0, script: script.to_owned() });

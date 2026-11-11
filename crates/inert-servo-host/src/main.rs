@@ -50,7 +50,23 @@ struct Delegate {
     out: Sender<Ev>,
     frame: Rc<Cell<bool>>,
     blocker: Rc<Blocker>,
+    /// The context menu the page is waiting on, until the browser answers.
+    menu: Rc<RefCell<Option<servo::ContextMenu>>>,
 }
+
+const MENU_ACTIONS: [(&str, servo::ContextMenuAction); 11] = [
+    ("GoBack", servo::ContextMenuAction::GoBack),
+    ("GoForward", servo::ContextMenuAction::GoForward),
+    ("Reload", servo::ContextMenuAction::Reload),
+    ("CopyLink", servo::ContextMenuAction::CopyLink),
+    ("OpenLinkInNewWebView", servo::ContextMenuAction::OpenLinkInNewWebView),
+    ("CopyImageLink", servo::ContextMenuAction::CopyImageLink),
+    ("OpenImageInNewView", servo::ContextMenuAction::OpenImageInNewView),
+    ("Cut", servo::ContextMenuAction::Cut),
+    ("Copy", servo::ContextMenuAction::Copy),
+    ("Paste", servo::ContextMenuAction::Paste),
+    ("SelectAll", servo::ContextMenuAction::SelectAll),
+];
 
 fn cursor_name(c: servo::Cursor) -> &'static str {
     match c {
@@ -103,6 +119,33 @@ impl WebViewDelegate for Delegate {
         }
     }
     fn request_create_new(&self, _p: WebView, _r: servo::CreateNewWebViewRequest) {}
+    fn show_embedder_control(&self, _w: WebView, control: servo::EmbedderControl) {
+        // Context menus are drawn by the browser; it answers with MenuPick.
+        if let servo::EmbedderControl::ContextMenu(m) = control {
+            let actions = m
+                .items()
+                .iter()
+                .filter_map(|i| match i {
+                    servo::ContextMenuItem::Item { action, enabled: true, .. } => MENU_ACTIONS.iter().find(|(_, a)| a == action).map(|(n, _)| (*n).to_owned()),
+                    _ => None,
+                })
+                .collect();
+            let info = m.element_info();
+            let flags = info.flags;
+            let _ = self.out.send(Ev::Menu {
+                view: self.id,
+                actions,
+                link: info.link_url.as_ref().map(|u| u.to_string()),
+                image: info.image_url.as_ref().map(|u| u.to_string()),
+                selection: flags.contains(servo::ContextMenuElementInformationFlags::Selection),
+                editable: flags.contains(servo::ContextMenuElementInformationFlags::EditableText),
+            });
+            *self.menu.borrow_mut() = Some(m);
+        }
+    }
+    fn hide_embedder_control(&self, _w: WebView, _id: servo::EmbedderControlId) {
+        self.menu.borrow_mut().take();
+    }
     fn load_web_resource(&self, _w: WebView, load: servo::WebResourceLoad) {
         if !self.blocker.enabled.get() {
             return;
@@ -209,6 +252,16 @@ fn to_servo(ev: Input) -> Vec<InputEvent> {
                 [key(KeyState::Down, k.clone(), servo::Modifiers::empty()), key(KeyState::Up, k, servo::Modifiers::empty())]
             })
             .collect(),
+        Input::Edit { action } => match action.as_str() {
+            "copy" => vec![InputEvent::EditingAction(servo::ClipboardAction::Copy)],
+            "cut" => vec![InputEvent::EditingAction(servo::ClipboardAction::Cut)],
+            "paste" => vec![InputEvent::EditingAction(servo::ClipboardAction::Paste)],
+            "select_all" => {
+                let k = Key::Character("a".into());
+                vec![key(KeyState::Down, k.clone(), servo::Modifiers::META), key(KeyState::Up, k, servo::Modifiers::META)]
+            }
+            _ => vec![],
+        },
         Input::Focus => vec![],
     }
 }
@@ -235,6 +288,7 @@ fn build_blocker() -> Receiver<adblock::Engine> {
 struct Entry {
     view: WebView,
     frame: Rc<Cell<bool>>,
+    menu: Rc<RefCell<Option<servo::ContextMenu>>>,
 }
 
 fn main() {
@@ -333,11 +387,12 @@ fn main() {
                 Cmd::Create { view, url } => {
                     let Ok(u) = url::Url::parse(&url) else { continue };
                     let frame = Rc::new(Cell::new(true));
-                    let d = Rc::new(Delegate { id: view, out: out.clone(), frame: frame.clone(), blocker: blocker.clone() });
+                    let menu = Rc::new(RefCell::new(None));
+                    let d = Rc::new(Delegate { id: view, out: out.clone(), frame: frame.clone(), blocker: blocker.clone(), menu: menu.clone() });
                     let wv = WebViewBuilder::new(&servo, ctx.clone()).url(u).delegate(d).build();
                     // Pages see prefers-color-scheme: dark, like the rest of Inert.
                     wv.notify_theme_change(servo::Theme::Dark);
-                    views.insert(view, Entry { view: wv, frame });
+                    views.insert(view, Entry { view: wv, frame, menu });
                 }
                 Cmd::Load { view, url } => {
                     if let (Some(e), Ok(u)) = (views.get(&view), url::Url::parse(&url)) {
@@ -453,7 +508,14 @@ fn main() {
                 Cmd::SetCookies { list } => {
                     for (u, c) in list {
                         let Ok(u) = url::Url::parse(&u) else { continue };
-                        let mut b = cookie::Cookie::build((c.name, c.value)).domain(c.domain).path(c.path).secure(c.secure).http_only(c.http_only);
+                        // Chrome marks a domain cookie with a leading dot. A host-only
+                        // cookie must stay without a Domain attribute: with one,
+                        // `__Host-` cookies are refused and sites that pair cookies
+                        // (GitHub's session and its same-site twin) see half a login.
+                        let mut b = cookie::Cookie::build((c.name, c.value)).path(c.path).secure(c.secure).http_only(c.http_only);
+                        if c.domain.starts_with('.') {
+                            b = b.domain(c.domain);
+                        }
                         if let Some(t) = c.expires.and_then(|t| cookie::time::OffsetDateTime::from_unix_timestamp(t).ok()) {
                             b = b.expires(t);
                         }
@@ -464,6 +526,14 @@ fn main() {
                             _ => b,
                         };
                         servo.site_data_manager().set_cookie_for_url(u, b.build().into_owned(), None);
+                    }
+                }
+                Cmd::MenuPick { view, action } => {
+                    if let Some(m) = views.get(&view).and_then(|e| e.menu.borrow_mut().take()) {
+                        match action.and_then(|a| MENU_ACTIONS.iter().find(|(n, _)| *n == a).map(|(_, x)| *x)) {
+                            Some(a) => m.select(a),
+                            None => m.dismiss(),
+                        }
                     }
                 }
                 Cmd::Quit => break 'main,

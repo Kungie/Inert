@@ -74,6 +74,8 @@ pub struct Imported {
     pub search: Option<SearchEngine>,
     pub show_bookmarks_bar: Option<bool>,
     pub startup_urls: Vec<String>,
+    /// Site icons from Chrome's own cache: (host, PNG bytes).
+    pub favicons: Vec<(String, Vec<u8>)>,
     pub errors: Vec<String>,
 }
 
@@ -234,17 +236,50 @@ pub fn run(src: &Source, what: What) -> Imported {
     let mut r = Imported { source: src.label(), ..Default::default() };
     let d = &src.dir;
     if what.bookmarks {
-        match std::fs::read_to_string(d.join("Bookmarks")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
-            Some(b) => {
-                // The bar first (it becomes Inert's bookmarks bar), then the rest.
-                for root in ["bookmark_bar", "other", "synced"] {
-                    if let Some(n) = b.pointer(&format!("/roots/{root}")) {
-                        walk(n, &mut r.bookmarks);
+        // Chrome keeps bookmarks in two files: "Bookmarks" (local, or synced
+        // the old way) and "AccountBookmarks" (the Google account's, for
+        // people signed in to Chrome). Read both; the bar comes first, since
+        // it becomes Inert's bookmarks bar.
+        let files: Vec<Value> = ["Bookmarks", "AccountBookmarks"]
+            .iter()
+            .filter_map(|name| {
+                let p = d.join(name);
+                match std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
+                    Some(v) => Some(v),
+                    None if p.exists() => {
+                        r.errors.push(format!("{name} file couldn't be read"));
+                        None
+                    }
+                    None => None,
+                }
+            })
+            .collect();
+        for root in ["bookmark_bar", "other", "synced"] {
+            for b in &files {
+                if let Some(n) = b.pointer(&format!("/roots/{root}")) {
+                    walk(n, &mut r.bookmarks);
+                }
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        r.bookmarks.retain(|b| seen.insert(b.url.clone()));
+    }
+    if what.bookmarks || what.history {
+        // Site icons, straight from Chrome's cache (no network): per site,
+        // the bitmap closest to 32 px.
+        let sql = "SELECT m.page_url AS page, hex(b.image_data) AS png, b.width AS w FROM favicon_bitmaps b JOIN icon_mapping m ON m.icon_id = b.icon_id WHERE b.width BETWEEN 16 AND 64 AND length(b.image_data) BETWEEN 1 AND 30000 GROUP BY b.icon_id, b.width LIMIT 4000";
+        if let Ok(rows) = query(&d.join("Favicons"), sql) {
+            let mut best: std::collections::HashMap<String, (i64, Vec<u8>)> = Default::default();
+            for v in rows {
+                let Some(host) = crate::favicon::host_of(&s(&v, "page")) else { continue };
+                let score = (n(&v, "w") - 32).abs();
+                if best.get(&host).is_none_or(|(sc, _)| score < *sc) {
+                    if let Ok(png) = hex::decode(s(&v, "png")) {
+                        best.insert(host, (score, png));
                     }
                 }
             }
-            None if d.join("Bookmarks").exists() => r.errors.push("Bookmarks file couldn't be read".into()),
-            None => {}
+            r.favicons = best.into_iter().map(|(h, (_, p))| (h, p)).collect();
         }
     }
     if what.history {
