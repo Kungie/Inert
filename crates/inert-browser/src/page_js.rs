@@ -3,7 +3,7 @@
 
 /// Runs at document start in every WebKit page: no rubber-band gap when a
 /// page is scrolled past its top or bottom.
-pub const BASE: &str = r#"(function(){try{var s=document.createElement('style');s.textContent='html,body{overscroll-behavior:none!important}';(document.documentElement||document).appendChild(s);}catch(e){}})();"#;
+pub const BASE: &str = r#"(function(){var add=function(css){var f=function(){try{var s=document.createElement('style');s.textContent=css;(document.head||document.documentElement).appendChild(s);}catch(e){}};if(document.documentElement)f();else document.addEventListener('DOMContentLoaded',f);};window.__inertCss=add;add('html,body{overscroll-behavior:none!important}');})();"#;
 
 /// "Hide my location": geolocation always answers "denied".
 pub const HIDE_LOCATION: &str = r#"(function(){try{var deny=function(ok,err){if(err){setTimeout(function(){err({code:1,message:'User denied Geolocation',PERMISSION_DENIED:1,POSITION_UNAVAILABLE:2,TIMEOUT:3});},0);}};var G=window.Geolocation&&Geolocation.prototype;if(G){Object.defineProperty(G,'getCurrentPosition',{value:deny,configurable:false});Object.defineProperty(G,'watchPosition',{value:function(a,b){deny(a,b);return 0;},configurable:false});}}catch(e){}})();"#;
@@ -15,7 +15,7 @@ if(/(^|\.)youtube\.com$/.test(h)){c='ytd-rich-shelf-renderer[is-shorts],ytd-reel
 else if(/(^|\.)(x|twitter)\.com$/.test(h)){c='[aria-label="Timeline: Trending now"],[data-testid="sidebarColumn"] section,[aria-label="Who to follow"]{display:none!important}';}
 else if(/(^|\.)instagram\.com$/.test(h)){c='a[href="/reels/"],a[href="/explore/"],main article~div{display:none!important}';}
 else if(/(^|\.)tiktok\.com$/.test(h)){c='[data-e2e="recommend-list-item-container"]{display:none!important}';}
-if(c){var s=document.createElement('style');s.textContent=c;(document.documentElement||document).appendChild(s);}}catch(e){}})();"#;
+if(c&&window.__inertCss){window.__inertCss(c);}}catch(e){}})();"#;
 
 /// Picture in Picture for the biggest video on the page. Returns "on",
 /// "off" or "none".

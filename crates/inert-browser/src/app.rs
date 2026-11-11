@@ -42,12 +42,52 @@ pub enum Event {
     Clipped { rect: egui::Rect, image: std::sync::Arc<egui::ColorImage> },
     /// The text selected on a page (asked for by "Attach to assistant").
     Selection { tab: u64, text: String },
+    /// One of Inert's page scripts answered.
+    PageAnswer { tab: u64, ask: Ask, text: String },
+    /// The model translated the page's text (a JSON array), or failed.
+    Translated { tab: u64, result: Result<String, String> },
+    /// An instant answer for what was typed: (query, answer).
+    Instant(String, String),
     /// Touch ID answered.
     Unlocked { what: Unlock, ok: bool },
     /// Push-to-talk: what the dictation helper heard.
     Dictate(crate::dictate::Heard),
     /// A Servo page asked for its context menu.
     ServoMenu { tab: u64, actions: Vec<String>, link: Option<String>, image: Option<String>, selection: bool, editable: bool },
+}
+
+/// A page as Rewind remembers it.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Snap {
+    pub url: String,
+    pub title: String,
+    pub text: String,
+    pub t: u64,
+}
+
+fn rewind_path(demo: bool) -> std::path::PathBuf {
+    Profile::dir(demo).join("rewind.json")
+}
+
+fn load_rewind(demo: bool) -> Vec<Snap> {
+    std::fs::read_to_string(rewind_path(demo)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+/// What a page script was run for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Ask {
+    Translate,
+    Readable,
+    Pip,
+    Captions,
+}
+
+/// "Ask all tabs": page texts on their way in.
+pub struct Gather {
+    pub q: String,
+    pub waiting: std::collections::HashSet<u64>,
+    pub pages: Vec<(String, String, String)>,
+    pub started: Instant,
 }
 
 /// What Touch ID was asked to open.
@@ -193,6 +233,9 @@ pub struct AiState {
     pub pending_question: Option<String>,
     /// What is attached to the next question.
     pub attach: Vec<Attached>,
+    /// The next question goes to every open page, not just this one.
+    pub all_tabs: bool,
+    pub gather: Option<Gather>,
     pub clip: Clip,
     /// When the latest reply arrived (it fades in).
     pub reply_at: f64,
@@ -294,6 +337,16 @@ pub struct Browser {
     pub private_locked: bool,
     /// Secret favorites, while unlocked (and until when).
     pub secrets: Option<(Vec<crate::profile::Bookmark>, Instant)>,
+    /// Split view: the tab shown in the right pane, and where.
+    pub split: Option<u64>,
+    pub split_rect: egui::Rect,
+    /// The tab that was active before this one.
+    pub prev_active: u64,
+    /// Rewind: the text of pages seen (newest last), kept on this Mac.
+    pub rewind: Vec<Snap>,
+    /// "Read aloud" while it is speaking.
+    pub say: Option<std::process::Child>,
+    rewind_dirty: bool,
     /// When the user last did anything (private tabs erase themselves when idle).
     pub last_input: Instant,
     capture_hidden: bool,
@@ -403,6 +456,12 @@ impl Browser {
             private_clip: None,
             private_locked: false,
             secrets: None,
+            split: None,
+            split_rect: egui::Rect::NOTHING,
+            prev_active: 0,
+            rewind: load_rewind(demo),
+            say: None,
+            rewind_dirty: false,
             last_input: Instant::now(),
             capture_hidden: false,
             closing: Vec::new(),
@@ -536,6 +595,13 @@ impl Browser {
     }
 
     pub fn activate(&mut self, id: u64) {
+        if self.active != id {
+            self.prev_active = self.active;
+        }
+        // Bringing the split pane's tab forward ends the split.
+        if self.split == Some(id) {
+            self.split = None;
+        }
         self.active = id;
         if let Some(t) = self.tab_mut(id) {
             if let Kind::Web(w) = &mut t.kind {
@@ -817,6 +883,12 @@ impl Browser {
                             self.dirty = true;
                             let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
                             self.favicons.want(&url, &tx, &ctx);
+                            // Rewind: ask the page for its text once it has settled.
+                            if self.profile.settings.rewind && !self.demo {
+                                if let Some(Kind::Web(w)) = self.tab(tab).map(|t| &t.kind) {
+                                    web::read_text(w, tab, &tx, &ctx);
+                                }
+                            }
                         }
                     }
                     if tab == self.active && !self.omni.editing {
@@ -843,6 +915,18 @@ impl Browser {
                     self.downloads.push(Download { url, path, private_tab, keep: false });
                 }
                 Event::PageText { tab, text } => {
+                    self.remember_page(tab, &text);
+                    // "Ask all tabs" collects every page before it sends.
+                    if let Some(g) = &mut self.ai.gather {
+                        if g.waiting.remove(&tab) {
+                            let (title, url) = self.tabs.iter().find(|t| t.id == tab).map(|t| (t.title(), t.url())).unwrap_or_default();
+                            g.pages.push((title, url, text.clone()));
+                        }
+                        if g.waiting.is_empty() {
+                            self.finish_gather();
+                        }
+                        continue;
+                    }
                     if tab == self.active {
                         if let Some(q) = self.ai.pending_question.take() {
                             let url = self.tab(tab).map(|t| t.url()).unwrap_or_default();
@@ -868,6 +952,26 @@ impl Browser {
                 }
                 Event::Clipped { rect, image } => self.on_clipped(rect, &image),
                 Event::Dictate(h) => self.on_heard(h),
+                Event::PageAnswer { tab, ask, text } => self.on_page_answer(tab, ask, text),
+                Event::Translated { tab, result } => match result {
+                    Ok(json) => {
+                        if let Some(Kind::Web(w)) = self.tab(tab).map(|t| &t.kind) {
+                            web::js(w, &crate::page_js::translate_apply(&json));
+                        }
+                        self.toast("Translated in place. Reload the page to see the original.");
+                    }
+                    Err(e) => self.toast(format!("Translation failed: {e}")),
+                },
+                Event::Instant(q, text) => {
+                    if self.profile.settings.instant {
+                        if q == self.omni.typed && self.omni.editing {
+                            crate::omnibox::put_answer(&mut self.omni.sugg, &q, text.clone());
+                        }
+                        if q == self.ntp.typed && self.ntp.editing {
+                            crate::omnibox::put_answer(&mut self.ntp.sugg, &q, text);
+                        }
+                    }
+                }
                 Event::Unlocked { what, ok } => match (what, ok) {
                     (Unlock::PrivateTabs, true) => self.private_locked = false,
                     (Unlock::SecretFavorites, true) => self.secrets = Some((crate::passwords::secrets_load(self.demo), Instant::now())),
@@ -1104,6 +1208,10 @@ impl Browser {
     }
 
     pub fn ask_ai(&mut self, q: String) {
+        if self.ai.all_tabs {
+            self.ask_all_tabs(q);
+            return;
+        }
         self.ai.open = true;
         let attach = self.ai.attach.drain(..).map(|a| a.a).collect();
         self.ai.msgs.push(Msg { user: true, text: q.clone(), attach });
@@ -1127,6 +1235,162 @@ impl Browser {
                 if list.is_empty() { PageContext::None } else { PageContext::Tabs { list: list.join("\n") } }
             });
             self.send_ai(q, page);
+        }
+    }
+
+    /// "Ask all tabs": one question, with the text of every open page.
+    pub fn ask_all_tabs(&mut self, q: String) {
+        self.ai.open = true;
+        let attach = self.ai.attach.drain(..).map(|a| a.a).collect();
+        self.ai.msgs.push(Msg { user: true, text: q.clone(), attach });
+        self.ai.waiting = true;
+        let mut g = Gather { q, waiting: Default::default(), pages: Vec::new(), started: Instant::now() };
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        for t in self.tabs.iter().filter(|t| !t.private).take(24) {
+            match &t.kind {
+                // A live page is read now; a sleeping one gives its title and address.
+                Kind::Web(w) if w.view.is_some() || w.sv.is_some() => {
+                    g.waiting.insert(t.id);
+                    web::read_text(w, t.id, &tx, &ctx);
+                }
+                Kind::Web(w) => g.pages.push((w.title.clone(), w.url.clone(), "(not loaded)".into())),
+                Kind::Inert(it) => g.pages.push((t.title(), it.url(), it.semantic_text())),
+                Kind::Page(_) => {}
+            }
+        }
+        self.ai.gather = Some(g);
+        if self.ai.gather.as_ref().is_some_and(|g| g.waiting.is_empty()) {
+            self.finish_gather();
+        }
+    }
+
+    /// Every page answered (or time ran out): the question goes to the model.
+    pub fn finish_gather(&mut self) {
+        let Some(mut g) = self.ai.gather.take() else { return };
+        // Pages that did not answer in time still count, by title and address.
+        for id in g.waiting.drain() {
+            if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
+                g.pages.push((t.title(), t.url(), "(no answer)".into()));
+            }
+        }
+        let page = if g.pages.is_empty() { PageContext::None } else { PageContext::Many { pages: g.pages } };
+        self.send_ai(g.q, page);
+    }
+
+    /// Runs one of Inert's page scripts in the active page.
+    pub fn ask_page(&mut self, ask: Ask, script: &str) {
+        let id = self.active;
+        match self.tab(id).map(|t| &t.kind) {
+            Some(Kind::Web(w)) => {
+                if let Some(sv) = &w.sv {
+                    crate::servo_web::ask(sv, id, ask, script);
+                } else if let Some(v) = &w.view {
+                    let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+                    let _ = v.evaluate_script_with_callback(script, move |s| {
+                        let text = serde_json::from_str::<String>(&s).unwrap_or(s);
+                        let _ = tx.send(Event::PageAnswer { tab: id, ask, text });
+                        ctx.request_repaint();
+                    });
+                }
+            }
+            Some(Kind::Inert(it)) if ask == Ask::Readable => {
+                let text = it.semantic_text();
+                self.on_page_answer(id, ask, text);
+            }
+            _ => self.toast("That works on web pages"),
+        }
+    }
+
+    fn on_page_answer(&mut self, tab: u64, ask: Ask, text: String) {
+        match ask {
+            Ask::Pip => {
+                if text == "none" {
+                    self.toast("No video is playing on this page");
+                }
+            }
+            Ask::Captions => self.toast(if text == "0" || text.is_empty() { "This video carries no captions of its own" } else { "Captions toggled" }),
+            Ask::Readable => {
+                let text = text.trim().to_owned();
+                if text.len() < 2 {
+                    self.toast("Nothing to read on this page");
+                    return;
+                }
+                self.stop_reading();
+                // `say` reads from a file; the text never touches a shell.
+                let path = std::env::temp_dir().join(format!("inert-read-{}.txt", std::process::id()));
+                if std::fs::write(&path, text).is_ok() {
+                    match std::process::Command::new("/usr/bin/say").arg("-f").arg(&path).spawn() {
+                        Ok(c) => self.say = Some(c),
+                        Err(e) => self.toast(format!("Couldn't start speaking: {e}")),
+                    }
+                }
+            }
+            Ask::Translate => {
+                let Some(p) = self.profile.settings.provider else { return };
+                let lang = crate::chrome::ui_language().to_owned();
+                crate::ai::translate(p, self.model(), text, lang, tab, self.tx.clone(), self.ctx.clone());
+            }
+        }
+    }
+
+    /// Whether "Read aloud" is speaking right now.
+    pub fn reading(&mut self) -> bool {
+        match &mut self.say {
+            Some(c) => match c.try_wait() {
+                Ok(None) => true,
+                _ => {
+                    self.say = None;
+                    false
+                }
+            },
+            None => false,
+        }
+    }
+
+    pub fn stop_reading(&mut self) {
+        if let Some(mut c) = self.say.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
+    /// Rewind: keeps a page's text so it can be found again later.
+    fn remember_page(&mut self, tab: u64, text: &str) {
+        if !self.profile.settings.rewind {
+            return;
+        }
+        let Some(t) = self.tab(tab).filter(|t| !t.private) else { return };
+        let (url, title) = (t.url(), t.title());
+        if !url.starts_with("http") || text.trim().len() < 40 {
+            return;
+        }
+        let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(6000).collect();
+        self.rewind.retain(|s| s.url != url);
+        self.rewind.push(Snap { url, title, text, t: crate::profile::now() });
+        if self.rewind.len() > 1500 {
+            let drop = self.rewind.len() - 1500;
+            self.rewind.drain(..drop);
+        }
+        self.rewind_dirty = true;
+        self.dirty = true;
+    }
+
+    /// Forgets Rewind's pages seen since `since` (0 = all of them).
+    pub fn clear_rewind_since(&mut self, since: u64) {
+        self.rewind.retain(|s| s.t < since);
+        self.rewind_dirty = true;
+    }
+
+    /// Split view on or off. On: the page that was open before joins on the right.
+    pub fn toggle_split(&mut self) {
+        if self.split.take().is_some() {
+            return;
+        }
+        let ok = |t: &Tab| matches!(t.kind, Kind::Web(_) | Kind::Inert(_));
+        let other = self.tab(self.prev_active).filter(|t| t.id != self.active && ok(t)).map(|t| t.id).or_else(|| self.tabs.iter().rev().find(|t| t.id != self.active && ok(t)).map(|t| t.id));
+        match other {
+            Some(id) => self.split = Some(id),
+            None => self.toast("Open a second page first. Then: Split view, or right-click a tab → Open in split view."),
         }
     }
 
@@ -1419,6 +1683,12 @@ impl Browser {
     pub fn save_now(&mut self) {
         self.snapshot();
         self.profile.save(self.demo);
+        if self.rewind_dirty {
+            self.rewind_dirty = false;
+            if let Ok(s) = serde_json::to_string(&self.rewind) {
+                let _ = std::fs::write(rewind_path(self.demo), s);
+            }
+        }
         self.dirty = false;
         self.last_save = Instant::now();
     }
@@ -1464,6 +1734,9 @@ impl Browser {
         let groups = self.profile.groups.clone();
         let (default_engine, inbox_webkit) = (self.profile.settings.web_engine, self.profile.settings.inbox_webkit);
         let (hide_location, calm) = (self.profile.settings.hide_location, self.profile.settings.calm);
+        // Split view: the right pane's tab (WebKit pages only keep a second live view).
+        let split = self.split.filter(|s| *s != active);
+        let split_rect = self.split_rect;
         // Pick an engine for the active web tab, starting Servo on first use.
         let mut need_servo = false;
         for t in &mut self.tabs {
@@ -1552,6 +1825,24 @@ impl Browser {
                 }
                 web::place(w, content);
                 web::set_visible(w, !overlay);
+            } else if split == Some(t.id) && split_rect.width() > 40.0 {
+                // The right pane of split view.
+                if w.view.is_none() {
+                    let opts = web::Opts { private: t.private, hide_location, calm };
+                    match web::create(frame, t.id, &w.url, split_rect, &tx, &ctx, opts) {
+                        Ok(v) => {
+                            #[cfg(target_os = "macos")]
+                            web::mac::round(&v, crate::chrome::CARD_R as f64 - 4.0);
+                            w.view = Some(v);
+                            w.visible = true;
+                            w.bounds = Some(split_rect);
+                            w.loading = true;
+                        }
+                        Err(e) => err = Some(e),
+                    }
+                }
+                web::place(w, split_rect);
+                web::set_visible(w, !overlay);
             } else {
                 web::set_visible(w, false);
             }
@@ -1631,6 +1922,9 @@ impl eframe::App for Browser {
         }
 
         self.private_upkeep(&ctx, frame);
+        if self.ai.gather.as_ref().is_some_and(|g| g.started.elapsed() > Duration::from_secs(4)) {
+            self.finish_gather();
+        }
         self.chrome(ui);
         let content = self.content_rect;
         let locked = self.private_locked && self.active_tab().is_some_and(|t| t.private);

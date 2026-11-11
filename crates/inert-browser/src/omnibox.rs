@@ -16,6 +16,8 @@ pub enum Kind {
     OpenTab,
     Inert,
     Ai,
+    /// An instant answer: a sum worked out here, or a quick fact.
+    Answer,
 }
 
 #[derive(Clone, Debug)]
@@ -167,9 +169,128 @@ pub fn remote(engine: SearchEngine, q: String, tx: Sender<Event>, ctx: eframe::e
     });
 }
 
+/// Works out a sum typed into the address bar ("12*(3+4)", "15% of 80",
+/// "2^10"). `None` unless the whole text is arithmetic with an operator.
+pub fn calc(text: &str) -> Option<String> {
+    let t = text.trim().to_ascii_lowercase().replace(" of ", "*").replace('x', "*").replace('×', "*").replace('÷', "/").replace(',', ".");
+    if t.len() < 3 || !t.chars().any(|c| c.is_ascii_digit()) || !t.chars().any(|c| "+-*/^%".contains(c)) {
+        return None;
+    }
+    let chars: Vec<char> = t.chars().filter(|c| !c.is_whitespace()).collect();
+    if !chars.iter().all(|c| c.is_ascii_digit() || "+-*/^%().".contains(*c)) {
+        return None;
+    }
+    struct P<'a> {
+        c: &'a [char],
+        i: usize,
+    }
+    impl P<'_> {
+        fn peek(&self) -> Option<char> {
+            self.c.get(self.i).copied()
+        }
+        fn expr(&mut self) -> Option<f64> {
+            let mut v = self.term()?;
+            while let Some(op) = self.peek().filter(|c| *c == '+' || *c == '-') {
+                self.i += 1;
+                let r = self.term()?;
+                v = if op == '+' { v + r } else { v - r };
+            }
+            Some(v)
+        }
+        fn term(&mut self) -> Option<f64> {
+            let mut v = self.power()?;
+            while let Some(op) = self.peek().filter(|c| *c == '*' || *c == '/') {
+                self.i += 1;
+                let r = self.power()?;
+                v = if op == '*' { v * r } else { v / r };
+            }
+            Some(v)
+        }
+        fn power(&mut self) -> Option<f64> {
+            let b = self.unary()?;
+            if self.peek() == Some('^') {
+                self.i += 1;
+                return Some(b.powf(self.power()?));
+            }
+            Some(b)
+        }
+        fn unary(&mut self) -> Option<f64> {
+            if self.peek() == Some('-') {
+                self.i += 1;
+                return Some(-self.unary()?);
+            }
+            let mut v = if self.peek() == Some('(') {
+                self.i += 1;
+                let v = self.expr()?;
+                if self.peek() != Some(')') {
+                    return None;
+                }
+                self.i += 1;
+                v
+            } else {
+                let start = self.i;
+                while self.peek().is_some_and(|c| c.is_ascii_digit() || c == '.') {
+                    self.i += 1;
+                }
+                self.c[start..self.i].iter().collect::<String>().parse().ok()?
+            };
+            // "15%" is 0.15.
+            while self.peek() == Some('%') {
+                self.i += 1;
+                v /= 100.0;
+            }
+            Some(v)
+        }
+    }
+    let mut p = P { c: &chars, i: 0 };
+    let v = p.expr()?;
+    if p.i != chars.len() || !v.is_finite() {
+        return None;
+    }
+    let shown = if (v - v.round()).abs() < 1e-9 && v.abs() < 1e15 { format!("{}", v.round() as i64) } else { format!("{:.6}", v).trim_end_matches('0').trim_end_matches('.').to_owned() };
+    Some(shown)
+}
+
+/// A quick fact for a question typed in the address bar, from DuckDuckGo's
+/// instant-answer service. Sends `Event::Instant(q, text)` when there is one.
+pub fn instant(q: String, tx: Sender<Event>, ctx: eframe::egui::Context) {
+    std::thread::spawn(move || {
+        let enc: String = url::form_urlencoded::byte_serialize(q.as_bytes()).collect();
+        let url = format!("https://api.duckduckgo.com/?q={enc}&format=json&no_html=1&skip_disambig=1&t=inert");
+        let v = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(3)).user_agent(crate::web::USER_AGENT).build().ok().and_then(|c| c.get(url).send().ok()).and_then(|r| r.json::<serde_json::Value>().ok());
+        let Some(v) = v else { return };
+        let pick = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+        if let Some(text) = pick("Answer").or_else(|| pick("AbstractText")).or_else(|| pick("Definition")) {
+            let short: String = text.chars().take(220).collect();
+            let _ = tx.send(Event::Instant(q, short));
+            ctx.request_repaint();
+        }
+    });
+}
+
+/// Puts an instant answer right under the first row.
+pub fn put_answer(rows: &mut Vec<Suggestion>, q: &str, text: String) {
+    rows.retain(|r| r.kind != Kind::Answer);
+    let at = rows.len().min(1);
+    rows.insert(at, Suggestion { kind: Kind::Answer, title: text, target: q.to_owned() });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sums() {
+        assert_eq!(calc("12*(3+4)").as_deref(), Some("84"));
+        assert_eq!(calc("15% of 80").as_deref(), Some("12"));
+        assert_eq!(calc("2^10").as_deref(), Some("1024"));
+        assert_eq!(calc("10 / 4").as_deref(), Some("2.5"));
+        assert_eq!(calc("-3 + 5").as_deref(), Some("2"));
+        assert!(calc("github.com").is_none());
+        assert!(calc("2024").is_none());
+        assert!(calc("1/0").is_none());
+        assert!(calc("3 +").is_none());
+    }
 
     #[test]
     fn classifies() {

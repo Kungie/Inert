@@ -34,6 +34,8 @@ struct Shared {
     /// Consent checks: req → tab.
     consents: HashMap<u64, u64>,
     reads: HashMap<u64, u64>,
+    /// Pending page questions (translate, read aloud, …): req → (tab, what).
+    asks: HashMap<u64, (u64, crate::app::Ask)>,
     /// Pending `read_selection` requests: req → tab.
     selections: HashMap<u64, u64>,
     blocked: u64,
@@ -221,6 +223,11 @@ fn reader(stdout: std::process::ChildStdout, shared: Arc<Mutex<Shared>>, tx: Sen
                     send(Event::Consent { tab, what: text });
                     continue;
                 }
+                let asked = shared.lock().ok().and_then(|mut s| s.asks.remove(&req));
+                if let Some((tab, ask)) = asked {
+                    send(Event::PageAnswer { tab, ask, text });
+                    continue;
+                }
                 let sel = shared.lock().ok().and_then(|mut s| s.selections.remove(&req));
                 if let Some(tab) = sel {
                     send(Event::Selection { tab, text });
@@ -330,6 +337,16 @@ pub fn read_text(v: &View, tab: u64) {
         s.reads.insert(req, tab);
     }
     v.inner.send(&Cmd::Eval { view: v.id, req, script: "(document.title + '\\n' + (document.body ? document.body.innerText : '')).slice(0, 24000)".into() });
+}
+
+/// Runs one of Inert's page scripts; `Event::PageAnswer` carries its result.
+pub fn ask(v: &View, tab: u64, what: crate::app::Ask, script: &str) {
+    let req = v.inner.next_req.get();
+    v.inner.next_req.set(req + 1);
+    if let Ok(mut s) = v.inner.shared.lock() {
+        s.asks.insert(req, (tab, what));
+    }
+    v.inner.send(&Cmd::Eval { view: v.id, req, script: script.to_owned() });
 }
 
 /// Asks the page for its selected text; `Event::Selection` carries the answer.

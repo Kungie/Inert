@@ -455,7 +455,8 @@ impl Browser {
                 for q in ["What's in my open tabs?", "What was I working on?", "Which tabs can I close?"] {
                     let b = egui::Button::new(RichText::new(q).font(FontId::new(12.5, sans())).color(MUTED)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, LINE)).corner_radius(15).min_size(vec2(0.0, 30.0));
                     if ui.add(b).clicked() {
-                        self.ask_ai(q.into());
+                        // Starters read every open page, not just titles.
+                        self.ask_all_tabs(q.into());
                     }
                 }
             });
@@ -637,6 +638,13 @@ impl Browser {
             let ai = self.profile.settings.provider.map(|p| p.name());
             self.ntp.sugg = crate::omnibox::local(&self.profile, &tabs, &self.sites, &typed, ai);
             self.ntp.remote.clear();
+            if self.profile.settings.instant {
+                if let Some(v) = crate::omnibox::calc(&typed) {
+                    crate::omnibox::put_answer(&mut self.ntp.sugg, &typed, format!("= {v}"));
+                } else if self.profile.settings.remote_suggestions && !self.demo && typed.trim().split_whitespace().count() >= 2 && !typed.contains("://") {
+                    crate::omnibox::instant(typed.clone(), self.tx.clone(), self.ctx.clone());
+                }
+            }
             if self.profile.settings.remote_suggestions && typed.trim().len() >= 2 && !typed.contains("://") && !self.demo {
                 crate::omnibox::remote(self.profile.settings.search, typed, self.tx.clone(), self.ctx.clone());
             }
@@ -713,6 +721,44 @@ impl Browser {
 
         // The timeline, grouped by day.
         let ql = q.to_lowercase();
+        // Rewind: the search also looks inside the pages you have seen.
+        if ql.trim().chars().count() >= 3 {
+            let hits: Vec<(String, String, String)> = self
+                .rewind
+                .iter()
+                .rev()
+                .filter_map(|s| {
+                    let low = s.text.to_lowercase();
+                    let at = low.find(ql.trim())?;
+                    // A little of the text around the match (on character boundaries).
+                    let from = low[..at].char_indices().rev().nth(60).map(|(i, _)| i).unwrap_or(0);
+                    let to = low[at..].char_indices().nth(120).map(|(i, _)| at + i).unwrap_or(low.len());
+                    let snippet = s.text.get(from..to).filter(|_| s.text.len() == low.len()).unwrap_or(&low[from..to]).to_owned();
+                    Some((s.title.clone(), s.url.clone(), snippet))
+                })
+                .take(20)
+                .collect();
+            if !hits.is_empty() {
+                ui.add_space(18.0);
+                let mut go = None;
+                card(ui, |ui| {
+                    ui.label(theme::label_c(&format!("Rewind · found inside {} page{} you've seen", hits.len(), if hits.len() == 1 { "" } else { "s" }), ACCENT));
+                    ui.add_space(4.0);
+                    for (title, url, snippet) in &hits {
+                        let (resp, _) = row(ui, "", if title.is_empty() { url } else { title }, url, false);
+                        ui.label(RichText::new(format!("…{snippet}…")).font(FontId::new(12.0, sans())).color(MUTED));
+                        ui.add_space(4.0);
+                        if resp.clicked() {
+                            go = Some(url.clone());
+                        }
+                    }
+                });
+                if let Some(u) = go {
+                    let id = self.active;
+                    self.navigate(id, &u);
+                }
+            }
+        }
         let now = crate::profile::now();
         let mut open = None;
         let mut remove = None;
@@ -797,6 +843,7 @@ impl Browser {
                         _ => 0,
                     };
                     self.profile.clear_history_since(since);
+                    self.clear_rewind_since(since);
                     if cookies {
                         self.clear_all_cookies();
                     }
@@ -855,6 +902,87 @@ impl Browser {
         if let Some(u) = open {
             let id = self.active;
             self.navigate(id, &u);
+        }
+    }
+
+    /// Switches and times for private tabs and what sites may learn.
+    fn privacy_settings(&mut self, ui: &mut Ui) {
+        let st = &mut self.profile.settings;
+        let mut dirty = false;
+        dirty |= ui.checkbox(&mut st.hide_location, "Hide my location: sites are always told \"denied\"").changed();
+        ui.label(theme::muted("Applies to pages opened from now on. A VPN hides the location your network address gives away."));
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(theme::body("Erase private tabs when idle for"));
+            for (m, name) in [(0u32, "Never"), (5, "5 min"), (15, "15 min"), (30, "30 min"), (60, "1 hour")] {
+                if ui.selectable_label(st.private_idle_min == m, name).clicked() {
+                    st.private_idle_min = m;
+                    dirty = true;
+                }
+            }
+        });
+        dirty |= ui.checkbox(&mut st.private_no_capture, "Hide the window from screenshots and screen sharing while a private tab shows").changed();
+        dirty |= ui.checkbox(&mut st.private_lock, "Lock private tabs with Touch ID when Inert goes to the background").changed();
+        ui.label(theme::muted("Private tabs: Shift+Cmd+N. Each one has its own data store that is never written to disk. Closing one deletes its downloads (unless kept) and clears what you copied. Panic key: Ctrl+Opt+Cmd+H."));
+        ui.label(theme::muted("Camera and microphone: WebKit asks every time a page wants them."));
+        ui.add_space(8.0);
+        ui.label(theme::label("Always-private sites"));
+        if st.private_sites.is_empty() {
+            ui.label(theme::muted("None yet. Add one here, or from a page's lock: \"Always open … in a private tab\"."));
+        }
+        let mut remove = None;
+        for s in &st.private_sites {
+            ui.horizontal(|ui| {
+                ui.label(theme::mono_text(s, 12.5));
+                if ui.small_button("Remove").clicked() {
+                    remove = Some(s.clone());
+                }
+            });
+        }
+        if let Some(s) = remove {
+            st.private_sites.retain(|x| *x != s);
+            dirty = true;
+        }
+        let key = Id::unique("private-site-new");
+        let mut new: String = ui.ctx().data(|d| d.get_temp(key)).unwrap_or_default();
+        ui.horizontal(|ui| {
+            let r = ui.add(egui::TextEdit::singleline(&mut new).hint_text("example.com").desired_width(240.0));
+            let add = ui.button("Add").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+            if add {
+                let host = new.trim().trim_start_matches("https://").trim_start_matches("http://").split('/').next().unwrap_or("").to_ascii_lowercase();
+                let site = crate::cookies::site_of(&host);
+                if !site.is_empty() && site.contains('.') && !st.private_sites.contains(&site) {
+                    st.private_sites.push(site);
+                    dirty = true;
+                }
+                new.clear();
+            }
+        });
+        ui.ctx().data_mut(|d| d.insert_temp(key, new));
+        if dirty {
+            self.dirty = true;
+        }
+    }
+
+    /// Switches for calm mode, Rewind and instant answers.
+    fn tools_settings(&mut self, ui: &mut Ui) {
+        let mut dirty = false;
+        let st = &mut self.profile.settings;
+        dirty |= ui.checkbox(&mut st.calm, "Calm mode: hide Shorts, feeds and \"more like this\" (YouTube, X, Instagram, TikTok)").changed();
+        ui.label(theme::muted("Applies to pages opened from now on."));
+        dirty |= ui.checkbox(&mut st.instant, "Instant answers in the address bar (sums are worked out here; quick facts come from DuckDuckGo when web suggestions are on)").changed();
+        dirty |= ui.checkbox(&mut st.rewind, "Rewind: remember the text of pages you visit, so History can search inside them").changed();
+        let n = self.rewind.len();
+        ui.horizontal(|ui| {
+            ui.label(theme::muted(&format!("{n} page{} remembered, on this Mac only. Private tabs are never remembered.", if n == 1 { "" } else { "s" })));
+            if n > 0 && ui.small_button("Forget all").clicked() {
+                self.clear_rewind_since(0);
+                dirty = true;
+            }
+        });
+        ui.label(theme::muted("Split view, Summarize, Translate here, Read aloud, Picture in picture and Captions are in the menu (and on a page's right-click menu in Servo). Hold Option+Space to dictate."));
+        if dirty {
+            self.dirty = true;
         }
     }
 
@@ -1034,7 +1162,13 @@ impl Browser {
         }
         ui.label(theme::muted("WebKit runs today's sites as they are. Servo is written in Rust and still misses things many sites need. Applies to tabs opened from now on; any page can switch engines from its site security panel."));
 
-        section(ui, "04", "Privacy & Shield");
+        section(ui, "04", "Private tabs & privacy");
+        self.privacy_settings(ui);
+
+        section(ui, "05", "Page tools");
+        self.tools_settings(ui);
+
+        section(ui, "06", "Shield");
         let mut on = self.profile.settings.adblock;
         if ui.checkbox(&mut on, "Block ads & trackers on web pages (EasyList, EasyPrivacy, uBlock Origin filters)").changed() {
             self.profile.settings.adblock = on;
@@ -1069,20 +1203,20 @@ impl Browser {
             self.dirty = true;
         }
 
-        section(ui, "05", "Extensions");
+        section(ui, "07", "Extensions");
         self.extensions_settings(ui);
 
-        section(ui, "06", "Passwords & import");
+        section(ui, "08", "Passwords & import");
         self.passwords_settings(ui);
 
-        section(ui, "07", "VPN");
+        section(ui, "09", "VPN");
         let s = self.vpn.status.clone();
         ui.label(theme::body(if s.installed { "Mullvad is installed. Open the VPN pill at the foot of the sidebar to connect or pick a location." } else { "Install Mullvad VPN to enable the built-in VPN." }));
         if s.installed {
             ui.label(theme::muted(&format!("Status: {}{}", s.state, if s.connected() { format!(" · {}, {}", s.city, s.country) } else { String::new() })));
         }
 
-        section(ui, "08", "Performance");
+        section(ui, "10", "Performance");
         if ui.checkbox(&mut self.profile.settings.memory_saver, "Memory saver: unload web tabs unused for 15 minutes (Inbox tabs stay awake)").changed() {
             self.dirty = true;
         }
@@ -1093,7 +1227,7 @@ impl Browser {
             self.dirty = true;
         }
 
-        section(ui, "09", "About");
+        section(ui, "11", "About");
         ui.label(theme::body("Inert Browser 0.1 — Rust, egui + wgpu, Servo and WebKit for the unsecured web."));
         ui.label(theme::muted("inert:// protocol v1 · TLS 1.3 with X25519MLKEM768 · Ed25519-signed manifests."));
         ui.label(theme::muted("Typefaces: Geist Sans, Mono, Pixel and Serif by Vercel (SIL Open Font License)."));

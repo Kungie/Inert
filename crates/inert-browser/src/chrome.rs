@@ -190,7 +190,17 @@ impl Browser {
         }
         egui::CentralPanel::no_frame().show(ui, |ui| {
             let r = ui.max_rect();
-            let card = Rect::from_min_max(pos2(r.left() + GAP * (1.0 - side_t), r.top()), pos2(r.right() - GAP, r.bottom() - GAP));
+            let whole = Rect::from_min_max(pos2(r.left() + GAP * (1.0 - side_t), r.top()), pos2(r.right() - GAP, r.bottom() - GAP));
+            // Split view: the active page on the left, a second one on the right.
+            if self.split.is_some_and(|s| s == self.active || self.tab(s).is_none()) {
+                self.split = None;
+            }
+            let half = ((whole.width() - GAP) / 2.0).floor();
+            let card = if self.split.is_some() { Rect::from_min_size(whole.min, vec2(half, whole.height())) } else { whole };
+            if let Some(sid) = self.split {
+                let right = Rect::from_min_max(pos2(card.right() + GAP, whole.top()), whole.max);
+                self.split_pane(ui, sid, right);
+            }
             let p = ui.painter().clone();
             p.add(egui::epaint::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(70) }.as_shape(card, CARD_R));
             p.rect_filled(card, CARD_R, BG);
@@ -212,6 +222,72 @@ impl Browser {
         self.ntp_dropdown(&ctx);
         self.rename_modal(&ctx);
         self.toast_overlay(&ctx);
+    }
+
+    /// The right pane of split view: a card with a slim header (title, swap,
+    /// close) and the second page under it.
+    fn split_pane(&mut self, ui: &mut Ui, id: u64, card: Rect) {
+        let p = ui.painter().clone();
+        p.add(egui::epaint::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(70) }.as_shape(card, CARD_R));
+        p.rect_filled(card, CARD_R, BG);
+        let head = Rect::from_min_size(card.min, vec2(card.width(), 34.0));
+        let body = Rect::from_min_max(pos2(card.left() + 4.0, head.bottom()), card.max - vec2(4.0, 4.0));
+        self.split_rect = body;
+        let (title, kind) = match self.tab(id) {
+            Some(t) => (t.title(), match &t.kind {
+                Kind::Web(w) if w.engine == Some(crate::profile::Engine::Servo) => 1,
+                Kind::Web(_) => 0,
+                Kind::Inert(_) => 2,
+                Kind::Page(_) => 3,
+            }),
+            None => return,
+        };
+        let mut hu = ui.new_child(egui::UiBuilder::new().max_rect(head.shrink2(vec2(10.0, 0.0))).layout(Layout::right_to_left(Align::Center)));
+        hu.spacing_mut().item_spacing.x = 2.0;
+        let close = icons::button_c(&mut hu, Icon::Close, 24.0, "Close split view", MUTED, true);
+        crate::drive::reg("split:close", close.rect);
+        let swap = icons::button_c(&mut hu, Icon::Split, 24.0, "Swap: bring this page to the left", MUTED, true);
+        crate::drive::reg("split:swap", swap.rect);
+        let mut job = egui::text::LayoutJob::single_section(title, egui::TextFormat::simple(FontId::new(12.5, sans()), MUTED));
+        job.wrap = egui::text::TextWrapping::truncate_at_width((head.width() - 90.0).max(0.0));
+        let g = ui.fonts_mut(|f| f.layout_job(job));
+        p.galley(pos2(head.left() + 14.0, head.center().y - g.size().y / 2.0), g, MUTED);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(Layout::top_down(Align::Min)));
+        child.set_clip_rect(body);
+        match kind {
+            // A WebKit page: the native view sits over this area (see sync_webviews).
+            0 => {}
+            2 => {
+                let mut acts = None;
+                if let Some(Kind::Inert(it)) = self.tab_mut(id).map(|t| &mut t.kind) {
+                    if it.status == Status::Ready && it.screen.is_some() {
+                        acts = Some(crate::render::render(&mut child, it));
+                    }
+                }
+                if let Some(a) = acts {
+                    self.apply_acts(id, a);
+                }
+            }
+            _ => {
+                child.add_space(60.0);
+                child.vertical_centered(|ui| {
+                    ui.label(theme::muted(if kind == 1 { "Servo pages can't sit in the right pane yet." } else { "Inert's own pages show on the left." }));
+                    ui.label(theme::muted("Swap this page to the left with the button above."));
+                });
+            }
+        }
+        round_corners(&p, card, CARD_R, theme::frame());
+        p.rect_stroke(card, CARD_R, Stroke::new(1.0, glass(0.16)), egui::StrokeKind::Inside);
+        if close.clicked() {
+            self.split = None;
+        }
+        if swap.clicked() {
+            // The right page becomes the active one; the left one moves right.
+            let left = self.active;
+            self.split = None;
+            self.activate(id);
+            self.split = Some(left);
+        }
     }
 
     /// Empty frame areas move the window; a double click zooms it.
@@ -917,6 +993,10 @@ impl Browser {
                 self.dirty = true;
                 ui.close();
             }
+            if id != self.active && ui.button("Open in split view").clicked() {
+                self.split = Some(id);
+                ui.close();
+            }
             if ui.button("Duplicate").clicked() {
                 let (u, g) = self.tab(id).map(|t| (t.url(), t.group)).unwrap_or_default();
                 self.add_tab(&u, g, true, None);
@@ -1240,6 +1320,15 @@ impl Browser {
         let ai = self.profile.settings.provider.map(|p| p.name());
         self.omni.sugg = omnibox::local(&self.profile, &tabs, &self.sites, &typed, ai);
         self.omni.remote.clear();
+        // Instant answers: sums are worked out here; quick facts are asked
+        // for only when suggestions from the web are on, and only for questions.
+        if self.profile.settings.instant {
+            if let Some(v) = omnibox::calc(&typed) {
+                omnibox::put_answer(&mut self.omni.sugg, &typed, format!("= {v}"));
+            } else if self.profile.settings.remote_suggestions && !self.demo && typed.trim().split_whitespace().count() >= 2 && !typed.contains("://") {
+                omnibox::instant(typed.clone(), self.tx.clone(), self.ctx.clone());
+            }
+        }
         if self.profile.settings.remote_suggestions && typed.trim().len() >= 2 && !typed.contains("://") && !self.demo {
             omnibox::remote(self.profile.settings.search, typed, self.tx.clone(), self.ctx.clone());
         }
@@ -1263,7 +1352,7 @@ impl Browser {
                     self.activate(id);
                 }
             }
-            SKind::Search | SKind::Remote => {
+            SKind::Search | SKind::Remote | SKind::Answer => {
                 let u = self.profile.settings.search.search_url(&s.target);
                 let id = self.active;
                 self.navigate(id, &u);
@@ -1440,7 +1529,11 @@ impl Browser {
                     Popover::Shield => self.pop_shield(ui),
                     Popover::Cookies => self.pop_cookies(ui),
                     Popover::Passwords => self.pop_passwords(ui),
-                    Popover::Menu => self.pop_menu(ui),
+                    Popover::Menu => {
+                        // The menu is long: it scrolls on short windows.
+                        let max = (ui.ctx().content_rect().height() - 140.0).max(200.0);
+                        egui::ScrollArea::vertical().max_height(max).show(ui, |ui| self.pop_menu(ui));
+                    }
                     Popover::GroupAdd(g) => self.pop_group_add(ui, g),
                     Popover::None => {}
                 }
@@ -1956,6 +2049,10 @@ impl Browser {
             self.add_private_tab("about:newtab");
             self.popover = Popover::None;
         }
+        if item(ui, Icon::Split, if self.split.is_some() { "Close split view" } else { "Split view" }, "") {
+            self.toggle_split();
+            self.popover = Popover::None;
+        }
         if item(ui, Icon::Tab, "New tab", "Cmd+T") {
             self.add_tab("about:newtab", None, true, None);
             self.popover = Popover::None;
@@ -2001,9 +2098,30 @@ impl Browser {
             self.popover = Popover::None;
             self.attach_selection();
         }
-        if item(ui, Icon::Globe, "Translate this page", "") {
+        if item(ui, Icon::Spark, "Summarize this page", "") {
+            self.popover = Popover::None;
+            self.summarize();
+        }
+        if item(ui, Icon::Globe, "Translate here", "") {
+            self.popover = Popover::None;
+            self.translate_here();
+        }
+        if item(ui, Icon::Globe, "Open in Google Translate", "") {
             self.translate_page();
             self.popover = Popover::None;
+        }
+        let reading = self.reading();
+        if item(ui, Icon::Inbox, if reading { "Stop reading" } else { "Read aloud" }, "") {
+            self.popover = Popover::None;
+            self.read_aloud();
+        }
+        if item(ui, Icon::Tab, "Picture in picture", "") {
+            self.popover = Popover::None;
+            self.ask_page(crate::app::Ask::Pip, crate::page_js::PIP);
+        }
+        if item(ui, Icon::Menu, "Captions on this video", "") {
+            self.popover = Popover::None;
+            self.ask_page(crate::app::Ask::Captions, crate::page_js::CAPTIONS);
         }
         if item(ui, Icon::Code, "Developer tools", "Opt+Cmd+I") {
             self.devtools();
@@ -2383,6 +2501,13 @@ impl Browser {
             ui.set_width(width - 26.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                // One page, or every open page.
+                let on = self.ai.all_tabs;
+                let chip = ui.add(egui::Button::new(RichText::new("All tabs").font(FontId::new(12.0, sans_medium())).color(if on { WHITE } else { MUTED })).fill(if on { accent() } else { HOVER }).corner_radius(10).min_size(vec2(0.0, 36.0))).on_hover_text("Ask every open page at once");
+                crate::drive::reg("ai:all", chip.rect);
+                if chip.clicked() {
+                    self.ai.all_tabs = !on;
+                }
                 // The page chip.
                 egui::Frame::new().fill(HOVER).corner_radius(10).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -2686,6 +2811,33 @@ impl Browser {
         }
     }
 
+    /// Translates the page where it stands, with the user's own model.
+    /// Without a model (or its key) it falls back to Google Translate in a tab.
+    pub fn translate_here(&mut self) {
+        let ready = self.profile.settings.provider.is_some_and(|p| self.demo || ai::has_key(p));
+        if !ready {
+            self.translate_page();
+            return;
+        }
+        self.toast("Translating this page…");
+        self.ask_page(crate::app::Ask::Translate, crate::page_js::TRANSLATE_COLLECT);
+    }
+
+    pub fn summarize(&mut self) {
+        let was = std::mem::replace(&mut self.ai.all_tabs, false);
+        self.ask_ai("Summarize this page: one sentence first, then the key points as a short list.".into());
+        self.ai.all_tabs = was;
+    }
+
+    /// Reads the page (or the selection) out loud; again to stop.
+    pub fn read_aloud(&mut self) {
+        if self.reading() {
+            self.stop_reading();
+            return;
+        }
+        self.ask_page(crate::app::Ask::Readable, crate::page_js::READABLE);
+    }
+
     /// Opens the active page in Google Translate, into the Mac's language.
     pub fn translate_page(&mut self) {
         let Some(Kind::Web(w)) = self.active_tab().map(|t| &t.kind) else {
@@ -2709,6 +2861,8 @@ impl Browser {
             OpenTab(String),
             CopyText(String),
             Translate,
+            Summarize,
+            Read,
             Inspect,
             Attach,
             Sep,
@@ -2748,7 +2902,9 @@ impl Browser {
         }
         rows.push(("Reload", Do::Servo("Reload")));
         rows.push(("", Do::Sep));
-        rows.push(("Translate this page", Do::Translate));
+        rows.push(("Summarize this page", Do::Summarize));
+        rows.push(("Translate here", Do::Translate));
+        rows.push(("Read aloud", Do::Read));
         rows.push(("Inspect (opens in WebKit)", Do::Inspect));
         let screen = ctx.content_rect();
         let pos = pos2(at.x.min(screen.right() - 250.0), at.y.min(screen.bottom() - rows.len() as f32 * 30.0 - 20.0));
@@ -2801,7 +2957,9 @@ impl Browser {
                 self.add_tab(&u, None, false, None);
             }
             Some(Do::CopyText(s)) => ctx.copy_text(s),
-            Some(Do::Translate) => self.translate_page(),
+            Some(Do::Translate) => self.translate_here(),
+            Some(Do::Summarize) => self.summarize(),
+            Some(Do::Read) => self.read_aloud(),
             Some(Do::Attach) => self.attach_selection(),
             Some(Do::Inspect) => {
                 if let Some(Kind::Web(w)) = self.tab_mut(tab).map(|t| &mut t.kind) {
@@ -2963,6 +3121,7 @@ pub fn suggestion_popup(ctx: &egui::Context, key: &str, r: Rect, rows: &[omnibox
                     SKind::OpenTab => (Icon::Tab, EDGE),
                     SKind::Inert => (Icon::Lock, SECURE),
                     SKind::Ai => (Icon::Spark, ACCENT),
+                    SKind::Answer => (Icon::Check, OK),
                 };
                 icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 16.0, rect.center().y), Vec2::splat(14.0)), icon, c);
                 let tag = match s.kind {
@@ -2974,6 +3133,7 @@ pub fn suggestion_popup(ctx: &egui::Context, key: &str, r: Rect, rows: &[omnibox
                     SKind::OpenTab => "OPEN TAB",
                     SKind::Inert => "SECURED",
                     SKind::Ai => "ASSISTANT · ALT+ENTER",
+                    SKind::Answer => "ANSWER",
                 };
                 let mut job = egui::text::LayoutJob::single_section(s.title.clone(), egui::TextFormat::simple(FontId::new(13.0, sans()), FG));
                 job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 220.0);
@@ -3001,7 +3161,7 @@ fn side_card(ui: &mut Ui) -> Ui {
 }
 
 /// The Mac's first preferred language ("tr", "en", "de"…), for Translate.
-fn ui_language() -> &'static str {
+pub fn ui_language() -> &'static str {
     static LANG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     LANG.get_or_init(|| {
         let out = std::process::Command::new("/usr/bin/defaults").args(["read", "-g", "AppleLanguages"]).output().ok();
