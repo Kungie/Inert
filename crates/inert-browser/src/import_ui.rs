@@ -303,7 +303,7 @@ impl Browser {
     /// Step 2 of onboarding, in the sign-in screen's style.
     pub fn import_screen(&mut self, ui: &mut Ui) {
         crate::pages::progress(ui, 3);
-        ui.label(theme::label_c("Step 3 of 3 · Import", ACCENT));
+        ui.label(theme::label_c("Step 3 of 3 · Permissions and import", ACCENT));
         ui.add_space(10.0);
         ui.label(theme::title("Bring Chrome with you.", 38.0));
         ui.add_space(8.0);

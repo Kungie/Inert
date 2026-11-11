@@ -225,7 +225,9 @@ pub struct AdState {
 pub struct Signin {
     /// Step 2 of onboarding: bring Chrome along.
     pub import_step: bool,
-    /// Step 1 (look, color, layout) was confirmed.
+    /// The model step (API key, or skipped) is behind us.
+    pub key_done: bool,
+    /// The look step (look, color, layout) was confirmed.
     pub look_done: bool,
     pub provider: Option<Provider>,
     pub key: String,

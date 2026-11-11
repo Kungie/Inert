@@ -132,8 +132,8 @@ impl Browser {
         let clearing = p.add(egui::Shape::Noop);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(col).layout(Layout::top_down(Align::Min)));
         let ui = &mut child;
-        // The landing comes first; the look is asked once a provider is picked.
-        if !self.signin.look_done && self.signin.provider.is_some() {
+        // Order: landing → model → look → permissions and import.
+        if self.signin.key_done && !self.signin.look_done {
             ui.add_space((col.height() - 640.0).max(0.0) * 0.5);
             theme::panel_frame(26, 32.0).show(ui, |ui| {
                 ui.set_width(600.0);
@@ -184,8 +184,8 @@ impl Browser {
                 let mut finish = false;
                 theme::panel_frame(26, 32.0).show(ui, |ui| {
                     ui.set_width(600.0);
-                    progress(ui, 2);
-                    ui.label(theme::label_c("Step 2 of 3 · Your model", ACCENT));
+                    progress(ui, 1);
+                    ui.label(theme::label_c("Step 1 of 3 · Your model", ACCENT));
                     ui.add_space(10.0);
                     ui.label(theme::title(&format!("Connect {}.", prov.name()), 38.0));
                     ui.add_space(8.0);
@@ -236,8 +236,8 @@ impl Browser {
                     self.signin.key.clear();
                     self.profile.settings.provider = Some(prov);
                     self.profile.settings.model = prov.default_model().into();
-                    // Step 2: bring Chrome along (skippable).
-                    self.signin.import_step = true;
+                    // Next: the look, then permissions and the import.
+                    self.signin.key_done = true;
                     self.dirty = true;
                 }
             }
@@ -248,8 +248,8 @@ impl Browser {
     /// opening question; in Settings it switches live.
     fn look_picker(&mut self, ui: &mut Ui, first_run: bool) {
         if first_run {
-            progress(ui, 1);
-            ui.label(theme::label_c("Step 1 of 3 · Look", ACCENT));
+            progress(ui, 2);
+            ui.label(theme::label_c("Step 2 of 3 · Look", ACCENT));
             ui.add_space(10.0);
             ui.label(theme::title("Make Inert yours.", 38.0));
             ui.add_space(8.0);
@@ -359,6 +359,8 @@ impl Browser {
                     self.profile.settings.dark = Some(false);
                 }
                 self.signin.look_done = true;
+                // Last step: permissions and the import (skippable).
+                self.signin.import_step = true;
                 self.dirty = true;
             }
         }
