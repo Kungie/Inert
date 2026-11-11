@@ -21,7 +21,6 @@ struct Bank {
     txs: Vec<Tx>,
     notify: bool,
     currency: String,
-    day: u32,
 }
 
 impl Default for Bank {
@@ -40,7 +39,6 @@ impl Default for Bank {
             ],
             notify: true,
             currency: "eur".into(),
-            day: 7,
         }
     }
 }
@@ -95,8 +93,7 @@ fn build(bundle: Bundle) -> anyhow::Result<App<Bank>> {
         acct.cents -= amount;
         let note = a.text("note").trim();
         let label = if note.is_empty() { format!("Transfer to {}", &to[..to.len().min(12)]) } else { format!("{note} → {}", &to[..to.len().min(8)]) };
-        b.day += 1;
-        b.txs.insert(0, Tx { date: format!("2026-11-{:02}", b.day.min(30)), label: label.chars().take(60).collect(), cents: -amount });
+        b.txs.insert(0, Tx { date: today(), label: label.chars().take(60).collect(), cents: -amount });
         Ok(Next::screen("overview"))
     });
 
@@ -111,4 +108,20 @@ fn build(bundle: Bundle) -> anyhow::Result<App<Bank>> {
 
 fn main() -> anyhow::Result<()> {
     inert_server::dev::main(env!("CARGO_MANIFEST_DIR"), "127.0.0.1:7443", build)
+}
+
+/// Today's date (UTC) as YYYY-MM-DD, so new transfers are dated today.
+fn today() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+    let z = (secs / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
 }

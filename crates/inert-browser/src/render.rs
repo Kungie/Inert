@@ -4,7 +4,7 @@
 
 use crate::inert_tab::{FormValue, Img, InertTab};
 use crate::theme;
-use eframe::egui::{self, Align, Color32, CornerRadius, FontFamily, FontId, Layout, RichText, Sense, Stroke, Ui, vec2};
+use eframe::egui::{self, Align, Color32, CornerRadius, FontFamily, FontId, Id, Layout, RichText, Sense, Stroke, Ui, vec2};
 use inert_proto::*;
 use std::collections::HashMap;
 
@@ -46,6 +46,8 @@ struct R<'a> {
     z: f32,
     busy: bool,
     in_row: bool,
+    /// The width of the row being laid out, so fields in it can share it.
+    row_w: f32,
 }
 
 impl R<'_> {
@@ -77,7 +79,7 @@ pub fn render(ui: &mut Ui, tab: &mut InertTab) -> Vec<Act> {
     let bg = theme::rgb(d.colors.bg);
     let rect = ui.max_rect();
     ui.painter().rect_filled(rect, 0.0, bg);
-    let mut r = R { m: &m, d, data: &s.data, forms: &mut tab.forms, errors: &tab.field_errors, images: &tab.images, acts: Vec::new(), z: tab.zoom, busy: tab.busy, in_row: false };
+    let mut r = R { m: &m, d, data: &s.data, forms: &mut tab.forms, errors: &tab.field_errors, images: &tab.images, acts: Vec::new(), z: tab.zoom, busy: tab.busy, in_row: false, row_w: 0.0 };
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let avail = ui.available_width();
@@ -127,12 +129,13 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
                     ui.with_layout(layout, |ui| {
                         ui.spacing_mut().item_spacing.x = g;
                         ui.spacing_mut().item_spacing.y = g * 0.5;
-                        let was = r.in_row;
+                        let was = (r.in_row, r.row_w);
                         r.in_row = true;
+                        r.row_w = ui.available_width();
                         for c in children {
                             node(ui, c, r, item);
                         }
-                        r.in_row = was;
+                        (r.in_row, r.row_w) = was;
                     });
                 }
             }
@@ -146,14 +149,29 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
                 TextStyle::Label => r.c(r.d.colors.muted),
                 _ => r.c(r.d.colors.fg),
             };
-            let mut rt = RichText::new(s).font(r.font(*style)).color(color);
-            if *style == TextStyle::Label {
-                rt = rt.extra_letter_spacing(1.6);
+            let spacing = match style {
+                TextStyle::Label => 1.6,
+                TextStyle::Display => -1.5 * r.z,
+                _ => 0.0,
+            };
+            // Find in page: matches get a marker behind them.
+            let find = ui.ctx().data(|d| d.get_temp::<String>(Id::new(FIND))).filter(|q| !q.is_empty());
+            let hits = find.as_ref().map(|q| matches(&s, q)).unwrap_or_default();
+            if hits.is_empty() {
+                ui.add(egui::Label::new(RichText::new(s).font(r.font(*style)).color(color).extra_letter_spacing(spacing)).wrap());
+            } else {
+                let mut job = egui::text::LayoutJob::default();
+                let fmt = |bg: Color32| egui::TextFormat { font_id: r.font(*style), color, extra_letter_spacing: spacing, background: bg, ..Default::default() };
+                let mut at = 0;
+                for (a, b) in hits {
+                    job.append(&s[at..a], 0.0, fmt(Color32::TRANSPARENT));
+                    job.append(&s[a..b], 0.0, fmt(FIND_MARK));
+                    at = b;
+                }
+                job.append(&s[at..], 0.0, fmt(Color32::TRANSPARENT));
+                job.wrap.max_width = ui.available_width();
+                ui.add(egui::Label::new(job).wrap());
             }
-            if *style == TextStyle::Display {
-                rt = rt.extra_letter_spacing(-1.5 * r.z);
-            }
-            ui.add(egui::Label::new(rt).wrap());
         }
         Node::Divider => {
             let w = ui.available_width();
@@ -180,7 +198,8 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
                 ui.label(RichText::new(label.to_uppercase()).font(FontId::new(11.0, theme::mono())).color(r.c(r.d.colors.muted)).extra_letter_spacing(1.6));
                 let key = (action.clone(), field.clone());
                 let fg = r.c(r.d.colors.fg);
-                let w = if r.in_row { 300.0 * r.z } else { ui.available_width().min(520.0 * r.z).max(200.0) };
+                // In a row, fields share a narrow width (split view) instead of spilling out of it.
+                let w = if r.in_row { (300.0 * r.z).min(r.row_w * 0.46) } else { ui.available_width().min(520.0 * r.z).max(200.0) };
                 let font = FontId::new(r.d.size(TextStyle::Body) as f32 * r.z, family(r.d.font(TextStyle::Body)));
                 let entry = r.forms.entry(key).or_insert(FormValue::Text(String::new()));
                 if let FormValue::Text(t) = entry {
@@ -226,7 +245,7 @@ fn node(ui: &mut Ui, n: &Node, r: &mut R, item: Option<&Value>) {
                     let shown = options.iter().find(|o| &o.0 == v).map(|o| o.1.clone()).unwrap_or_else(|| "Choose…".into());
                     egui::ComboBox::from_id_salt((action, field))
                         .selected_text(RichText::new(shown).font(FontId::new(14.0 * r.z, theme::sans())))
-                        .width(if r.in_row { 200.0 * r.z } else { ui.available_width().min(520.0 * r.z).max(200.0) })
+                        .width(if r.in_row { (200.0 * r.z).min(r.row_w * 0.28) } else { ui.available_width().min(520.0 * r.z).max(200.0) })
                         .show_ui(ui, |ui| {
                             for (val, lab) in &options {
                                 ui.selectable_value(v, val.clone(), lab);
@@ -389,4 +408,19 @@ pub fn field_message(code: ErrorCode) -> &'static str {
         ErrorCode::Rejected => "The site rejected this value.",
         _ => "Something went wrong with this field.",
     }
+}
+
+/// Where the find bar leaves its query for this frame (egui temp data).
+pub const FIND: &str = "inert-find-query";
+const FIND_MARK: Color32 = Color32::from_rgba_premultiplied(120, 100, 0, 150);
+
+/// Byte ranges of `q` in `s`, ignoring case.
+fn matches(s: &str, q: &str) -> Vec<(usize, usize)> {
+    let lower = s.to_lowercase();
+    let q = q.to_lowercase();
+    // Lowercasing can change byte lengths (rarely); then no ranges.
+    if lower.len() != s.len() || q.is_empty() {
+        return Vec::new();
+    }
+    lower.match_indices(&q).map(|(i, m)| (i, i + m.len())).filter(|(a, b)| s.is_char_boundary(*a) && s.is_char_boundary(*b)).collect()
 }

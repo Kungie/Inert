@@ -147,8 +147,10 @@ impl Browser {
             // This step can grow (a browser macOS keeps out, many profiles):
             // it scrolls, so its buttons are always reachable.
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.add_space((col.height() - 640.0).max(0.0) * 0.5);
-                theme::panel_frame(26, 32.0).show(ui, |ui| {
+                // Centered only when there is room: on a 900 px window the
+                // card starts right under the header so its buttons show.
+                ui.add_space((col.height() - 780.0).max(0.0) * 0.5);
+                theme::panel_frame(26, 28.0).show(ui, |ui| {
                     ui.set_width(600.0);
                     self.import_screen(ui);
                 });
@@ -528,7 +530,9 @@ impl Browser {
 
         let mut top: Vec<_> = self.profile.history.iter().filter(|h| !h.url.starts_with("about:")).cloned().collect();
         top.sort_by(|a, b| b.visits.cmp(&a.visits));
-        if !top.is_empty() {
+        // A private tab doesn't show what was browsed outside it.
+        let private = self.active_tab().is_some_and(|t| t.private);
+        if !top.is_empty() && !private {
             section(ui, "03", "Most visited");
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
@@ -888,7 +892,7 @@ impl Browser {
                 let (r, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
                 icons::paint(ui.painter(), r, if inert { Icon::Lock } else { Icon::Globe }, if inert { SECURE } else { DIM });
                 let mut title = b.title.clone();
-                if ui.add(egui::TextEdit::singleline(&mut title).desired_width(260.0).frame(egui::Frame::NONE)).changed() {
+                if ui.add(egui::TextEdit::singleline(&mut title).desired_width(260.0).frame(egui::Frame::NONE).margin(egui::Margin::ZERO).vertical_align(Align::Center)).changed() {
                     self.profile.bookmarks[i].title = title;
                     self.dirty = true;
                 }
@@ -1132,14 +1136,13 @@ impl Browser {
         section(ui, "", "Look");
         self.look_picker(ui, false);
 
-        section(ui, "", "Performance");
-        if ui.checkbox(&mut self.profile.settings.memory_saver, "Memory saver: unload web tabs unused for 15 minutes (Inbox tabs stay awake)").changed() {
-            self.dirty = true;
-        }
+        section(ui, "", "Bookmarks bar");
         if ui.checkbox(&mut self.profile.settings.bookmarks_bar, "Show bookmarks bar").changed() {
             self.dirty = true;
         }
-        if ui.checkbox(&mut self.profile.settings.sidebar, "Tabs in the sidebar (off: tabs on top) · Cmd+S").changed() {
+
+        section(ui, "", "Performance");
+        if ui.checkbox(&mut self.profile.settings.memory_saver, "Memory saver: unload web tabs unused for 15 minutes (Inbox tabs stay awake)").changed() {
             self.dirty = true;
         }
 

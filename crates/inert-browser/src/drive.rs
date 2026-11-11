@@ -132,6 +132,7 @@ impl Driver {
         use Step::*;
         let cmd = Modifiers::COMMAND;
         let s = |x: &str| x.to_owned();
+        let notes_before = std::rc::Rc::new(Cell::new(0usize));
         let steps = vec![
             // 1. Sign-in: the only thing asked is the AI provider.
             Pause(1200),
@@ -165,7 +166,7 @@ impl Driver {
             // Cursors: the I-beam over text fields, the hand over clickable things.
             Hover(s("omnibox")),
             expect("cursor.text_over_omnibox", 1500, |_| cursor() == egui::CursorIcon::Text),
-            Hover(s("star")),
+            Hover(s("clip")),
             expect("cursor.hand_over_toolbar_button", 1500, |_| cursor() == egui::CursorIcon::PointingHand),
             Hover(s("tab:Inert Bank")),
             expect("cursor.hand_over_tab_row", 1500, |_| cursor() == egui::CursorIcon::PointingHand),
@@ -233,6 +234,16 @@ impl Driver {
             expect("notes.saved_done", 8000, |b| inert_on(b, "note") && matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Inert(it)) if it.screen.as_ref().and_then(|s| s.data.get("done")).and_then(|v| v.as_bool()) == Some(true))),
             Click(s("back")),
             expect("notes.back_button", 8000, |b| inert_on(b, "list")),
+            // Delete the driver's note again, so the demo list doesn't grow run after run.
+            Setup(Box::new({
+                let n = notes_before.clone();
+                move |b| n.set(data_len(b, "notes"))
+            })),
+            Click(s("btn:Delete")),
+            expect("notes.deleted", 8000, {
+                let n = notes_before.clone();
+                move |b| inert_on(b, "list") && data_len(b, "notes") + 1 == n.get()
+            }),
             // 6. Bookmarks: star button and shortcut (start from "not bookmarked").
             Setup(Box::new(|b| {
                 let u = b.active_tab().map(|t| t.url()).unwrap_or_default();
@@ -463,6 +474,84 @@ impl Driver {
                 Pause(30000),
                 expect("bank.still_verified", 1000, |b| inert_on(b, "overview")),
             ]
+        } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("hunt") {
+            // Features the main run does not cover (demo profile).
+            let inert_zoom = |b: &Browser| match b.active_tab().map(|t| &t.kind) {
+                Some(Kind::Inert(it)) => it.zoom,
+                _ => -1.0,
+            };
+            vec![
+                Pause(1200),
+                Click(s("signin:claude")),
+                Click(s("signin:skip")),
+                Click(s("look:blue")),
+                Click(s("look:next")),
+                Click(s("import:skip")),
+                expect("signin.done", 2000, |b| b.profile.onboarded),
+                Click(s("tab:Inert Bank")),
+                expect("bank.overview", 15000, |b| inert_on(b, "overview")),
+                // Find in page.
+                Press(Key::F, cmd),
+                expect("find.opens", 2000, |b| b.find.is_some()),
+                Type(s("Savings")),
+                Pause(400),
+                Shot(s("h01-find")),
+                Press(Key::Escape, Modifiers::NONE),
+                expect("find.escape_closes", 2000, |b| b.find.is_none()),
+                // Zoom in and back.
+                Press(Key::Equals, cmd),
+                expect("zoom.in", 2000, move |b| inert_zoom(b) > 1.0),
+                Pause(300),
+                Shot(s("h02-zoom")),
+                Press(Key::Num0, cmd),
+                expect("zoom.reset", 2000, move |b| (inert_zoom(b) - 1.0).abs() < 0.01),
+                // Cmd+S hides the sidebar (tabs move on top) and brings it back.
+                Press(Key::S, cmd),
+                expect("sidebar.cmd_s_hides", 2000, |b| !b.profile.settings.sidebar),
+                Pause(600),
+                Shot(s("h03-tabs-on-top")),
+                Press(Key::S, cmd),
+                expect("sidebar.cmd_s_shows", 2000, |b| b.profile.settings.sidebar),
+                // Cmd+L focuses the address bar.
+                Press(Key::L, cmd),
+                expect("omnibox.cmd_l", 2000, |b| b.omni.editing),
+                Press(Key::Escape, Modifiers::NONE),
+                // Downloads page from the menu.
+                Click(s("menu")),
+                Click(s("menu:Downloads")),
+                expect("downloads.page", 3000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::Downloads)))),
+                Pause(400),
+                Shot(s("h04-downloads")),
+                // Bookmarks page and a bookmark from the bar.
+                Click(s("menu")),
+                Click(s("menu:Bookmarks")),
+                expect("bookmarks.page", 3000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::Bookmarks)))),
+                Pause(400),
+                Shot(s("h05-bookmarks")),
+                // Settings from the menu.
+                Click(s("menu")),
+                Click(s("menu:Settings")),
+                expect("settings.page", 3000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::Settings)))),
+                Pause(400),
+                Shot(s("h06-settings")),
+                // A page without a title shows its address, not the last page's title.
+                Setup(Box::new(|b| {
+                    b.add_tab("https://example.com/", None, true, None);
+                })),
+                expect("web.first_page", 20000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if !w.loading && w.title == "Example Domain")),
+                Setup(Box::new(|b| {
+                    let id = b.active;
+                    b.navigate(id, "data:text/html,<p>no title here</p>");
+                })),
+                expect("web.untitled_page_drops_old_title", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if !w.loading && w.url.starts_with("data:") && w.title != "Example Domain")),
+                Pause(600),
+                Shot(s("h07-untitled")),
+                // Menu rows: labels and shortcuts do not run into each other.
+                Click(s("menu")),
+                Pause(500),
+                Shot(s("h08-menu")),
+                Press(Key::Escape, Modifiers::NONE),
+            ]
         } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("hold") {
             // Signs in, opens INERT_HOLD_URL and waits (for checks from outside,
             // such as the native cursor over a WebKit page).
@@ -474,7 +563,11 @@ impl Driver {
                 Click(s("signin:skip")),
                 Click(s("look:blue")),
                 Click(s("look:next")),
+                Pause(500),
+                Shot(s("hold-import")),
                 Click(s("import:skip")),
+                Pause(500),
+                Shot(s("hold-after-skip")),
                 expect("hold.signed_in", 3000, |b| b.profile.onboarded),
                 Setup(Box::new(move |b| {
                     b.add_tab(&url, None, true, None);
@@ -821,7 +914,7 @@ impl Driver {
                 Click(s("split:close")),
                 // Instant answers: a quick fact from the web, and a sum worked out here.
                 Click(s("omnibox")),
-                Type(s("capital of france")),
+                Type(s("rust programming language")),
                 expect("real.instant_answer_from_web", 12000, |b| b.omni.sugg.iter().any(|x| x.kind == crate::omnibox::Kind::Answer)),
                 Pause(400),
                 Shot(s("rw06-instant-answer")),
@@ -849,6 +942,38 @@ impl Driver {
                 expect("web.servo_renders_page", 20000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.sv.is_some() && !w.loading && w.title == "Example Domain")),
                 Pause(1200),
                 Shot(s("w01-servo")),
+                // Navigating the same tab to another page shows the new page.
+                Setup(Box::new(|b| {
+                    let id = b.active;
+                    b.navigate(id, "data:text/html,<body style=\"background:%23ffd400;font:48px sans-serif\">second page</body>");
+                })),
+                expect("web.servo_second_page", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.sv.is_some() && !w.loading && w.url.starts_with("data:"))),
+                Pause(1500),
+                Shot(s("w02-servo-second")),
+                Pause(3000),
+                Shot(s("w03-servo-second-later")),
+                // The UI test's order: a link click, then a page-filling field.
+                Setup(Box::new(|b| {
+                    let id = b.active;
+                    b.navigate(id, "data:text/html,<a href=\"https://example.com/?clicked=1\" style=\"display:block;position:fixed;left:0;top:0;right:0;bottom:0;background:%23ffd400;font:48px sans-serif\">click anywhere</a>");
+                })),
+                expect("servo.page_ready", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.sv.is_some() && !w.loading && w.url.contains("click"))),
+                Pause(600),
+                Click(s("servo:surface")),
+                expect("servo.click_follows_link", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.url.contains("clicked=1"))),
+                Pause(2500),
+                Setup(Box::new(|b| {
+                    let id = b.active;
+                    b.navigate(id, "data:text/html,<input style=\"position:fixed;left:0;top:0;width:100%;height:100%;font:48px sans-serif\" oninput=\"document.title=this.value\" placeholder=\"type here\">");
+                })),
+                expect("servo.form_ready", 15000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.sv.is_some() && !w.loading && w.url.starts_with("data:"))),
+                Pause(600),
+                Shot(s("w04-form-before-typing")),
+                Click(s("servo:surface")),
+                Type(s("servo ok")),
+                expect("servo.typing_reaches_page", 10000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.title == "servo ok")),
+                Pause(1500),
+                Shot(s("w05-form-typed")),
             ]
         } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("real") {
             // A real (non-demo) run: the actual Mullvad state and a live search.

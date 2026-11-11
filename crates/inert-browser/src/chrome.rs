@@ -192,6 +192,9 @@ impl Browser {
             let left = (4.0 + (GAP + 4.0) * (1.0 - side_t)) as i8;
             egui::Panel::top("marks").show_separator_line(false).exact_size(MARKS_H).frame(egui::Frame::new().inner_margin(egui::Margin { left, right: 14, top: 0, bottom: 6 })).show(ui, |ui| self.bookmarks_bar(ui));
         }
+        if self.find.is_none() {
+            ui.ctx().data_mut(|d| d.remove::<String>(Id::new(crate::render::FIND)));
+        }
         if self.find.is_some() {
             egui::Panel::top("find").show_separator_line(false).exact_size(44.0).frame(egui::Frame::new().inner_margin(egui::Margin { left: (GAP * (1.0 - side_t)) as i8, right: GAP as i8, top: 0, bottom: 6 })).show(ui, |ui| self.find_bar(ui));
         }
@@ -1510,8 +1513,13 @@ impl Browser {
             }
             if let Some(Kind::Inert(it)) = self.active_tab().map(|t| &t.kind) {
                 let n = if q.is_empty() { 0 } else { it.semantic_text().to_lowercase().matches(&q.to_lowercase()).count() };
-                ui.label(RichText::new(format!("{n} matches on this screen")).font(FontId::new(13.0, sans())).color(glass(0.8)));
+                let found = match n {
+                    1 => "1 match on this screen".to_owned(),
+                    n => format!("{n} matches on this screen"),
+                };
+                ui.label(RichText::new(found).font(FontId::new(13.0, sans())).color(glass(0.8)));
             }
+            ui.ctx().data_mut(|d| d.insert_temp(Id::new(crate::render::FIND), q.clone()));
             self.find = Some(q);
             if ui.button("Done").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.find = None;
@@ -1531,7 +1539,7 @@ impl Browser {
         let anchor = ctx.data(|d| d.get_temp::<Rect>(Id::unique("pop_anchor"))).unwrap_or(Rect::from_min_size(pos2(100.0, 80.0), Vec2::ZERO));
         let width = match self.popover {
             Popover::Vpn => 340.0,
-            Popover::Menu => 240.0,
+            Popover::Menu => 284.0,
             _ => 360.0,
         };
         let screen = ctx.content_rect();
@@ -1543,7 +1551,9 @@ impl Browser {
         let slide = 8.0 * (1.0 - ease(t));
         let (pos, pivot) = if up { (pos2(x, anchor.top() - 8.0 + slide), egui::Align2::LEFT_BOTTOM) } else { (pos2(x, anchor.bottom() + 8.0 - slide), egui::Align2::LEFT_TOP) };
         let which = self.popover;
-        let area = egui::Area::new(Id::unique("popover")).pivot(pivot).fixed_pos(pos).order(egui::Order::Foreground).show(ctx, |ui| {
+        // Start as tall as the window: egui's default first size (about
+        // 400 px) otherwise sticks, and the menu scrolls for no reason.
+        let area = egui::Area::new(Id::unique("popover")).pivot(pivot).fixed_pos(pos).default_height(screen.height()).order(egui::Order::Foreground).show(ctx, |ui| {
             ui.multiply_opacity(t);
             theme::panel_frame(18, 16.0).show(ui, |ui| {
                 ui.set_width(width - 32.0);
@@ -2058,15 +2068,26 @@ impl Browser {
     fn pop_menu(&mut self, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 2.0;
         let item = |ui: &mut Ui, icon: Icon, text: &str, key: &str| -> bool {
-            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
+            // Rows short enough that the whole menu fits a 900 px window.
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 27.0), Sense::click());
             crate::drive::reg(format!("menu:{text}"), rect);
             let h = ui.ctx().animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.10);
             if h > 0.0 {
                 ui.painter().rect_filled(rect, 10.0, HOVER.gamma_multiply(h));
             }
             icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), Vec2::splat(13.0)), icon, MUTED);
-            ui.painter().text(pos2(rect.left() + 32.0, rect.center().y), egui::Align2::LEFT_CENTER, text, FontId::new(13.0, sans()), FG);
-            ui.painter().text(pos2(rect.right() - 8.0, rect.center().y), egui::Align2::RIGHT_CENTER, key, FontId::new(11.0, mono()), DIM);
+            let k = ui.painter().text(pos2(rect.right() - 8.0, rect.center().y), egui::Align2::RIGHT_CENTER, key, FontId::new(11.0, mono()), DIM);
+            // The label stops short of the shortcut instead of running into it.
+            let room = (k.left() - 10.0 - (rect.left() + 32.0)).max(20.0);
+            let galley = ui.painter().layout(text.to_owned(), FontId::new(13.0, sans()), FG, f32::INFINITY);
+            let label = if galley.size().x > room {
+                let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), FontId::new(13.0, sans()), FG);
+                job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+                ui.painter().layout_job(job)
+            } else {
+                galley
+            };
+            ui.painter().galley(pos2(rect.left() + 32.0, rect.center().y - label.size().y / 2.0), label, FG);
             resp.clicked()
         };
         if item(ui, Icon::Mask, "New private tab", "Shift+Cmd+N") {
@@ -3183,6 +3204,13 @@ pub fn suggestion_popup(ctx: &egui::Context, key: &str, r: Rect, rows: &[omnibox
                     SKind::Answer => "ANSWER",
                 };
                 let mut job = egui::text::LayoutJob::single_section(s.title.clone(), egui::TextFormat::simple(FontId::new(13.0, sans()), FG));
+                // Pages show their address too, so two "GitHub" rows can be told apart.
+                if matches!(s.kind, SKind::History | SKind::Bookmark) {
+                    let addr = omnibox::strip(&s.target).trim_end_matches('/');
+                    if !addr.is_empty() && addr != s.title {
+                        job.append(&format!("   {addr}"), 0.0, egui::TextFormat::simple(FontId::new(11.5, mono()), DIM));
+                    }
+                }
                 job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 220.0);
                 let g = ui.fonts_mut(|f| f.layout_job(job));
                 ui.painter().galley(pos2(rect.left() + 34.0, rect.center().y - g.size().y / 2.0), g, FG);

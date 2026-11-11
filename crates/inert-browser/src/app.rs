@@ -701,6 +701,9 @@ impl Browser {
         if let Some(t) = self.tab_mut(id) {
             if let Kind::Web(w) = &mut t.kind {
                 if !url.starts_with("inert://") && Page::from_url(&url).is_none() {
+                    if url.split('#').next() != w.url.split('#').next() {
+                        w.title.clear();
+                    }
                     w.url = url.clone();
                     w.loading = true;
                     if let Some(v) = &w.view {
@@ -881,6 +884,12 @@ impl Browser {
                     let mut title = String::new();
                     if let Some(t) = self.tab_mut(tab) {
                         if let Kind::Web(w) = &mut t.kind {
+                            // A new document starts with no title, so a page
+                            // without one doesn't keep the last page's.
+                            let doc = |u: &str| u.split('#').next().unwrap_or_default().to_owned();
+                            if started && doc(&url) != doc(&w.url) {
+                                w.title.clear();
+                            }
                             w.loading = started;
                             w.url = url.clone();
                             title = w.title.clone();
