@@ -555,3 +555,11 @@ Notlar:
 
 Yapılmayanlar: Chrome eklentilerini içe aktarma (Inert eklenti çalıştırmaz), Gmail gibi uygulama bağlantıları, passkey (WebKit'te Apple'ın tarayıcılara verdiği yetki gerekir; Servo'da WebAuthn yok), WebKit sayfalarında kırpma ve yüzen asistan. Bu turdaki değişikliklerden sonra tam UI testi koşturulmadı; kısa görsel tur 2/2.
 
+### 18.4 Varsayılan web motoru: WebKit (2026-11-11)
+
+Gündelik kullanımda Servo yetmedi: Google basit sürümünü gönderiyor, GitHub oturumu takılıyor, sitelerin beklediği bazı web özellikleri yok. Varsayılan WebKit oldu; Servo Ayarlar'da seçenek olarak duruyor ve her sayfa güvenlik panelinden Servo ile açılabiliyor. Servo varsayılanken oluşturulan profiller bir kez WebKit'e geçer (`engine_v2`). Demo profili ve UI testleri Servo'da kalır.
+
+WebKit sayfalarında bilinen eksikler: kırpma aracı ve yüzen asistan çalışmaz (yerel görünümün üstüne çizilemiyor), sağ tık menüsü WebKit'in kendi menüsüdür ("Attach to assistant" ve çeviri ⋮ menüsünde). Passkey iki motorda da yok.
+
+Aynı gün: Servo'ya ekran ölçeği iletiliyor (Retina'da sayfalar yarı boyutta çiziliyordu); Shield sol altta VPN'in yanında, "bu sitede" ve "her yerde" anahtarlarıyla (`adblock_off`); sekmeler üstteyken adres çubuğu başlık boyunca uzanır; adı silinen grup yalnız ikonuyla görünür; kurulum sırası açılış → model → görünüm → izinler ve aktarım.
+

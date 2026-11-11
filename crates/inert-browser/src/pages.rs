@@ -947,7 +947,7 @@ impl Browser {
         if ui.checkbox(&mut self.profile.settings.inbox_webkit, "Inbox tabs use WebKit (best compatibility for mail and chat apps)").changed() {
             self.dirty = true;
         }
-        ui.label(theme::muted("Applies to tabs opened from now on. Any page can switch engines from its site security panel."));
+        ui.label(theme::muted("WebKit runs today's sites as they are. Servo is written in Rust and still misses things many sites need. Applies to tabs opened from now on; any page can switch engines from its site security panel."));
 
         section(ui, "04", "Privacy & Shield");
         let mut on = self.profile.settings.adblock;

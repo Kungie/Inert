@@ -380,6 +380,9 @@ impl Browser {
         b.import.sources = crate::import::sources();
         b.import.blocked = crate::import::blocked();
         if demo {
+            // The demo profile (and the UI tests that run on it) keeps Servo,
+            // so the Servo path stays covered: input, cookies, context menu.
+            b.profile.settings.web_engine = crate::profile::Engine::Servo;
             // The demo profile imports from a fake Chrome profile, never the real one.
             match crate::import::write_fixture(&Profile::dir(true).join("chrome-demo"), "demo-safe-storage") {
                 Ok(mut s) => {

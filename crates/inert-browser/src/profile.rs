@@ -58,10 +58,11 @@ impl SearchEngine {
 /// Engine for the unsecured web.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Engine {
-    /// Servo, the Rust web engine (default).
-    #[default]
+    /// Servo, the Rust web engine. Still short of many everyday sites, so
+    /// it is the opt-in choice.
     Servo,
-    /// The system WebKit (WKWebView), for maximum compatibility.
+    /// The system WebKit (WKWebView): the default since 2026-11-11.
+    #[default]
     WebKit,
 }
 
@@ -124,6 +125,11 @@ pub struct Settings {
     /// Sites (eTLD+1) where the Shield is turned off.
     #[serde(default)]
     pub adblock_off: Vec<String>,
+    /// Set once the profile has taken the WebKit default (profiles made
+    /// while Servo was the default are switched over once; after that the
+    /// choice in Settings stands).
+    #[serde(default)]
+    pub engine_v2: bool,
     /// The "log in to all your sites" nudge was dismissed.
     #[serde(default)]
     pub import_nudge_off: bool,
@@ -140,7 +146,7 @@ impl Default for Settings {
             memory_saver: true,
             bookmarks_bar: true,
             vpn_last_location: None,
-            web_engine: Engine::Servo,
+            web_engine: Engine::WebKit,
             inbox_webkit: true,
             cookie_banners: true,
             cookie_block: Vec::new(),
@@ -149,6 +155,7 @@ impl Default for Settings {
             accent: 0,
             tabs_top: false,
             ai_mode: 0,
+            engine_v2: true,
             adblock_off: Vec::new(),
             import_nudge_off: false,
         }
@@ -267,6 +274,11 @@ impl Profile {
             if g.name == "Group" && g.kind != GroupKind::Normal {
                 g.name.clear();
             }
+        }
+        // The default web engine became WebKit; older profiles follow once.
+        if !prof.settings.engine_v2 {
+            prof.settings.engine_v2 = true;
+            prof.settings.web_engine = Engine::WebKit;
         }
         prof
     }
