@@ -11,7 +11,7 @@ use crate::{adblock, ai};
 use eframe::egui::{self, Align, Color32, FontId, Id, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2, pos2, vec2};
 
 fn primary(ui: &mut Ui, text: &str, w: f32) -> egui::Response {
-    ui.add(theme::cta(text, BLUE, WHITE, 46.0).min_size(vec2(w, 46.0)))
+    ui.add(theme::cta(text, accent(), WHITE, 46.0).min_size(vec2(w, 46.0)))
 }
 
 fn ghost(ui: &mut Ui, text: &str, w: f32) -> egui::Response {
@@ -24,6 +24,16 @@ fn card(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
         ui.set_width(ui.available_width());
         add(ui);
     });
+}
+
+/// The setup's progress bar: three steps, filling as they are done.
+pub fn progress(ui: &mut Ui, step: usize) {
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
+    let t = ui.ctx().animate_value_with_time(Id::unique("setup-progress"), step as f32 / 3.0, 0.35);
+    let p = ui.painter();
+    p.rect_filled(r, 3.0, glass(0.10));
+    p.rect_filled(Rect::from_min_size(r.min, vec2(r.width() * t, r.height())), 3.0, theme::accent().lerp_to_gamma(WHITE, 0.25));
+    ui.add_space(18.0);
 }
 
 /// A tile on the new tab page: lifts and brightens under the pointer.
@@ -122,8 +132,8 @@ impl Browser {
         let clearing = p.add(egui::Shape::Noop);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(col).layout(Layout::top_down(Align::Min)));
         let ui = &mut child;
-        if self.profile.settings.dark.is_none() {
-            ui.add_space((col.height() - 420.0).max(0.0) * 0.5);
+        if !self.signin.look_done {
+            ui.add_space((col.height() - 640.0).max(0.0) * 0.5);
             theme::panel_frame(26, 32.0).show(ui, |ui| {
                 ui.set_width(600.0);
                 self.look_picker(ui, true);
@@ -173,6 +183,7 @@ impl Browser {
                 let mut finish = false;
                 theme::panel_frame(26, 32.0).show(ui, |ui| {
                     ui.set_width(600.0);
+                    progress(ui, 2);
                     ui.label(theme::label_c("Step 2 of 3 · Your model", ACCENT));
                     ui.add_space(10.0);
                     ui.label(theme::title(&format!("Connect {}.", prov.name()), 38.0));
@@ -236,12 +247,13 @@ impl Browser {
     /// opening question; in Settings it switches live.
     fn look_picker(&mut self, ui: &mut Ui, first_run: bool) {
         if first_run {
+            progress(ui, 1);
             ui.label(theme::label_c("Step 1 of 3 · Look", ACCENT));
             ui.add_space(10.0);
-            ui.label(theme::title("How should Inert look?", 38.0));
+            ui.label(theme::title("Make Inert yours.", 38.0));
             ui.add_space(8.0);
-            ui.label(RichText::new("Blue is bright and loud. Dark keeps the letters blue on near-black and is easier on the eyes. You can change it later in Settings.").font(FontId::new(15.0, sans())).color(MUTED));
-            ui.add_space(22.0);
+            ui.label(RichText::new("Pick the look, the color and where your tabs live. Dark keeps the letters colored on near-black and is easier on the eyes. All of it can change later in Settings.").font(FontId::new(15.0, sans())).color(MUTED));
+            ui.add_space(20.0);
         }
         let ctx = ui.ctx().clone();
         let cur = self.profile.settings.dark;
@@ -254,11 +266,11 @@ impl Browser {
                 let resp = ui.interact(r, Id::unique(("look-card", dark)), Sense::click());
                 crate::drive::reg(key, r);
                 let h = ctx.animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.14);
-                let on = cur == Some(dark);
+                let on = cur.unwrap_or(false) == dark;
                 let p = ui.painter().clone();
                 // A small window: frame, sidebar lines, page card.
                 let pv = Rect::from_min_size(r.min, vec2(r.width(), 136.0)).translate(vec2(0.0, -2.0 * h));
-                let fc = if dark { theme::FRAME_DARK } else { BLUE };
+                let fc = if dark { theme::FRAME_DARK } else { theme::accent() };
                 p.rect_filled(pv, 16.0, fc);
                 let was = theme::is_dark();
                 theme::set_dark(dark);
@@ -286,6 +298,69 @@ impl Browser {
                 }
             }
         });
+        // The color: the frame in the bright look, buttons and letters in both.
+        ui.add_space(14.0);
+        ui.label(theme::label("Color"));
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            for (i, (name, c)) in theme::ACCENTS.iter().enumerate() {
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::hover());
+                let resp = ui.interact(r, Id::unique(("accent", i)), Sense::click()).on_hover_text(*name);
+                crate::drive::reg(format!("accent:{name}"), r);
+                let h = ctx.animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.12);
+                let on = self.profile.settings.accent == i;
+                let p = ui.painter();
+                p.circle_filled(r.center(), 13.0 + h, *c);
+                if on {
+                    p.circle_stroke(r.center(), 16.5, Stroke::new(2.0, WHITE));
+                }
+                if resp.clicked() {
+                    self.profile.settings.accent = i;
+                    theme::set_accent(i);
+                    self.dirty = true;
+                }
+            }
+        });
+        // Where the tabs live.
+        ui.add_space(14.0);
+        ui.label(theme::label("Tabs"));
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            for (top, name, key) in [(false, "Sidebar", "layout:sidebar"), (true, "Tabs on top", "layout:top")] {
+                let (r, _) = ui.allocate_exact_size(vec2(200.0, 44.0), Sense::hover());
+                let resp = ui.interact(r, Id::unique(("layout", top)), Sense::click());
+                crate::drive::reg(key, r);
+                let h = ctx.animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.12);
+                let on = self.profile.settings.tabs_top == top;
+                let p = ui.painter();
+                p.rect_filled(r, 14.0, RAISED.lerp_to_gamma(HOVER, h));
+                p.rect_stroke(r, 14.0, Stroke::new(1.0, if on { WHITE } else { LINE }), egui::StrokeKind::Inside);
+                let dot = pos2(r.left() + 20.0, r.center().y);
+                p.circle_stroke(dot, 7.0, Stroke::new(1.4, if on { WHITE } else { MUTED }));
+                if on {
+                    p.circle_filled(dot, 3.5, WHITE);
+                }
+                p.text(pos2(r.left() + 38.0, r.center().y), egui::Align2::LEFT_CENTER, name, FontId::new(14.0, sans_medium()), FG);
+                if resp.clicked() {
+                    self.profile.settings.tabs_top = top;
+                    self.dirty = true;
+                }
+            }
+        });
+        if first_run {
+            ui.add_space(22.0);
+            let b = primary(ui, "Next", 170.0);
+            crate::drive::reg("look:next", b.rect);
+            if b.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if self.profile.settings.dark.is_none() {
+                    self.profile.settings.dark = Some(false);
+                }
+                self.signin.look_done = true;
+                self.dirty = true;
+            }
+        }
         if ctx.input(|i| i.focused) {
             ctx.request_repaint_after(std::time::Duration::from_millis(170));
         }
@@ -296,6 +371,14 @@ impl Browser {
     pub fn page(&mut self, ui: &mut Ui, p: Page) {
         let rect = ui.max_rect();
         ui.painter().rect_filled(rect, 0.0, BG);
+        if p == Page::Chat {
+            // The assistant in a tab of its own: a centered column.
+            let w = (rect.width() - 96.0).clamp(320.0, 760.0);
+            let col = Rect::from_center_size(rect.center(), vec2(w, rect.height() - 56.0));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(col).layout(Layout::top_down(Align::Min)));
+            self.ai_panel(&mut child);
+            return;
+        }
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             let w = (ui.available_width() - 96.0).clamp(320.0, 1040.0);
             let side = ((ui.available_width() - w) / 2.0).max(32.0);
@@ -310,6 +393,7 @@ impl Browser {
                         Page::Settings => self.settings_page(ui),
                         Page::Downloads => self.downloads_page(ui),
                         Page::Import => self.import_page(ui),
+                        Page::Chat => {}
                     }
                     ui.add_space(80.0);
                 });
@@ -352,6 +436,21 @@ impl Browser {
             self.ntp_search(ui, cw);
         });
 
+        // Starters: questions the assistant can answer from your open tabs.
+        if self.profile.settings.provider.is_some() {
+            ui.add_space(14.0);
+            ui.horizontal(|ui| {
+                ui.add_space(((w - cw) / 2.0).max(0.0) + 6.0);
+                ui.spacing_mut().item_spacing.x = 8.0;
+                for q in ["What's in my open tabs?", "What was I working on?", "Which tabs can I close?"] {
+                    let b = egui::Button::new(RichText::new(q).font(FontId::new(12.5, sans())).color(MUTED)).fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, LINE)).corner_radius(15).min_size(vec2(0.0, 30.0));
+                    if ui.add(b).clicked() {
+                        self.ask_ai(q.into());
+                    }
+                }
+            });
+        }
+
         section(ui, "01", "Secured sites");
         let sites = self.sites.clone();
         if sites.is_empty() {
@@ -363,7 +462,7 @@ impl Browser {
                 let (r, resp, h) = tile(ui, vec2(240.0, 108.0), ACCENT);
                 let p = ui.painter();
                 let chip = Rect::from_min_size(r.min + vec2(16.0, 16.0), Vec2::splat(26.0));
-                p.rect_filled(chip, 9.0, BLUE);
+                p.rect_filled(chip, 9.0, accent());
                 icons::paint(p, chip.shrink(6.5), Icon::Lock, WHITE);
                 p.text(pos2(chip.right() + 10.0, chip.center().y), egui::Align2::LEFT_CENTER, "SECURED", FontId::new(10.0, mono()), SECURE);
                 icons::paint(p, Rect::from_center_size(pos2(r.right() - 22.0, chip.center().y), Vec2::splat(12.0)), Icon::Forward, MUTED.lerp_to_gamma(WHITE, h));
@@ -470,7 +569,7 @@ impl Browser {
         let sresp = ui.interact(sr, Id::unique("ntp-send"), Sense::click()).on_hover_text("Go");
         let ready = ctx.animate_bool_with_time(Id::unique("ntp-ready"), !self.ntp.text.trim().is_empty(), 0.16);
         let sh = ctx.animate_bool_with_time(Id::unique("ntp-send-h"), sresp.hovered(), 0.12);
-        p.circle_filled(sr.center(), 16.0 + sh, HOVER.lerp_to_gamma(BLUE, ready));
+        p.circle_filled(sr.center(), 16.0 + sh, HOVER.lerp_to_gamma(accent(), ready));
         icons::paint(&p, sr.shrink(9.0), Icon::ArrowUp, MUTED.lerp_to_gamma(WHITE, ready));
         let send = sresp.clicked() && !self.ntp.text.trim().is_empty();
         let font = FontId::new(17.0, sans());
@@ -677,7 +776,7 @@ impl Browser {
             ui.checkbox(&mut cookies, "Also cookies and site data (signs you out of most sites)");
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                let b = ui.add(theme::cta("Clear data", BLUE, WHITE, 36.0).min_size(vec2(130.0, 36.0)));
+                let b = ui.add(theme::cta("Clear data", accent(), WHITE, 36.0).min_size(vec2(130.0, 36.0)));
                 crate::drive::reg("clear:go", b.rect);
                 if b.clicked() {
                     let now = crate::profile::now();
@@ -773,7 +872,7 @@ impl Browser {
         ui.horizontal(|ui| {
             for p in [Provider::Claude, Provider::Gpt] {
                 let on = current == Some(p);
-                let b = if on { theme::cta(p.name(), BLUE, WHITE, 36.0) } else { theme::cta_ghost(p.name(), 36.0) }.min_size(vec2(120.0, 36.0));
+                let b = if on { theme::cta(p.name(), accent(), WHITE, 36.0) } else { theme::cta_ghost(p.name(), 36.0) }.min_size(vec2(120.0, 36.0));
                 if ui.add(b).clicked() {
                     self.profile.settings.provider = Some(p);
                     self.profile.settings.model = p.default_model().into();

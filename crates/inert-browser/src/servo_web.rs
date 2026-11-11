@@ -34,6 +34,8 @@ struct Shared {
     /// Consent checks: req → tab.
     consents: HashMap<u64, u64>,
     reads: HashMap<u64, u64>,
+    /// Pending `read_selection` requests: req → tab.
+    selections: HashMap<u64, u64>,
     blocked: u64,
     shield_ready: bool,
     dead: bool,
@@ -209,6 +211,11 @@ fn reader(stdout: std::process::ChildStdout, shared: Arc<Mutex<Shared>>, tx: Sen
                     send(Event::Consent { tab, what: text });
                     continue;
                 }
+                let sel = shared.lock().ok().and_then(|mut s| s.selections.remove(&req));
+                if let Some(tab) = sel {
+                    send(Event::Selection { tab, text });
+                    continue;
+                }
                 let tab = shared.lock().ok().and_then(|mut s| s.reads.remove(&req));
                 if let Some(tab) = tab {
                     send(Event::PageText { tab, text });
@@ -315,6 +322,16 @@ pub fn read_text(v: &View, tab: u64) {
     v.inner.send(&Cmd::Eval { view: v.id, req, script: "(document.title + '\\n' + (document.body ? document.body.innerText : '')).slice(0, 24000)".into() });
 }
 
+/// Asks the page for its selected text; `Event::Selection` carries the answer.
+pub fn read_selection(v: &View, tab: u64) {
+    let req = v.inner.next_req.get();
+    v.inner.next_req.set(req + 1);
+    if let Ok(mut s) = v.inner.shared.lock() {
+        s.selections.insert(req, tab);
+    }
+    v.inner.send(&Cmd::Eval { view: v.id, req, script: "String(window.getSelection()).slice(0, 8000)".into() });
+}
+
 fn named(k: egui::Key) -> Option<&'static str> {
     use egui::Key as K;
     Some(match k {
@@ -394,14 +411,18 @@ pub fn show(ui: &mut Ui, host: &Host, tab: u64, v: &View, overlay: bool) {
         });
     }
     let at = |p: egui::Pos2| ((p.x - rect.left()) * ppp, (p.y - rect.top()) * ppp);
+    // Pointer input reaches the page only where nothing floats above it
+    // (the floating assistant, menus).
+    let layer = ui.layer_id();
+    let on_page = |p: egui::Pos2| rect.contains(p) && ui.ctx().layer_id_at(p).is_none_or(|l| l == layer);
     let events = ui.input(|i| i.events.clone());
     for ev in events {
         match ev {
-            egui::Event::PointerMoved(pos) if rect.contains(pos) => {
+            egui::Event::PointerMoved(pos) if on_page(pos) => {
                 let (x, y) = at(pos);
                 v.input(Input::Move { x, y });
             }
-            egui::Event::PointerButton { pos, button, pressed, .. } if rect.contains(pos) => {
+            egui::Event::PointerButton { pos, button, pressed, .. } if on_page(pos) => {
                 let button = match button {
                     egui::PointerButton::Primary => 0,
                     egui::PointerButton::Middle => 1,

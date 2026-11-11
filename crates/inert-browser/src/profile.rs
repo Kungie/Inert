@@ -112,6 +112,18 @@ pub struct Settings {
     /// `None` until the user picks one on first run.
     #[serde(default)]
     pub dark: Option<bool>,
+    /// Index into `theme::ACCENTS`.
+    #[serde(default)]
+    pub accent: usize,
+    /// Tabs in a strip on top instead of the sidebar.
+    #[serde(default)]
+    pub tabs_top: bool,
+    /// Assistant panel: 0 sidebar, 1 floating.
+    #[serde(default)]
+    pub ai_mode: u8,
+    /// The "log in to all your sites" nudge was dismissed.
+    #[serde(default)]
+    pub import_nudge_off: bool,
 }
 
 impl Default for Settings {
@@ -131,6 +143,10 @@ impl Default for Settings {
             cookie_block: Vec::new(),
             sidebar: true,
             dark: None,
+            accent: 0,
+            tabs_top: false,
+            ai_mode: 0,
+            import_nudge_off: false,
         }
     }
 }

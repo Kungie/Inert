@@ -42,9 +42,10 @@ pub struct Glyphs {
     pub alt: Option<Color32>,
 }
 
-/// Blue glyph ink for the dark look.
+/// Glyph ink for the dark look: the chosen color, lifted toward white.
 fn blue_ink(a: f32) -> Color32 {
-    Color32::from_rgba_unmultiplied(70, 112, 255, (a * 255.0) as u8)
+    let c = theme::accent().lerp_to_gamma(Color32::WHITE, 0.28);
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a * 255.0) as u8)
 }
 
 impl Glyphs {
@@ -64,9 +65,9 @@ impl Glyphs {
         }
     }
 
-    /// The logo tile: blue and white letters flowing behind the keyhole.
+    /// The logo tile: white letters on the brand blue.
     pub fn logo(time: f32, size: f32) -> Self {
-        Glyphs { color: blue_ink(0.95), size, time, lens: 0.0, sea: 0.40, alt: Some(theme::glass(0.85)) }
+        Glyphs { color: theme::glass(0.62), size, time, lens: 0.0, sea: 0.40, alt: None }
     }
 }
 
@@ -145,25 +146,25 @@ pub fn glyphs(p: &Painter, ctx: &egui::Context, rect: Rect, pointer: Option<Pos2
     }
 }
 
-/// The Inert mark: a keyhole sealed in a ring.
+/// The Inert mark: the letter I, centered in a ring.
 pub fn mark(p: &Painter, c: Pos2, r: f32, color: Color32) {
-    p.circle_stroke(c, r, egui::Stroke::new((r * 0.13).max(1.3), color));
-    let head = pos2(c.x, c.y - r * 0.16);
-    p.circle_filled(head, r * 0.25, color);
-    let slot = vec![pos2(c.x - r * 0.10, c.y - r * 0.06), pos2(c.x + r * 0.10, c.y - r * 0.06), pos2(c.x + r * 0.21, c.y + r * 0.50), pos2(c.x - r * 0.21, c.y + r * 0.50)];
-    p.add(egui::Shape::convex_polygon(slot, color, egui::Stroke::NONE));
+    // Snapped to whole pixels so the bar sits exactly in the middle.
+    let c = pos2(c.x.round(), c.y.round());
+    let w = (r * 0.16).max(1.5).round();
+    p.circle_stroke(c, r, egui::Stroke::new(w, color));
+    p.rect_filled(Rect::from_center_size(c, egui::vec2(w, (r * 0.96).round())), w / 2.0, color);
 }
 
-/// The logo: a rounded tile of blue and white letters flowing behind the
-/// keyhole. `bg` is what the tile sits on (its corners are painted with it).
+/// The logo: a rounded tile in the brand blue with the glyph map and the
+/// mark. `bg` is what the tile sits on (its corners are painted with it).
 pub fn logo(p: &Painter, ctx: &egui::Context, r: Rect, time: f32, bg: Color32) {
     let rad = r.width() * 0.24;
-    p.rect_filled(r, rad, Color32::from_rgb(8, 14, 46));
+    p.rect_filled(r, rad, theme::BLUE);
     let size = (r.width() / 9.0).clamp(4.0, 10.0);
     glyphs(p, ctx, r, None, &Glyphs::logo(time, size));
     let c = r.center();
-    p.circle_filled(c, r.width() * 0.30, Color32::from_rgb(8, 14, 46));
-    mark(p, c, r.width() * 0.24, theme::WHITE);
+    p.circle_filled(c, r.width() * 0.33, theme::BLUE);
+    mark(p, c, r.width() * 0.25, theme::WHITE);
     crate::chrome::round_corners(p, r, rad, bg);
 }
 
@@ -193,8 +194,8 @@ pub fn icon_image(n: usize) -> egui::ColorImage {
         let cy = y.clamp(lo + rad, hi - rad);
         (x - cx).powi(2) + (y - cy).powi(2) <= rad * rad && x >= lo && x <= hi && y >= lo && y <= hi
     };
-    let navy = [8u8, 14, 46];
-    let blue = [70u8, 112, 255];
+    let navy = [31u8, 77, 255];
+    let blue = [150u8, 172, 255];
     // Letter grid: cells of 7×9 "pixels" of size `u`.
     let u = (nf / 240.0).max(1.0);
     let (cw, ch) = (7.0 * u, 9.0 * u);
@@ -226,7 +227,7 @@ pub fn icon_image(n: usize) -> egui::ColorImage {
                             let glyph = &PIX[k.min(PIX.len() - 1)].1;
                             let (lx, ly) = (((fx - gx * cw) / u) as usize, ((fy - gy * ch) / u) as usize);
                             if lx < 5 && ly < 7 && glyph[ly].as_bytes()[lx] == b'#' {
-                                col = if noise(gx * 0.3, gy * 0.6) > 0.6 { [235, 240, 255] } else { blue };
+                                col = blue;
                             }
                         }
                     }
@@ -234,11 +235,9 @@ pub fn icon_image(n: usize) -> egui::ColorImage {
                     if (d - ring_r).abs() < ring_w / 2.0 {
                         col = [255, 255, 255];
                     }
+                    // The I: a bar centered in the ring.
                     let (kx, ky) = (fx - c, fy - c);
-                    let head = (kx.powi(2) + (ky + ring_r * 0.16).powi(2)).sqrt() < ring_r * 0.25;
-                    let t = (ky + ring_r * 0.06) / (ring_r * 0.56);
-                    let slot = (0.0..=1.0).contains(&t) && kx.abs() < ring_r * (0.10 + 0.11 * t);
-                    if head || slot {
+                    if kx.abs() < ring_w / 2.0 && ky.abs() < ring_r * 0.48 {
                         col = [255, 255, 255];
                     }
                     acc[0] += col[0] as f32;

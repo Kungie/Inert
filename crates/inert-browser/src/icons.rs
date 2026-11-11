@@ -38,6 +38,7 @@ pub enum Icon {
     Logout,
     Sidebar,
     ArrowUp,
+    Clip,
 }
 
 fn s(c: Color32) -> Stroke {
@@ -225,6 +226,13 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, c: Color32) {
         Icon::Sidebar => {
             p.rect_stroke(Rect::from_min_max(at(-6.5, -5.0), at(6.5, 5.0)), 2.5 * u, s(c), egui::StrokeKind::Middle);
             line(at(-2.0, -5.0), at(-2.0, 5.0));
+        }
+        Icon::Clip => {
+            // Crop marks: four corners of a selection.
+            for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                p.add(egui::Shape::line(vec![at(6.0 * sx, 2.0 * sy), at(6.0 * sx, 6.0 * sy), at(2.0 * sx, 6.0 * sy)], s(c)));
+            }
+            p.circle_filled(ctr, 1.3 * u, c);
         }
         Icon::ArrowUp => {
             line(at(0.0, 5.5), at(0.0, -5.0));

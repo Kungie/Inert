@@ -119,6 +119,7 @@ impl Driver {
             expect("signin.visible", 3000, |b| !b.profile.onboarded),
             Shot(s("d01-signin")),
             Click(s("look:blue")),
+            Click(s("look:next")),
             Click(s("signin:claude")),
             expect("signin.claude_selected", 2000, |b| b.signin.provider == Some(crate::profile::Provider::Claude)),
             Click(s("signin:skip")),
@@ -376,6 +377,7 @@ impl Driver {
             vec![
                 Pause(1200),
                 Click(s("look:blue")),
+            Click(s("look:next")),
             Click(s("signin:claude")),
                 Click(s("signin:skip")),
                 Click(s("import:skip")),
@@ -390,6 +392,7 @@ impl Driver {
             vec![
                 Pause(1500),
                 Click(s("look:blue")),
+            Click(s("look:next")),
             Click(s("signin:claude")),
                 Click(s("signin:skip")),
                 Pause(300),
@@ -415,6 +418,7 @@ impl Driver {
             vec![
                 Pause(1200),
                 Click(s("look:blue")),
+            Click(s("look:next")),
             Click(s("signin:claude")),
                 Click(s("signin:skip")),
                 expect("import.step", 2000, |b| b.signin.import_step),
@@ -438,6 +442,7 @@ impl Driver {
             let mut v = vec![
                 Pause(1200),
                 Click(s("look:blue")),
+            Click(s("look:next")),
             Click(s("signin:claude")),
                 Click(s("signin:skip")),
                 Click(s("import:skip")),
@@ -630,6 +635,7 @@ fn look_steps() -> Vec<Step> {
         Pause(1200),
         Shot(s("l00-signin")),
         Click(s("look:blue")),
+            Click(s("look:next")),
             Click(s("signin:claude")),
         Pause(300),
         Shot(s("l00b-key")),
@@ -693,6 +699,19 @@ fn look_steps() -> Vec<Step> {
         Pause(600),
         Shot(s("l13-dark-bank")),
     ]
+}
+
+/// An image as PNG bytes.
+pub fn png_bytes(img: &egui::ColorImage) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut e = png::Encoder::new(&mut out, img.size[0] as u32, img.size[1] as u32);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    if let Ok(mut w) = e.write_header() {
+        let bytes: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect();
+        let _ = w.write_image_data(&bytes);
+    }
+    out
 }
 
 pub fn save_png(path: &std::path::Path, img: &egui::ColorImage) {

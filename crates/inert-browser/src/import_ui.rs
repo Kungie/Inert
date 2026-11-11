@@ -25,7 +25,7 @@ impl Browser {
             for (n, t) in [("1", "Open Privacy & Security → Full Disk Access."), ("2", "Turn on Inert (add it with + if it isn't listed)."), ("3", "Come back and press Try again.")] {
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
-                    ui.painter().circle_filled(r.center(), 10.0, BLUE);
+                    ui.painter().circle_filled(r.center(), 10.0, accent());
                     ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, n, FontId::new(11.0, mono()), WHITE);
                     ui.label(theme::body(t));
                 });
@@ -83,6 +83,39 @@ impl Browser {
         });
         ui.add_space(14.0);
         let done = !self.import.summary.is_empty();
+        if self.import.running {
+            // While macOS asks for the password that unlocks Chrome's key.
+            let src = &self.import.sources[self.import.pick.min(self.import.sources.len() - 1)];
+            let locked = (self.import.what.passwords || self.import.what.cookies) && src.demo_key.is_none();
+            ui.label(theme::title(if locked { "Unlock your data." } else { "Importing…" }, 24.0));
+            ui.add_space(6.0);
+            if locked {
+                ui.label(theme::body("Passwords and sign-ins are encrypted. macOS will ask for your Mac's login password so Inert can read them. Choose Allow."));
+                ui.label(theme::muted(&format!("The prompt names \"{}\". The password goes to macOS; Inert never sees it.", src.keychain.0)));
+            }
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                let (r, _) = ui.allocate_exact_size(vec2(250.0, 46.0), Sense::hover());
+                crate::drive::reg("import:go", r);
+                let p = ui.painter();
+                p.rect_filled(r, 23.0, RAISED);
+                let c = egui::pos2(r.left() + 26.0, r.center().y);
+                let a = ui.input(|i| i.time) as f32 * 5.0;
+                let arc: Vec<egui::Pos2> = (0..=10).map(|i| c + egui::vec2((a + i as f32 * 0.22).cos(), (a + i as f32 * 0.22).sin()) * 7.0).collect();
+                p.add(egui::Shape::line(arc, Stroke::new(1.8, WHITE)));
+                p.text(egui::pos2(r.left() + 46.0, r.center().y), egui::Align2::LEFT_CENTER, if locked { "Waiting for password…" } else { "Reading Chrome's files…" }, FontId::new(13.5, sans_medium()), FG);
+                ui.ctx().request_repaint();
+                if onboarding {
+                    let s = big(ui, "Skip importing", false);
+                    crate::drive::reg("import:skip", s.rect);
+                    if s.clicked() {
+                        self.finish_onboarding();
+                    }
+                }
+            });
+            return;
+        }
         if !done {
             let w = &mut self.import.what;
             for (on, title, sub, key) in [
@@ -269,6 +302,7 @@ impl Browser {
 
     /// Step 2 of onboarding, in the sign-in screen's style.
     pub fn import_screen(&mut self, ui: &mut Ui) {
+        crate::pages::progress(ui, 3);
         ui.label(theme::label_c("Step 3 of 3 · Import", ACCENT));
         ui.add_space(10.0);
         ui.label(theme::title("Bring Chrome with you.", 38.0));
@@ -297,6 +331,6 @@ fn plural(n: usize, word: &str) -> String {
 }
 
 pub fn big(ui: &mut Ui, text: &str, primary: bool) -> egui::Response {
-    let b = if primary { theme::cta(text, BLUE, WHITE, 46.0) } else { theme::cta_ghost(text, 46.0) };
+    let b = if primary { theme::cta(text, accent(), WHITE, 46.0) } else { theme::cta_ghost(text, 46.0) };
     ui.add(b.min_size(vec2(if primary { 180.0 } else { 130.0 }, 46.0)))
 }

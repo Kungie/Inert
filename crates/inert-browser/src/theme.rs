@@ -10,6 +10,28 @@ pub const BLUE: Color32 = Color32::from_rgb(31, 77, 255);
 pub const FRAME_DARK: Color32 = Color32::from_rgb(5, 6, 11);
 
 static DARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static ACCENT_IX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Frame colors to pick from. White text passes 4.5:1 on each.
+pub const ACCENTS: [(&str, Color32); 8] = [
+    ("Blue", BLUE),
+    ("Violet", Color32::from_rgb(106, 61, 240)),
+    ("Green", Color32::from_rgb(11, 122, 69)),
+    ("Teal", Color32::from_rgb(10, 124, 134)),
+    ("Orange", Color32::from_rgb(194, 65, 12)),
+    ("Pink", Color32::from_rgb(194, 37, 107)),
+    ("Red", Color32::from_rgb(200, 30, 58)),
+    ("Graphite", Color32::from_rgb(58, 66, 84)),
+];
+
+pub fn set_accent(i: usize) {
+    ACCENT_IX.store(i.min(ACCENTS.len() - 1), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The chosen color: the frame in the bright look, buttons and glyphs everywhere.
+pub fn accent() -> Color32 {
+    ACCENTS[ACCENT_IX.load(std::sync::atomic::Ordering::Relaxed).min(ACCENTS.len() - 1)].1
+}
 
 pub fn set_dark(on: bool) {
     DARK.store(on, std::sync::atomic::Ordering::Relaxed);
@@ -21,7 +43,7 @@ pub fn is_dark() -> bool {
 
 /// The window frame's color for the current look.
 pub fn frame() -> Color32 {
-    if is_dark() { FRAME_DARK } else { BLUE }
+    if is_dark() { FRAME_DARK } else { accent() }
 }
 pub const BLUE_DEEP: Color32 = Color32::from_rgb(20, 52, 204);
 // Dark surfaces: content card, popovers, panels.

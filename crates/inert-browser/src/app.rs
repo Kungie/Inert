@@ -38,6 +38,10 @@ pub enum Event {
     Imported(Box<crate::import::Imported>),
     /// A site icon arrived (raw image bytes).
     Favicon { host: String, bytes: Vec<u8> },
+    /// The clip tool's capture of the window, and the region to keep.
+    Clipped { rect: egui::Rect, image: std::sync::Arc<egui::ColorImage> },
+    /// The text selected on a page (asked for by "Attach to assistant").
+    Selection { tab: u64, text: String },
     /// A Servo page asked for its context menu.
     ServoMenu { tab: u64, actions: Vec<String>, link: Option<String>, image: Option<String>, selection: bool, editable: bool },
 }
@@ -62,6 +66,7 @@ pub enum Page {
     Settings,
     Downloads,
     Import,
+    Chat,
 }
 
 impl Page {
@@ -73,6 +78,7 @@ impl Page {
             Page::Settings => "about:settings",
             Page::Downloads => "about:downloads",
             Page::Import => "about:import",
+            Page::Chat => "about:chat",
         }
     }
     pub fn title(self) -> &'static str {
@@ -83,6 +89,7 @@ impl Page {
             Page::Settings => "Settings",
             Page::Downloads => "Downloads",
             Page::Import => "Import from Chrome",
+            Page::Chat => "Assistant",
         }
     }
     pub fn from_url(u: &str) -> Option<Page> {
@@ -93,6 +100,7 @@ impl Page {
             "about:settings" | "about:preferences" => Page::Settings,
             "about:downloads" => Page::Downloads,
             "about:import" => Page::Import,
+            "about:chat" => Page::Chat,
             _ => return None,
         })
     }
@@ -161,6 +169,31 @@ pub struct AiState {
     pub input: String,
     pub waiting: bool,
     pub pending_question: Option<String>,
+    /// What is attached to the next question.
+    pub attach: Vec<Attached>,
+    pub clip: Clip,
+    /// When the latest reply arrived (it fades in).
+    pub reply_at: f64,
+    /// Put the keyboard in the composer on the next frame.
+    pub focus: bool,
+}
+
+/// An attachment waiting in the composer, with what the chip shows.
+pub struct Attached {
+    pub a: crate::ai::Attach,
+    pub label: String,
+    pub thumb: Option<egui::TextureHandle>,
+}
+
+/// The clip tool: drag a region of the page to show it to the assistant.
+#[derive(Default, Clone, Copy, PartialEq)]
+pub enum Clip {
+    #[default]
+    Off,
+    /// Waiting for the drag (and during it: where it started).
+    Picking(Option<egui::Pos2>),
+    /// Region chosen: the next frame is drawn clean and captured.
+    Capture(egui::Rect),
 }
 
 #[derive(Default)]
@@ -190,6 +223,8 @@ pub struct AdState {
 pub struct Signin {
     /// Step 2 of onboarding: bring Chrome along.
     pub import_step: bool,
+    /// Step 1 (look, color, layout) was confirmed.
+    pub look_done: bool,
     pub provider: Option<Provider>,
     pub key: String,
     pub error: Option<String>,
@@ -282,6 +317,7 @@ impl Browser {
         }
         let profile = Profile::load(demo);
         theme::set_dark(profile.settings.dark == Some(true));
+        theme::set_accent(profile.settings.accent);
         let (tx, rx) = channel();
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("tokio runtime");
         let menu = crate::menu::AppMenu::install(tx.clone(), ctx.clone());
@@ -766,7 +802,21 @@ impl Browser {
                         Ok(s) => s,
                         Err(e) => format!("⚠ {e}"),
                     };
-                    self.ai.msgs.push(Msg { user: false, text });
+                    self.ai.msgs.push(Msg::new(false, text));
+                    self.ai.reply_at = self.ctx.input(|i| i.time);
+                }
+                Event::Clipped { rect, image } => self.on_clipped(rect, &image),
+                Event::Selection { tab, text } => {
+                    let text = text.trim().to_owned();
+                    if text.is_empty() {
+                        self.toast("Select some text on the page first");
+                    } else {
+                        let url = self.tab(tab).map(|t| t.url()).unwrap_or_default();
+                        let label: String = text.chars().take(40).collect();
+                        self.ai.attach.push(Attached { a: crate::ai::Attach::Text { text: text.chars().take(8000).collect(), url }, label, thumb: None });
+                        self.ai.open = true;
+                        self.ai.focus = true;
+                    }
                 }
                 Event::Vpn(s) => self.vpn.status = s,
                 Event::VpnRelays(r) => self.vpn.relays = r,
@@ -988,7 +1038,8 @@ impl Browser {
 
     pub fn ask_ai(&mut self, q: String) {
         self.ai.open = true;
-        self.ai.msgs.push(Msg { user: true, text: q.clone() });
+        let attach = self.ai.attach.drain(..).map(|a| a.a).collect();
+        self.ai.msgs.push(Msg { user: true, text: q.clone(), attach });
         self.ai.waiting = true;
         let id = self.active;
         let is_web = matches!(self.tab(id).map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some() || w.sv.is_some());
@@ -1002,14 +1053,74 @@ impl Browser {
                 web::read_text(w, id, &self.tx, &self.ctx);
             }
         } else {
-            self.send_ai(q, inert.unwrap_or(PageContext::None));
+            // No page here: the assistant gets the open tabs and recent pages instead.
+            let page = inert.unwrap_or_else(|| {
+                let mut list: Vec<String> = self.tabs.iter().filter(|t| !matches!(t.kind, Kind::Page(_))).map(|t| format!("open tab: {} — {}", t.title(), t.url())).collect();
+                list.extend(self.profile.visits.iter().rev().take(20).map(|v| format!("recent: {} — {}", v.title, v.url)));
+                if list.is_empty() { PageContext::None } else { PageContext::Tabs { list: list.join("\n") } }
+            });
+            self.send_ai(q, page);
         }
+    }
+
+    /// Asks the active page for its selected text; `Event::Selection` answers.
+    pub fn attach_selection(&mut self) {
+        let id = self.active;
+        match self.tab(id).map(|t| &t.kind) {
+            Some(Kind::Web(w)) => {
+                if let Some(sv) = &w.sv {
+                    crate::servo_web::read_selection(sv, id);
+                } else if let Some(v) = &w.view {
+                    let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+                    let _ = v.evaluate_script_with_callback("String(window.getSelection()).slice(0, 8000)", move |s| {
+                        let text = serde_json::from_str::<String>(&s).unwrap_or(s);
+                        let _ = tx.send(Event::Selection { tab: id, text });
+                        ctx.request_repaint();
+                    });
+                }
+            }
+            _ => self.toast("Selections can be attached from web pages"),
+        }
+    }
+
+    /// The clip tool's capture arrived: keep the chosen region as an attachment.
+    fn on_clipped(&mut self, rect: egui::Rect, image: &egui::ColorImage) {
+        let screen = self.ctx.content_rect();
+        let k = image.size[0] as f32 / screen.width().max(1.0);
+        let x0 = ((rect.left() * k).round().max(0.0) as usize).min(image.size[0]);
+        let y0 = ((rect.top() * k).round().max(0.0) as usize).min(image.size[1]);
+        let x1 = ((rect.right() * k).round().max(0.0) as usize).min(image.size[0]);
+        let y1 = ((rect.bottom() * k).round().max(0.0) as usize).min(image.size[1]);
+        if x1 <= x0 + 4 || y1 <= y0 + 4 {
+            return;
+        }
+        let (w, h) = (x1 - x0, y1 - y0);
+        let mut px = Vec::with_capacity(w * h);
+        for y in y0..y1 {
+            px.extend_from_slice(&image.pixels[y * image.size[0] + x0..y * image.size[0] + x1]);
+        }
+        let mut crop = egui::ColorImage::new([w, h], px);
+        // Models read images best at up to ~1500 px on the long edge.
+        let long = w.max(h);
+        if long > 1500 {
+            let rgba: Vec<u8> = crop.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect();
+            if let Some(buf) = image::RgbaImage::from_raw(w as u32, h as u32, rgba) {
+                let f = 1500.0 / long as f32;
+                let small = image::imageops::resize(&buf, (w as f32 * f) as u32, (h as f32 * f) as u32, image::imageops::FilterType::Triangle);
+                crop = egui::ColorImage::from_rgba_unmultiplied([small.width() as usize, small.height() as usize], small.as_raw());
+            }
+        }
+        let png = crate::drive::png_bytes(&crop);
+        let thumb = self.ctx.load_texture(format!("clip:{}", self.ai.attach.len()), crop.clone(), egui::TextureOptions::LINEAR);
+        self.ai.attach.push(Attached { a: crate::ai::Attach::Image { png }, label: format!("Clip {}×{}", crop.size[0], crop.size[1]), thumb: Some(thumb) });
+        self.ai.open = true;
+        self.ai.focus = true;
     }
 
     fn send_ai(&mut self, _q: String, page: PageContext) {
         let Some(p) = self.profile.settings.provider else {
             self.ai.waiting = false;
-            self.ai.msgs.push(Msg { user: false, text: "Choose an AI provider first (Settings → AI).".into() });
+            self.ai.msgs.push(Msg::new(false, "Choose an AI provider first (Settings → AI)."));
             return;
         };
         if self.demo {
@@ -1222,7 +1333,9 @@ impl eframe::App for Browser {
         // The traffic lights sit on the toolbar's line.
         #[cfg(target_os = "macos")]
         if !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
-            let at = web::mac::traffic_lights(frame, crate::chrome::LIGHTS.0, crate::chrome::LIGHTS.1);
+            // Centered on the toolbar's line, or on the tab strip's when tabs are on top.
+            let y = if self.profile.onboarded && self.profile.settings.tabs_top { crate::chrome::STRIP_H as f64 / 2.0 } else { crate::chrome::LIGHTS.1 };
+            let at = web::mac::traffic_lights(frame, crate::chrome::LIGHTS.0, y);
             if std::env::var_os("INERT_DEBUG_LIGHTS").is_some() && ctx.cumulative_pass_nr() % 120 == 5 {
                 eprintln!("traffic lights: close button center = {at:?}");
             }
@@ -1237,7 +1350,7 @@ impl eframe::App for Browser {
 
         self.chrome(ui);
         let content = self.content_rect;
-        let overlay = self.popover != Popover::None || (!self.omni.sugg.is_empty() && self.omni.editing) || egui::Popup::is_any_open(&ctx) || self.rename.is_some() || self.confirming();
+        let overlay = self.popover != Popover::None || (!self.omni.sugg.is_empty() && self.omni.editing) || egui::Popup::is_any_open(&ctx) || self.rename.is_some() || self.confirming() || self.page_menu.is_some();
         self.sync_webviews(frame, content, overlay);
         self.memory_saver();
         self.after_frame(&ctx, frame);

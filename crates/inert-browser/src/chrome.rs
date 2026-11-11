@@ -9,12 +9,14 @@ use crate::inert_tab::Status;
 use crate::omnibox::{self, Kind as SKind};
 use crate::profile::{GroupKind, presets};
 use crate::theme::{self, *};
-use crate::{adblock, vpn};
+use crate::{adblock, ai, vpn};
 use eframe::egui::{self, Align, Color32, FontId, Id, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use std::time::{Duration, Instant};
 
 const SIDE_W: f32 = 252.0;
 const TOP_H: f32 = 52.0;
+/// Height of the tab strip when tabs are on top.
+pub const STRIP_H: f32 = 44.0;
 const ROW_H: f32 = 34.0;
 const MARKS_H: f32 = 30.0;
 const LEFT_INSET: f32 = 80.0; // macOS traffic lights
@@ -139,9 +141,10 @@ impl Browser {
     pub fn chrome(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let win = ui.max_rect();
-        let side_t = ease(ctx.animate_bool_with_time(Id::unique("side-open"), self.profile.settings.sidebar, 0.28));
+        let top = self.profile.settings.tabs_top;
+        let side_t = if top { 0.0 } else { ease(ctx.animate_bool_with_time(Id::unique("side-open"), self.profile.settings.sidebar, 0.28)) };
         let side_w = (SIDE_W * side_t).round();
-        let marks = if self.profile.settings.bookmarks_bar { MARKS_H } else { 0.0 };
+        let marks = if self.profile.settings.bookmarks_bar { MARKS_H } else { 0.0 } + if top { STRIP_H } else { 0.0 };
 
         // The frame is one blue card. Its glyph map shows on the sidebar and
         // the bars; the page card covers the rest.
@@ -155,7 +158,10 @@ impl Browser {
         if side_w >= 1.0 {
             egui::Panel::left("side").resizable(false).show_separator_line(false).exact_size(side_w).frame(egui::Frame::NONE).show(ui, |ui| self.sidebar(ui));
         }
-        egui::Panel::top("toolbar").show_separator_line(false).exact_size(TOP_H).frame(egui::Frame::NONE).show(ui, |ui| self.toolbar(ui, side_t));
+        if top {
+            egui::Panel::top("strip").show_separator_line(false).exact_size(STRIP_H).frame(egui::Frame::NONE).show(ui, |ui| self.top_strip(ui));
+        }
+        egui::Panel::top("toolbar").show_separator_line(false).exact_size(TOP_H).frame(egui::Frame::NONE).show(ui, |ui| self.toolbar(ui, side_t, top));
         if self.profile.settings.bookmarks_bar {
             let left = (4.0 + (GAP + 4.0) * (1.0 - side_t)) as i8;
             egui::Panel::top("marks").show_separator_line(false).exact_size(MARKS_H).frame(egui::Frame::new().inner_margin(egui::Margin { left, right: 14, top: 0, bottom: 6 })).show(ui, |ui| self.bookmarks_bar(ui));
@@ -163,7 +169,12 @@ impl Browser {
         if self.find.is_some() {
             egui::Panel::top("find").show_separator_line(false).exact_size(44.0).frame(egui::Frame::new().inner_margin(egui::Margin { left: (GAP * (1.0 - side_t)) as i8, right: GAP as i8, top: 0, bottom: 6 })).show(ui, |ui| self.find_bar(ui));
         }
-        if self.ai.open {
+        // The assistant: a side card, or floating over the page. A WebKit
+        // page is a native view nothing can float over, so it gets the side card.
+        let chat_page = matches!(self.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::Chat)));
+        let native = matches!(self.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some());
+        let floating = self.profile.settings.ai_mode == 1 && !native;
+        if self.ai.open && !chat_page && !floating {
             egui::Panel::right("ai").resizable(false).show_separator_line(false).exact_size(388.0).frame(egui::Frame::NONE).show(ui, |ui| {
                 let mut c = side_card(ui);
                 self.ai_panel(&mut c);
@@ -188,6 +199,10 @@ impl Browser {
             round_corners(&p, card, CARD_R, theme::frame());
             p.rect_stroke(card, CARD_R, Stroke::new(1.0, glass(0.16)), egui::StrokeKind::Inside);
         });
+        if self.ai.open && !chat_page && floating {
+            self.ai_floating(&ctx);
+        }
+        self.clip_ui(&ctx);
         self.popovers(&ctx);
         self.page_menu_ui(&ctx);
         self.omnibox_dropdown(&ctx);
@@ -239,7 +254,13 @@ impl Browser {
         let mut bu = ui.new_child(egui::UiBuilder::new().max_rect(bottom).layout(Layout::left_to_right(Align::Center)));
         self.sidebar_footer(&mut bu);
 
-        let list = Rect::from_min_max(pos2(full.left() + 8.0, top.bottom()), pos2(full.right() - 8.0, bottom.top() - 6.0));
+        let mut list_bottom = bottom.top() - 6.0;
+        if self.nudge_import() {
+            let card = Rect::from_min_max(pos2(full.left() + 10.0, list_bottom - 122.0), pos2(full.right() - 10.0, list_bottom));
+            self.import_nudge(ui, card);
+            list_bottom = card.top() - 8.0;
+        }
+        let list = Rect::from_min_max(pos2(full.left() + 8.0, top.bottom()), pos2(full.right() - 8.0, list_bottom));
         let mut lu = ui.new_child(egui::UiBuilder::new().max_rect(list).layout(Layout::top_down(Align::Min)));
         lu.set_clip_rect(list.intersect(panel));
         egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(&mut lu, |ui| {
@@ -256,7 +277,7 @@ impl Browser {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = gap;
                         for id in row {
-                            self.pin_tile(ui, *id, tw);
+                            self.pin_tile(ui, *id, vec2(tw, 40.0));
                         }
                     });
                     ui.add_space(gap);
@@ -314,9 +335,9 @@ impl Browser {
         self.closing.retain(|g| now - g.start < 0.3);
     }
 
-    fn sidebar_footer(&mut self, ui: &mut Ui) {
+    /// The VPN pill: a dot that lights up when the tunnel is on.
+    fn vpn_pill(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
-        ui.spacing_mut().item_spacing.x = 2.0;
         let st = &self.vpn.status;
         let cc = self.vpn.relays.iter().find(|c| c.name == st.country).map(|c| c.code.to_uppercase());
         let on = st.connected();
@@ -339,16 +360,25 @@ impl Browser {
         if resp.on_hover_text("Mullvad VPN").clicked() {
             self.open_popover(Popover::Vpn, rect);
         }
+    }
+
+    fn ai_button(&mut self, ui: &mut Ui) {
+        let air = icons::button_c(ui, Icon::Spark, 30.0, "Assistant  Cmd+J", if self.ai.open { WHITE } else { glass(0.8) }, true);
+        crate::drive::reg("ai", air.rect);
+        if self.ai.open {
+            ui.painter().circle_filled(pos2(air.rect.center().x, air.rect.bottom() - 2.0), 1.6, WHITE);
+        }
+        if air.clicked() {
+            self.ai.open = !self.ai.open;
+        }
+    }
+
+    fn sidebar_footer(&mut self, ui: &mut Ui) {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        self.vpn_pill(ui);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            let air = icons::button_c(ui, Icon::Spark, 30.0, "Assistant  Cmd+J", if self.ai.open { WHITE } else { glass(0.8) }, true);
-            crate::drive::reg("ai", air.rect);
-            if self.ai.open {
-                ui.painter().circle_filled(pos2(air.rect.center().x, air.rect.bottom() - 2.0), 1.6, WHITE);
-            }
-            if air.clicked() {
-                self.ai.open = !self.ai.open;
-            }
+            self.ai_button(ui);
             if icons::button_c(ui, Icon::Gear, 30.0, "Settings  Cmd+,", glass(0.8), true).clicked() {
                 self.add_tab("about:settings", None, true, None);
             }
@@ -356,6 +386,205 @@ impl Browser {
                 self.add_tab("about:history", None, true, None);
             }
         });
+    }
+
+    /// Whether to suggest the import: another browser is here and nothing
+    /// was brought over yet.
+    fn nudge_import(&self) -> bool {
+        !self.demo && !self.profile.settings.import_nudge_off && self.profile.imported_from.is_none() && (!self.import.sources.is_empty() || !self.import.blocked.is_empty())
+    }
+
+    /// "Log in to all your sites": a card at the sidebar's foot.
+    fn import_nudge(&mut self, ui: &mut Ui, r: Rect) {
+        let p = ui.painter().clone();
+        p.rect_filled(r, 14.0, well(0.42));
+        p.rect_stroke(r, 14.0, Stroke::new(1.0, glass(0.14)), egui::StrokeKind::Inside);
+        icons::paint(&p, Rect::from_min_size(r.min + vec2(12.0, 13.0), Vec2::splat(14.0)), Icon::Key, WHITE);
+        p.text(r.min + vec2(34.0, 20.0), egui::Align2::LEFT_CENTER, "Log in to all your sites", FontId::new(13.0, sans_medium()), WHITE);
+        let job = egui::text::LayoutJob::simple("Bring your sign-ins, bookmarks and history over from your other browser in one go.".to_owned(), FontId::new(11.5, sans()), glass(0.8), r.width() - 24.0);
+        let g = ui.fonts_mut(|f| f.layout_job(job));
+        p.galley(r.min + vec2(12.0, 34.0), g, WHITE);
+        let mut row = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(r.left() + 10.0, r.bottom() - 40.0), pos2(r.right() - 10.0, r.bottom() - 8.0))).layout(Layout::right_to_left(Align::Center)));
+        row.spacing_mut().item_spacing.x = 6.0;
+        if row.add(theme::cta("Import all", WHITE, BLUE_DEEP, 30.0)).clicked() {
+            self.add_tab("about:import", None, true, None);
+            self.profile.settings.import_nudge_off = true;
+            self.dirty = true;
+        }
+        if row.add(theme::cta("Not now", glass(0.12), WHITE, 30.0)).clicked() {
+            self.profile.settings.import_nudge_off = true;
+            self.dirty = true;
+        }
+    }
+
+    // ------------------------------------------------------------------ tabs on top
+
+    /// The tab strip of the "tabs on top" layout: pinned tiles, group chips
+    /// with their tabs, the rest, and the VPN pill and assistant at the right.
+    fn top_strip(&mut self, ui: &mut Ui) {
+        let full = ui.max_rect();
+        let ctx = ui.ctx().clone();
+        self.frame_drag(ui, full, "strip-drag");
+        let right = Rect::from_min_max(pos2(full.right() - 176.0, full.top()), pos2(full.right() - 10.0, full.bottom()));
+        let mut ru = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)));
+        ru.spacing_mut().item_spacing.x = 4.0;
+        self.ai_button(&mut ru);
+        self.vpn_pill(&mut ru);
+
+        let tabs = Rect::from_min_max(pos2(full.left() + LEFT_INSET, full.top()), pos2(right.left() - 8.0, full.bottom()));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tabs).layout(Layout::left_to_right(Align::Center)));
+        let ui = &mut child;
+        ui.set_clip_rect(tabs);
+        ui.spacing_mut().item_spacing.x = 3.0;
+        let animate_new = ctx.cumulative_pass_nr() > 3;
+        let groups = self.profile.groups.clone();
+        let n_visible = self.tabs.iter().filter(|t| !t.pinned && t.group.and_then(|g| groups.iter().find(|x| x.id == g)).is_none_or(|g| !g.collapsed)).count().max(1);
+        let n_pinned = self.tabs.iter().filter(|t| t.pinned).count() as f32;
+        let chip_space: f32 = groups.iter().map(|g| g.name.len() as f32 * 7.0 + 52.0).sum();
+        let target = ((ui.available_width() - chip_space - n_pinned * 41.0 - 40.0) / n_visible as f32 - 3.0).clamp(40.0, 220.0);
+        let tab_w = ctx.animate_value_with_time(Id::unique("tab-w-all"), target, 0.18);
+
+        let pinned: Vec<u64> = self.tabs.iter().filter(|t| t.pinned).map(|t| t.id).collect();
+        for id in pinned {
+            self.pin_tile(ui, id, vec2(38.0, 32.0));
+        }
+        for g in &groups {
+            let ids: Vec<u64> = self.tabs.iter().filter(|t| !t.pinned && t.group == Some(g.id)).map(|t| t.id).collect();
+            let color = group_color(&g.color);
+            let open = ease(ctx.animate_bool_with_time(Id::unique(("grp-open", g.id)), !g.collapsed, 0.26));
+            self.top_group(ui, g, ids.len(), color, open);
+            if open > 0.002 {
+                for id in ids {
+                    self.top_tab(ui, id, tab_w, open, Some(color), animate_new);
+                }
+            }
+        }
+        let rest: Vec<u64> = self.tabs.iter().filter(|t| !t.pinned && t.group.is_none_or(|g| !groups.iter().any(|x| x.id == g))).map(|t| t.id).collect();
+        for id in rest {
+            self.top_tab(ui, id, tab_w, 1.0, None, animate_new);
+        }
+        let plus = icons::button(ui, Icon::Plus, 28.0, "New tab  Cmd+T");
+        crate::drive::reg("newtab", plus.rect);
+        if plus.clicked() {
+            self.add_tab("about:newtab", None, true, None);
+        }
+        self.closing.clear();
+    }
+
+    /// A group in the top strip: a chip in the group's color.
+    fn top_group(&mut self, ui: &mut Ui, g: &crate::profile::GroupDef, count: usize, color: Color32, open: f32) {
+        let icon = group_icon(g.kind);
+        let galley = ui.painter().layout_no_wrap(g.name.clone(), FontId::new(11.5, sans_medium()), BG);
+        let w = galley.size().x + if icon.is_some() { 34.0 } else { 20.0 } + if count > 0 { 16.0 } else { 0.0 };
+        let (rect, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
+        let resp = ui.interact(rect, Id::unique(("group-row", g.id)), Sense::click());
+        crate::drive::reg(format!("group:{}", g.name), rect);
+        let hov = ui.ctx().animate_bool_with_time(Id::unique(("chip-hov", g.id)), resp.hovered(), 0.14);
+        let p = ui.painter();
+        // Open: the chip is lit. Closed: dimmed a little, holding its tabs.
+        p.rect_filled(rect, 13.0, color.gamma_multiply(0.78 + 0.22 * open.max(hov)));
+        let mut x = rect.left() + 10.0;
+        if let Some(ic) = icon {
+            icons::paint(p, Rect::from_center_size(pos2(x + 6.0, rect.center().y), Vec2::splat(12.0)), ic, BG);
+            x += 17.0;
+        }
+        p.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, BG);
+        if count > 0 {
+            p.text(pos2(rect.right() - 11.0, rect.center().y), egui::Align2::CENTER_CENTER, count.to_string(), FontId::new(10.0, mono()), BG);
+        }
+        let gid = g.id;
+        let resp = resp.on_hover_text(if g.collapsed { "Expand group" } else { "Collapse group" });
+        if resp.clicked() {
+            if count == 0 {
+                self.open_popover(Popover::GroupAdd(gid), resp.rect);
+            } else if let Some(gd) = self.profile.groups.iter_mut().find(|x| x.id == gid) {
+                gd.collapsed = !gd.collapsed;
+                self.dirty = true;
+            }
+        }
+        self.group_menu(&resp, gid, g.kind);
+    }
+
+    /// A tab in the top strip: a glass pill that grows in and folds with its group.
+    fn top_tab(&mut self, ui: &mut Ui, id: u64, full_w: f32, scale: f32, group: Option<Color32>, animate_new: bool) {
+        let Some(t) = self.tab(id) else { return };
+        let ctx = ui.ctx().clone();
+        let now = ctx.input(|i| i.time);
+        let active = id == self.active;
+        let title = t.title();
+        let loading = t.loading();
+        let (icon, icon_c) = tab_icon(&t.kind);
+        let fav = match &t.kind {
+            Kind::Web(w) => Some(w.url.clone()),
+            _ => None,
+        }
+        .and_then(|u| self.favicons.get(&ctx, &u));
+        let t0 = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(Id::unique(("tab-born", id)), || if animate_new { now } else { now - 10.0 }));
+        let grow = ease(((now - t0) / 0.22) as f32);
+        if grow < 1.0 {
+            ctx.request_repaint();
+        }
+        let k = (scale * grow).clamp(0.0, 1.0);
+        let (rect, _) = ui.allocate_exact_size(vec2(full_w * k, 32.0), Sense::hover());
+        if rect.width() < 1.0 {
+            return;
+        }
+        let resp = ui.interact(rect, Id::unique(("tab-row", id)), Sense::click());
+        crate::drive::reg(format!("tab:{title}"), rect);
+        let body = Rect::from_min_size(rect.min, vec2(full_w, 32.0));
+        let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+        let hov = ctx.animate_bool_with_time(Id::unique(("tab-hov", id)), resp.hovered(), 0.14);
+        let act = ctx.animate_bool_with_time(Id::unique(("tab-act", id)), active, 0.18);
+        let fill = (0.09 * hov * (1.0 - act) + 0.20 * act) * k;
+        if fill > 0.0 {
+            p.rect_filled(body, 10.0, glass(fill));
+        }
+        if act > 0.0 {
+            p.rect_stroke(body, 10.0, Stroke::new(1.0, glass(0.20 * act * k)), egui::StrokeKind::Inside);
+        }
+        if let Some(gc) = group {
+            p.line_segment([pos2(body.left() + 10.0, body.bottom() - 1.5), pos2(body.right() - 10.0, body.bottom() - 1.5)], Stroke::new(2.0, gc.gamma_multiply(k)));
+        }
+        let compact = full_w < 64.0;
+        let ic = pos2(if compact { body.center().x } else { body.left() + 16.0 }, body.center().y);
+        if loading {
+            spinner(&p, ic, now as f32);
+        } else if let Some(tex) = fav {
+            favicon(&p, tex, ic, 16.0, k);
+        } else {
+            icons::paint(&p, Rect::from_center_size(ic, Vec2::splat(14.0)), icon, icon_c.gamma_multiply(k));
+        }
+        if !compact {
+            let show_close = (active || resp.hovered() || ui.rect_contains_pointer(rect)) && k > 0.99;
+            let avail = (body.right() - if show_close { 28.0 } else { 10.0 } - (ic.x + 16.0)).max(0.0);
+            let ink = glass((0.80 + 0.20 * act.max(hov)) * k);
+            let mut job = egui::text::LayoutJob::single_section(title.clone(), egui::TextFormat::simple(FontId::new(12.5, sans()), ink));
+            job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
+            let galley = ui.fonts_mut(|f| f.layout_job(job));
+            p.galley(pos2(ic.x + 16.0, body.center().y - galley.size().y / 2.0), galley, WHITE);
+            if show_close {
+                let cr = Rect::from_center_size(pos2(body.right() - 15.0, body.center().y), Vec2::splat(20.0));
+                let cresp = ui.interact(cr, Id::unique(("close", id)), Sense::click());
+                let ch = ctx.animate_bool_with_time(Id::unique(("close-hov", id)), cresp.hovered(), 0.12);
+                if ch > 0.0 {
+                    p.circle_filled(cr.center(), 10.0, glass(0.18 * ch));
+                }
+                icons::paint(&p, cr.shrink(6.0), Icon::Close, glass(0.7 + 0.3 * ch));
+                if cresp.clicked() {
+                    self.close_tab(id);
+                    return;
+                }
+            }
+        }
+        let resp = resp.on_hover_text(&title);
+        if resp.clicked() {
+            self.activate(id);
+        }
+        if resp.middle_clicked() {
+            self.close_tab(id);
+            return;
+        }
+        self.tab_menu(&resp, id, false);
     }
 
     /// Tabs that were just closed, folding away where they stood.
@@ -417,7 +646,10 @@ impl Browser {
                 self.dirty = true;
             }
         }
-        let kind = g.kind;
+        self.group_menu(&resp, gid, g.kind);
+    }
+
+    fn group_menu(&mut self, resp: &egui::Response, gid: u64, kind: GroupKind) {
         resp.context_menu(|ui| {
             ui.set_min_width(220.0);
             if ui.button("New tab in group").clicked() {
@@ -472,7 +704,7 @@ impl Browser {
     }
 
     /// A pinned tab: a square glass tile with just its icon.
-    fn pin_tile(&mut self, ui: &mut Ui, id: u64, w: f32) {
+    fn pin_tile(&mut self, ui: &mut Ui, id: u64, size: Vec2) {
         let Some(t) = self.tab(id) else { return };
         let ctx = ui.ctx().clone();
         let active = id == self.active;
@@ -484,7 +716,7 @@ impl Browser {
             _ => None,
         }
         .and_then(|u| self.favicons.get(&ctx, &u));
-        let (rect, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         let resp = ui.interact(rect, Id::unique(("tab-row", id)), Sense::click());
         crate::drive::reg(format!("tab:{title}"), rect);
         let hov = ctx.animate_bool_with_time(Id::unique(("tab-hov", id)), resp.hovered(), 0.14);
@@ -671,16 +903,17 @@ impl Browser {
 
     // ------------------------------------------------------------------ toolbar
 
-    fn toolbar(&mut self, ui: &mut Ui, side_t: f32) {
+    fn toolbar(&mut self, ui: &mut Ui, side_t: f32, top: bool) {
         let full = ui.max_rect();
         self.frame_drag(ui, full, "bar-drag");
-        // With the sidebar hidden, the traffic lights sit at the bar's left end.
-        let inset = 4.0 + (LEFT_INSET - 4.0) * (1.0 - side_t);
+        // With the sidebar hidden, the traffic lights sit at the bar's left
+        // end; with tabs on top they sit in the strip above.
+        let inset = if top { 4.0 + GAP } else { 4.0 + (LEFT_INSET - 4.0) * (1.0 - side_t) };
         let inner = Rect::from_min_max(pos2(full.left() + inset, full.top()), pos2(full.right() - 12.0, full.bottom()));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
         let ui = &mut child;
         ui.spacing_mut().item_spacing.x = 2.0;
-        if side_t < 0.5 {
+        if side_t < 0.5 && !top {
             let tg = icons::button(ui, Icon::Sidebar, 30.0, "Show sidebar  Cmd+S");
             crate::drive::reg("sidebar", tg.rect);
             if tg.clicked() {
@@ -707,7 +940,7 @@ impl Browser {
         }
         ui.add_space(8.0);
         // The address bar: centered in what is left, never wider than it reads well.
-        let right_w = 4.0 * 32.0 + 8.0;
+        let right_w = 5.0 * 32.0 + 8.0;
         let avail = ui.available_width() - right_w;
         let w = avail.clamp(200.0, 820.0);
         let pad = ((avail - w) / 2.0).max(0.0);
@@ -722,6 +955,12 @@ impl Browser {
             let title = self.active_tab().map(|t| t.title()).unwrap_or_default();
             self.profile.toggle_bookmark(&url, &title);
             self.dirty = true;
+        }
+        let clipping = self.ai.clip != crate::app::Clip::Off;
+        let rk = icons::button_c(ui, Icon::Clip, 30.0, "Clip part of the page for the assistant", if clipping { WHITE } else { glass(0.9) }, true);
+        crate::drive::reg("clip", rk.rect);
+        if rk.clicked() {
+            self.start_clip();
         }
         let rc = icons::button_c(ui, Icon::Cookie, 30.0, "Cookies — see and delete this site's cookies", if self.profile.settings.cookie_banners { WHITE } else { glass(0.55) }, true);
         crate::drive::reg("cookies", rc.rect);
@@ -906,7 +1145,16 @@ impl Browser {
             self.omni.text = crate::app::display_url(&self.active_tab().map(|t| t.url()).unwrap_or_default());
             ui.memory_mut(|m| m.surrender_focus(id));
         }
-        if enter {
+        if enter && ui.input(|i| i.modifiers.alt) && !self.omni.text.trim().is_empty() {
+            // Alt+Enter: the question goes to the assistant, not the web.
+            let q = std::mem::take(&mut self.omni.typed);
+            let q = if q.trim().is_empty() { self.omni.text.clone() } else { q };
+            self.omni.editing = false;
+            self.omni.sugg.clear();
+            self.omni.remote.clear();
+            self.omni.text = crate::app::display_url(&self.active_tab().map(|t| t.url()).unwrap_or_default());
+            self.ask_ai(q);
+        } else if enter {
             let choice = self.selected_suggestion();
             self.omni.editing = false;
             self.omni.sugg.clear();
@@ -1313,7 +1561,7 @@ impl Browser {
             });
         }
         ui.add_space(10.0);
-        let b = if st.connected() { theme::cta_ghost("Disconnect", 42.0) } else { theme::cta("Connect", BLUE, WHITE, 42.0) }.min_size(vec2(ui.available_width(), 42.0));
+        let b = if st.connected() { theme::cta_ghost("Disconnect", 42.0) } else { theme::cta("Connect", accent(), WHITE, 42.0) }.min_size(vec2(ui.available_width(), 42.0));
         if ui.add_enabled(!st.busy(), b).clicked() {
             let cmd = if st.connected() { vpn::Cmd::Disconnect } else { vpn::Cmd::Connect };
             self.vpn.status.state = if st.connected() { "disconnecting".into() } else { "connecting".into() };
@@ -1390,13 +1638,13 @@ impl Browser {
         for (n, t) in [("1", "Install the Mullvad app from mullvad.net."), ("2", "Open it once so its background service starts."), ("3", "Come back and type your account number.")] {
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
-                ui.painter().circle_filled(r.center(), 10.0, BLUE);
+                ui.painter().circle_filled(r.center(), 10.0, accent());
                 ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, n, FontId::new(11.0, mono()), WHITE);
                 ui.label(theme::body(t));
             });
         }
         ui.add_space(8.0);
-        let b = ui.add(theme::cta("Download Mullvad", BLUE, WHITE, 42.0).min_size(vec2(ui.available_width(), 42.0)));
+        let b = ui.add(theme::cta("Download Mullvad", accent(), WHITE, 42.0).min_size(vec2(ui.available_width(), 42.0)));
         if b.clicked() {
             self.add_tab("https://mullvad.net/download", None, true, None);
             self.popover = Popover::None;
@@ -1429,7 +1677,7 @@ impl Browser {
         }
         ui.add_space(6.0);
         let label = if busy { "Signing in…" } else { "Log in" };
-        let b = ui.add_enabled(!busy, theme::cta(label, BLUE, WHITE, 42.0).min_size(vec2(ui.available_width(), 42.0)));
+        let b = ui.add_enabled(!busy, theme::cta(label, accent(), WHITE, 42.0).min_size(vec2(ui.available_width(), 42.0)));
         crate::drive::reg("vpn:login", b.rect);
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (b.clicked() || enter) && !busy {
@@ -1474,7 +1722,7 @@ impl Browser {
             ui.horizontal(|ui| {
                 ui.label(theme::body(if l.username.is_empty() { "(no username)" } else { &l.username }));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let b = ui.add(theme::cta("Fill", BLUE, WHITE, 30.0).min_size(vec2(64.0, 30.0)));
+                    let b = ui.add(theme::cta("Fill", accent(), WHITE, 30.0).min_size(vec2(64.0, 30.0)));
                     crate::drive::reg(format!("pw:fill:{i}"), b.rect);
                     if b.clicked() {
                         match crate::passwords::get(&l.origin, &l.username, self.demo) {
@@ -1658,6 +1906,14 @@ impl Browser {
             self.find = Some(String::new());
             self.popover = Popover::None;
         }
+        if item(ui, Icon::Clip, "Clip for the assistant", "") {
+            self.popover = Popover::None;
+            self.start_clip();
+        }
+        if item(ui, Icon::Spark, "Attach selection to assistant", "") {
+            self.popover = Popover::None;
+            self.attach_selection();
+        }
         if item(ui, Icon::Globe, "Translate this page", "") {
             self.translate_page();
             self.popover = Popover::None;
@@ -1676,7 +1932,13 @@ impl Browser {
         match self.active_tab().map(|t| &t.kind) {
             Some(Kind::Web(w)) => {
                 if let Some(v) = &w.view {
-                    v.open_devtools();
+                    // A toggle: opening an inspector that is already open
+                    // left it half-attached.
+                    if v.is_devtools_open() {
+                        v.close_devtools();
+                    } else {
+                        v.open_devtools();
+                    }
                 } else if w.sv.is_some() {
                     self.toast("Servo has no built-in inspector yet. Open the page with WebKit (site security panel) to inspect it.");
                 }
@@ -1750,7 +2012,7 @@ impl Browser {
                     r.request_focus();
                 }
                 ui.horizontal(|ui| {
-                    if ui.add(theme::cta("Save", BLUE, WHITE, 34.0)).clicked() {
+                    if ui.add(theme::cta("Save", accent(), WHITE, 34.0)).clicked() {
                         done = true;
                     }
                     if ui.add(theme::cta_ghost("Cancel", 34.0)).clicked() {
@@ -1794,31 +2056,139 @@ impl Browser {
 
     // ------------------------------------------------------------------ AI panel
 
-    fn ai_panel(&mut self, ui: &mut Ui) {
+    /// Starts the clip tool: the next drag over the page picks a region.
+    pub fn start_clip(&mut self) {
+        if matches!(self.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some()) {
+            self.toast("Clipping works on Servo and inert:// pages. Open this page with Servo from its security panel.");
+            return;
+        }
+        self.popover = Popover::None;
+        self.ai.clip = crate::app::Clip::Picking(None);
+    }
+
+    /// The clip tool: dims the page, takes a dragged region, then captures
+    /// one clean frame of it.
+    fn clip_ui(&mut self, ctx: &egui::Context) {
+        use crate::app::Clip;
+        match self.ai.clip {
+            Clip::Off => {}
+            Clip::Capture(rect) => {
+                let (tx, ectx) = (self.tx.clone(), ctx.clone());
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |img| {
+                    let _ = tx.send(crate::app::Event::Clipped { rect, image: img });
+                    ectx.request_repaint();
+                })));
+                self.ai.clip = Clip::Off;
+            }
+            Clip::Picking(start) => {
+                let card = self.content_rect;
+                let mut next = Clip::Picking(start);
+                egui::Area::new(Id::unique("clip")).fixed_pos(card.min).order(egui::Order::Foreground).show(ctx, |ui| {
+                    let (_, resp) = ui.allocate_exact_size(card.size(), Sense::click_and_drag());
+                    ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+                    let p = ui.painter();
+                    let sel = start.zip(ctx.pointer_latest_pos()).map(|(a, b)| Rect::from_two_pos(a, b).intersect(card));
+                    let dim = Color32::from_black_alpha(110);
+                    match sel {
+                        Some(s) => {
+                            // Everything but the selection is dimmed.
+                            p.rect_filled(Rect::from_min_max(card.min, pos2(card.right(), s.top())), 0.0, dim);
+                            p.rect_filled(Rect::from_min_max(pos2(card.left(), s.bottom()), card.max), 0.0, dim);
+                            p.rect_filled(Rect::from_min_max(pos2(card.left(), s.top()), pos2(s.left(), s.bottom())), 0.0, dim);
+                            p.rect_filled(Rect::from_min_max(pos2(s.right(), s.top()), pos2(card.right(), s.bottom())), 0.0, dim);
+                            p.rect_stroke(s, 4.0, Stroke::new(1.5, WHITE), egui::StrokeKind::Outside);
+                        }
+                        None => {
+                            p.rect_filled(card, CARD_R, dim);
+                            let g = p.layout_no_wrap("Drag over what the assistant should see · Esc cancels".to_owned(), FontId::new(13.0, sans_medium()), WHITE);
+                            let r = Rect::from_center_size(pos2(card.center().x, card.top() + 34.0), g.size() + vec2(32.0, 18.0));
+                            p.rect_filled(r, r.height() / 2.0, PANEL);
+                            p.galley(r.center() - g.size() / 2.0, g, WHITE);
+                        }
+                    }
+                    if resp.drag_started() {
+                        next = Clip::Picking(resp.interact_pointer_pos());
+                    }
+                    if resp.drag_stopped() {
+                        next = match sel.filter(|s| s.width() > 12.0 && s.height() > 12.0) {
+                            Some(s) => Clip::Capture(s),
+                            None => Clip::Picking(None),
+                        };
+                    }
+                });
+                if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    next = Clip::Off;
+                }
+                self.ai.clip = next;
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    /// The assistant floating over the page's lower right corner.
+    fn ai_floating(&mut self, ctx: &egui::Context) {
+        let card = self.content_rect;
+        let h = (card.height() - 32.0).clamp(240.0, 640.0);
+        let t = ease(ctx.animate_bool_with_time(Id::unique("ai-float-in"), true, 0.2));
+        let pos = pos2(card.right() - 432.0, card.bottom() - h - 16.0 + 12.0 * (1.0 - t));
+        let area = egui::Area::new(Id::unique("ai-float")).fixed_pos(pos).order(egui::Order::Middle).show(ctx, |ui| {
+            ui.multiply_opacity(t);
+            theme::panel_frame(22, 16.0).show(ui, |ui| {
+                ui.set_width(384.0);
+                ui.set_height(h - 32.0);
+                self.ai_panel(ui);
+            });
+        });
+        self.overlay_rects.push(area.response.rect);
+    }
+
+    pub fn ai_panel(&mut self, ui: &mut Ui) {
         let provider = self.profile.settings.provider;
+        let on_chat_page = matches!(self.active_tab().map(|t| &t.kind), Some(Kind::Page(Page::Chat)));
+        let now = ui.input(|i| i.time);
         ui.horizontal(|ui| {
             ui.label(theme::label_c(&format!("Assistant · {}", provider.map(|p| p.name()).unwrap_or("—")), ACCENT));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if icons::button(ui, Icon::Close, 22.0, "Close").clicked() {
-                    self.ai.open = false;
+                if !on_chat_page {
+                    if icons::button(ui, Icon::Close, 22.0, "Close").clicked() {
+                        self.ai.open = false;
+                    }
+                    // Where the assistant lives: beside the page, floating over it, or in a tab.
+                    let b = icons::button(ui, Icon::Layers, 22.0, "Sidebar, floating, or its own tab");
+                    crate::drive::reg("ai:mode", b.rect);
+                    egui::Popup::menu(&b).show(|ui| {
+                        ui.set_min_width(170.0);
+                        for (mode, name) in [(0u8, "Sidebar"), (1, "Floating")] {
+                            if ui.selectable_label(self.profile.settings.ai_mode == mode, name).clicked() {
+                                self.profile.settings.ai_mode = mode;
+                                self.dirty = true;
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("Open in new tab").clicked() {
+                            self.ai.open = false;
+                            self.add_tab("about:chat", None, true, None);
+                            ui.close();
+                        }
+                    });
                 }
                 if !self.ai.msgs.is_empty() && ui.add(egui::Label::new(theme::label("Clear")).sense(Sense::click())).clicked() {
                     self.ai.msgs.clear();
                 }
             });
         });
-        ui.add_space(6.0);
-        let (ctx_label, ctx_color) = match self.active_tab().map(|t| &t.kind) {
-            Some(Kind::Inert(it)) if it.status == Status::Ready => (format!("Reading {} — signed tree", it.host), SECURE),
-            Some(Kind::Web(w)) => (format!("Reading {} — untrusted text", omnibox::strip(&w.url).split('/').next().unwrap_or("")), WARN),
-            _ => ("No page context".into(), MUTED),
-        };
-        egui::Frame::new().fill(ctx_color.gamma_multiply(0.10)).corner_radius(12).inner_margin(egui::Margin::symmetric(10, 5)).show(ui, |ui| {
-            ui.label(RichText::new(ctx_label).font(FontId::new(11.0, mono())).color(ctx_color));
-        });
         ui.add_space(8.0);
-        let input_h = 96.0;
-        let avail = ui.available_height() - input_h;
+        // What the assistant is looking at.
+        let (ctx_title, ctx_host, ctx_icon, ctx_url) = match self.active_tab().map(|t| &t.kind) {
+            Some(Kind::Inert(it)) if it.status == Status::Ready => (self.active_tab().map(|t| t.title()).unwrap_or_default(), format!("{} · signed", it.host), Icon::Lock, String::new()),
+            Some(Kind::Web(w)) => (w.title.clone(), omnibox::strip(&w.url).split('/').next().unwrap_or("").to_owned(), Icon::Globe, w.url.clone()),
+            _ => ("Open tabs".to_owned(), "titles and addresses".to_owned(), Icon::Tab, String::new()),
+        };
+        let fav = self.favicons.get(ui.ctx(), &ctx_url);
+        let chips_h = if self.ai.attach.is_empty() { 44.0 } else { 84.0 };
+        let comp_h = chips_h + 112.0;
+        let avail = (ui.available_height() - comp_h).max(60.0);
         egui::ScrollArea::vertical().max_height(avail).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
             if self.ai.msgs.is_empty() {
                 ui.add_space(20.0);
@@ -1832,37 +2202,130 @@ impl Browser {
                     }
                 }
             }
-            for m in &self.ai.msgs {
+            let last = self.ai.msgs.len().saturating_sub(1);
+            for (i, m) in self.ai.msgs.iter().enumerate() {
                 if m.user {
                     ui.with_layout(Layout::top_down(Align::Max), |ui| {
-                        egui::Frame::new().fill(BLUE).corner_radius(egui::CornerRadius { nw: 16, ne: 16, sw: 16, se: 4 }).inner_margin(egui::Margin::symmetric(12, 9)).show(ui, |ui| {
+                        egui::Frame::new().fill(accent()).corner_radius(egui::CornerRadius { nw: 16, ne: 16, sw: 16, se: 4 }).inner_margin(egui::Margin::symmetric(12, 9)).show(ui, |ui| {
                             ui.set_max_width(290.0);
-                            ui.label(theme::body(&m.text));
+                            for a in &m.attach {
+                                let what = match a {
+                                    ai::Attach::Text { text, .. } => format!("“{}…”", text.chars().take(48).collect::<String>().trim()),
+                                    ai::Attach::Image { .. } => "Clipped part of the page".to_owned(),
+                                };
+                                ui.label(RichText::new(what).font(FontId::new(11.5, mono())).color(glass(0.8)));
+                            }
+                            ui.label(theme::body(&m.text).color(WHITE));
                         });
                     });
                 } else {
-                    ui.label(RichText::new(&m.text).font(FontId::new(14.0, sans())).color(FG));
+                    // The newest reply fades up into place.
+                    let k = if i == last { ease(((now - self.ai.reply_at) / 0.35) as f32) } else { 1.0 };
+                    ui.scope(|ui| {
+                        if k < 1.0 {
+                            ui.multiply_opacity(k);
+                            ui.add_space(8.0 * (1.0 - k));
+                            ui.ctx().request_repaint();
+                        }
+                        crate::md::render(ui, &m.text);
+                    });
                 }
-                ui.add_space(10.0);
+                ui.add_space(12.0);
             }
             if self.ai.waiting {
-                let dots = ".".repeat(((ui.input(|i| i.time) * 3.0) as usize % 3) + 1);
-                ui.label(theme::label(&format!("Thinking{dots}")));
+                // Three dots breathing in turn.
+                let (r, _) = ui.allocate_exact_size(vec2(44.0, 18.0), Sense::hover());
+                for d in 0..3 {
+                    let a = (((now * 3.2) as f32 - d as f32 * 0.6).sin() * 0.5 + 0.5) * 0.7 + 0.25;
+                    ui.painter().circle_filled(pos2(r.left() + 6.0 + d as f32 * 12.0, r.center().y), 3.5, MUTED.gamma_multiply(a));
+                }
+                ui.ctx().request_repaint();
             }
         });
-        ui.separator();
+        ui.add_space(6.0);
         if provider.is_none() {
             ui.label(theme::muted("Choose Claude or GPT in Settings to use the assistant."));
             return;
         }
-        let r = ui.add(egui::TextEdit::multiline(&mut self.ai.input).desired_rows(2).desired_width(ui.available_width()).hint_text("Ask anything…  Enter sends · Shift+Enter for a new line").font(FontId::new(14.0, sans())));
-        crate::drive::reg("ai:input", r.rect);
-        let send = ui.memory(|m| m.has_focus(r.id)) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
+        // The composer: what it will read, the question, and the send button.
+        let mut send = false;
+        let mut drop_at = None;
+        let width = ui.available_width();
+        egui::Frame::new().fill(RAISED).stroke(Stroke::new(1.0, glass(0.10))).corner_radius(18).inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
+            ui.set_width(width - 26.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                // The page chip.
+                egui::Frame::new().fill(HOVER).corner_radius(10).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 7.0;
+                        let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+                        match fav {
+                            Some(tex) => favicon(ui.painter(), tex, r.center(), 16.0, 1.0),
+                            None => icons::paint(ui.painter(), r.shrink(2.0), ctx_icon, MUTED),
+                        }
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let t: String = ctx_title.chars().take(26).collect();
+                            ui.label(RichText::new(if t.is_empty() { "This page".to_owned() } else { t }).font(FontId::new(12.0, sans_medium())).color(FG));
+                            ui.label(RichText::new(&ctx_host).font(FontId::new(10.5, sans())).color(MUTED));
+                        });
+                    });
+                });
+                // What the user attached.
+                for (i, a) in self.ai.attach.iter().enumerate() {
+                    egui::Frame::new().fill(HOVER).corner_radius(10).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 7.0;
+                            match &a.thumb {
+                                Some(t) => {
+                                    let (r, _) = ui.allocate_exact_size(vec2(30.0, 26.0), Sense::hover());
+                                    ui.painter().add(egui::epaint::RectShape::filled(r, 5.0, WHITE).with_texture(t.id(), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))));
+                                }
+                                None => {
+                                    let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+                                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "“", FontId::new(20.0, sans_medium()), ACCENT);
+                                }
+                            }
+                            let l: String = a.label.chars().take(22).collect();
+                            ui.label(RichText::new(l).font(FontId::new(12.0, sans())).color(FG));
+                            if icons::button_c(ui, Icon::Close, 18.0, "Remove", MUTED, true).clicked() {
+                                drop_at = Some(i);
+                            }
+                        });
+                    });
+                }
+            });
+            let hint = if ctx_icon == Icon::Tab { "Ask anything…" } else { "Ask a question about this page…" };
+            let r = ui.add(egui::TextEdit::multiline(&mut self.ai.input).frame(egui::Frame::NONE).desired_rows(2).desired_width(f32::INFINITY).hint_text(hint).font(FontId::new(14.0, sans())));
+            crate::drive::reg("ai:input", r.rect);
+            if self.ai.focus && !ui.input(|i| i.pointer.any_down()) {
+                r.request_focus();
+                self.ai.focus = false;
+            }
+            send = ui.memory(|m| m.has_focus(r.id)) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
+            ui.horizontal(|ui| {
+                if icons::button_c(ui, Icon::Clip, 26.0, "Clip part of the page", MUTED, true).clicked() {
+                    self.start_clip();
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let (sr, sresp) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::click());
+                    let ready = ui.ctx().animate_bool_with_time(Id::unique("ai-ready"), !self.ai.input.trim().is_empty() && !self.ai.waiting, 0.16);
+                    let sh = ui.ctx().animate_bool_with_time(Id::unique("ai-send-h"), sresp.hovered(), 0.12);
+                    ui.painter().circle_filled(sr.center(), 15.0 + sh, HOVER.lerp_to_gamma(accent(), ready));
+                    icons::paint(ui.painter(), sr.shrink(8.5), Icon::ArrowUp, MUTED.lerp_to_gamma(WHITE, ready));
+                    crate::drive::reg("ai:send", sr);
+                    send |= sresp.clicked();
+                });
+            });
+        });
+        if let Some(i) = drop_at {
+            self.ai.attach.remove(i);
+        }
         if send && !self.ai.waiting {
             let q = self.ai.input.trim().to_owned();
-            self.ai.input.clear();
             if !q.is_empty() {
-                self.ai.msgs.retain(|_| true);
+                self.ai.input.clear();
                 self.ask_ai(q);
             }
         }
@@ -1946,7 +2409,7 @@ impl Browser {
             return;
         }
         // Servo-backed web pages are drawn by Inert itself.
-        let overlay = self.popover != Popover::None || (self.omni.editing && !self.omni.sugg.is_empty()) || egui::Popup::is_any_open(ui.ctx()) || self.rename.is_some() || self.page_menu.is_some();
+        let overlay = self.popover != Popover::None || (self.omni.editing && !self.omni.sugg.is_empty()) || egui::Popup::is_any_open(ui.ctx()) || self.rename.is_some() || self.page_menu.is_some() || self.ai.clip != crate::app::Clip::Off;
         if let (Some(Kind::Web(w)), Some(host)) = (self.tabs.iter().find(|t| t.id == id).map(|t| &t.kind), &self.servo) {
             if let Some(sv) = &w.sv {
                 crate::drive::reg("servo:surface", ui.max_rect());
@@ -2004,7 +2467,7 @@ impl Browser {
                 ui.label(theme::body(if web { "The destination is an ordinary web page. It will run its own code and is shown as unsecured." } else { "That site is verified separately with its own pinned key." }));
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.add(theme::cta("Open in new tab", BLUE, WHITE, 36.0)).clicked() {
+                    if ui.add(theme::cta("Open in new tab", accent(), WHITE, 36.0)).clicked() {
                         choice = Some(true);
                     }
                     if ui.add(theme::cta_ghost("Cancel", 36.0)).clicked() {
@@ -2097,6 +2560,7 @@ impl Browser {
             CopyText(String),
             Translate,
             Inspect,
+            Attach,
             Sep,
         }
         let mut rows: Vec<(&str, Do)> = Vec::new();
@@ -2115,6 +2579,9 @@ impl Browser {
         }
         if has("Copy") && m.selection {
             rows.push(("Copy", Do::Servo("Copy")));
+        }
+        if m.selection {
+            rows.push(("Attach to assistant", Do::Attach));
         }
         if has("Paste") && m.editable {
             rows.push(("Paste", Do::Servo("Paste")));
@@ -2185,6 +2652,7 @@ impl Browser {
             }
             Some(Do::CopyText(s)) => ctx.copy_text(s),
             Some(Do::Translate) => self.translate_page(),
+            Some(Do::Attach) => self.attach_selection(),
             Some(Do::Inspect) => {
                 if let Some(Kind::Web(w)) = self.tab_mut(tab).map(|t| &mut t.kind) {
                     w.discard();
@@ -2344,10 +2812,10 @@ pub fn suggestion_popup(ctx: &egui::Context, key: &str, r: Rect, rows: &[omnibox
                     SKind::Bookmark => "BOOKMARK",
                     SKind::OpenTab => "OPEN TAB",
                     SKind::Inert => "SECURED",
-                    SKind::Ai => "ASSISTANT",
+                    SKind::Ai => "ASSISTANT · ALT+ENTER",
                 };
                 let mut job = egui::text::LayoutJob::single_section(s.title.clone(), egui::TextFormat::simple(FontId::new(13.0, sans()), FG));
-                job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 160.0);
+                job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - 220.0);
                 let g = ui.fonts_mut(|f| f.layout_job(job));
                 ui.painter().galley(pos2(rect.left() + 34.0, rect.center().y - g.size().y / 2.0), g, FG);
                 ui.painter().text(pos2(rect.right() - 10.0, rect.center().y), egui::Align2::RIGHT_CENTER, tag, FontId::new(9.5, mono()), DIM);
