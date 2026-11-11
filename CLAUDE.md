@@ -124,7 +124,8 @@ Gece raporu (görsel özet): https://claude.ai/artifact/BERyRh213X8xgAk2CSKnMD
   - Yön A, Stencil dili (koyu, dither cam küre): https://claude.ai/artifact/FeE2baRHUwY1tdfxLf6cbz
   - Yön B, Stoa dili (açık, sütunlu galeri, protokol ticker'ı): https://claude.ai/artifact/7Phi2q4Cashnwoo1Xnmen2
   - Her ikisinde de bir landing sayfası ve dört Geist çeşidinin rollerini gösteren bir font sayfası var.
-  - Logo için beş yön (Claude Design, 2026-11-11; seçim bekliyor): https://claude.ai/artifact/77VfBiVqByPrh4av3w7Ry6
+  - Logo için beş yön (Claude Design, 2026-11-11): https://claude.ai/artifact/77VfBiVqByPrh4av3w7Ry6. **Seçilen: 05 Held caret** (iki köşeli parantez arasında duran metin imleci). Tarayıcıda, uygulama simgesinde ve web sitesinde bu kullanılıyor.
+  - Web sitesi (Claude Design, 2026-11-11): https://claude.ai/artifact/3CT8d6uFZxtVjHDn2DgFbq. İki sayfa: Browser (mavi, açılış sayfası) ve Protocol (koyu). Az yazı, çok ekran görüntüsü.
 
 ## Açık sorular
 - İlk geliştirme ve test platformu macOS (tarayıcı çapraz platform olsa da).

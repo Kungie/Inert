@@ -595,3 +595,15 @@ Aynı tur: adres çubuğundaki güvenlik göstergesi yalnız renkli kilit (yeşi
 
 Doğrulama: UI testi 80/80 (demo profili, Servo). Yeni özelliklerden gizli sekme, anında yanıt, bölünmüş görünüm, gizli favoriler ve Shield paneli testte; gerisi gerçek sitelerde elle denenmedi.
 
+### 18.6 Logo, düzen ayarları ve gerçek site doğrulaması (2026-11-11)
+
+- **Logo:** "Held caret" seçildi: iki köşeli parantez arasında duran metin imleci (çalışmayan kod). `art::mark`, `art::logo` ve uygulama simgesi (`art::icon_image`) bunu çiziyor.
+- **Ayarlar kategorili:** General, AI, Search & pages, Privacy, Shield & cookies, Passwords & import, VPN, About. Bir seferde bir kategori.
+- **Kenar çubuğu genişliği** kenarından sürüklenerek ayarlanır (200–440 pt, çift tıkla varsayılan), `sidebar_w`.
+- **Sekmeler üstteyken** trafik ışıklarından sonra 14 pt fazladan boşluk.
+- **Menü açılınca sayfanın kararması:** WebKit görünümü yerel olduğu için Inert'in kendi çizimi üstüne çıkamıyor; menü açılırken sayfanın görüntüsü alınıp (`takeSnapshotWithConfiguration`) görünüm gizlenince yerine çiziliyor.
+- **Shield:** gerçek bir reklam betiği (`pagead2.googlesyndication.com`) WebKit'te engelleniyor (ölçüldü). YouTube video reklamları videolarla aynı sunuculardan geldiği için ağ kuralıyla engellenemiyor; Shield açıkken YouTube'da reklamlar başlar başlamaz atlanıyor ve reklam alanları gizleniyor (`page_js::YT_ADS`).
+- **Chrome aktarımı teşhisi** (`--import-check`, yalnız sayılar): Chrome klasörünü macOS engelliyor; Dia okunabiliyor (32 yer imi, 4989 geçmiş satırı). Aktarma ekranı artık engellenen tarayıcıyı, okunabilenlerin yanında Tam Disk Erişimi adımlarıyla gösteriyor.
+- **Gerçek site turu** (`INERT_DRIVE_SCENARIO=real-web`, `INERT_PROFILE_DIR` ile geçici profil, demo değil, WebKit): sayfa yükleme, kaydırma boşluğu, konum gizleme, Rewind, geçmiş, yerinde çeviri (topla/geri yaz), sesli oku metni, site simgesi, GitHub, menü altında sayfa görüntüsü, Shield, YouTube'da sakin kip, resim içinde resim, altyazı, gizli sekmeler (geçmiş yok, birbirinden ve normal sekmelerden ayrı depo, boşta silinme, indirme silinmesi), her zaman gizli site, iki gerçek sayfayla bölünmüş görünüm, web'den anında yanıt, panik tuşu. Bu tur bir hata buldu: gizli sekmenin başlığı geçmişe yazılıyordu (düzeltildi).
+- **Bilinen:** gece ekran kilitlenince macOS pencereyi örtülü sayıp kare üretmeyi durduruyor; testler `caffeinate -dimu` ile koşuyor. Doğrudan açılan bir video dosyası "yüklendi" olayı göndermiyor (sekme yükleniyor görünebilir).
+
