@@ -9,7 +9,7 @@ name = "inert-servo-host"
 description = "Out-of-process Servo for the Inert browser: renders unsecured web pages offscreen, speaks JSON lines over stdio, shares frames through a memory-mapped file"
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-or-later"
 
 [[bin]]
 name = "inert-servo-host"
