@@ -10,3 +10,6 @@ dev-trust*.toml
 
 # macOS
 .DS_Store
+
+# Local screenshots from walkthroughs and test runs
+docs/screenshots/

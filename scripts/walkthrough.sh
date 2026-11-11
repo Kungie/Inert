@@ -5,7 +5,7 @@
 # Usage: scripts/walkthrough.sh <output-dir>   (demo sites must be running)
 set -e
 cd "$(dirname "$0")/.."
-OUT="${1:-docs/screenshots}"
+OUT="${1:-target/walkthrough}"
 export INERT_SHOT_RECT="${INERT_SHOT_RECT:-40,40,1440,900}"
 mkdir -p "$OUT"
 rm -f "$OUT"/*.ready "$OUT"/DONE

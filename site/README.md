@@ -1,19 +1,21 @@
 # Inert website
 
-Static HTML exported from the Claude Design canvas
-(https://claude.ai/artifact/3CT8d6uFZxtVjHDn2DgFbq): `index.html` (Browser, blue)
-and `protocol.html` (Protocol, dark), screenshots in `shots/`, the icon from
-`inert-browser --write-icon`.
+Plain static HTML: `index.html` (Browser, blue) and `protocol.html` (Protocol,
+dark), screenshots in `shots/`, the icon from `inert-browser --write-icon`.
+No build step and no scripts beyond the page itself.
 
-Hosted on the homeserver (citadel) in `~/inert-site`: Caddy serves `public/`,
-and a Cloudflare quick tunnel publishes it (no domain yet; the address changes
-when the tunnel restarts). Deploy:
+## Self-hosting
 
-    rsync -a --delete index.html protocol.html icon.png shots eren@192.168.0.14:~/inert-site/public/
-    rsync -a Caddyfile docker-compose.yml eren@192.168.0.14:~/inert-site/
-    ssh eren@192.168.0.14 'cd ~/inert-site && docker compose up -d'
-    ssh eren@192.168.0.14 'cd ~/inert-site && docker compose logs cloudflared | grep trycloudflare.com'
+`docker-compose.yml` runs Caddy for the files and a Cloudflare Tunnel in front
+of it, so no port has to be opened. Copy the site and the two config files to
+a server (`HOST` is yours):
 
-With a domain: create a named tunnel in Cloudflare, put its config in
-`cloudflared/`, and switch the compose command to
-`tunnel --no-autoupdate --config /etc/cloudflared/config.yml run` (as gut-site does).
+    rsync -a --delete index.html protocol.html icon.png shots HOST:~/inert-site/public/
+    rsync -a Caddyfile docker-compose.yml HOST:~/inert-site/
+    ssh HOST 'cd ~/inert-site && docker compose up -d'
+
+Without a domain the tunnel is a quick tunnel; its address
+(`https://<words>.trycloudflare.com`) is in `docker compose logs cloudflared`
+and changes when the tunnel restarts. With a domain, create a named tunnel in
+Cloudflare and switch the command to
+`tunnel --no-autoupdate --config /etc/cloudflared/config.yml run`.

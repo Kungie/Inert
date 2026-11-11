@@ -1,4 +1,4 @@
-//! Development trust files (spec §8 "geliştirme modu").
+//! Development trust files (spec §8, development mode).
 //!
 //! `inert dev` writes one file per site; `inert-browser` reads them. A file
 //! carries where to dial the site, the dev CA that signs its TLS leaf, and the

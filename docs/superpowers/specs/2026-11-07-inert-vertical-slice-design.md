@@ -1,135 +1,136 @@
-# Inert — Dikey Dilim Tasarımı
+# Inert: vertical slice design
 
-- **Tarih:** 2026-11-07
-- **Durum:** Uygulandı (2026-11-07 gecesi). Bu sürüm, uygulama sırasında verilen kararlarla uzlaştırıldı. Değişiklikler aşağıdaki günlükte.
-- **Kapsam:** Alt proje 1–3'ün en küçük uçtan uca hâli (protokol + çekirdek, server SDK, tarayıcı)
-- **Bağlam:** Projenin genel kararları `CLAUDE.md` dosyasında. Bu belge sadece dikey dilimi tanımlar.
+- **Date:** 2026-11-07
+- **Status:** Implemented (night of 2026-11-07). This version is reconciled with the decisions made while building it; the changes are in the log below.
+- **Scope:** The smallest end-to-end version of sub-projects 1–3 (protocol and core, server SDK, browser).
+- **Context:** The project's overall decisions are in `CLAUDE.md`. This document only defines the vertical slice.
 
-### Değişiklik günlüğü
+### Change log
 
-| Tarih | Bölüm | Değişiklik |
+| Date | Section | Change |
 |---|---|---|
-| 2026-11-07 | §2 | Servo ve normal web, salt okunur asistan, "Sign in with Claude / GPT" ve Mullvad VPN + Shield, kullanıcının gece hedefiyle kapsama alındı. |
-| 2026-11-07 | §4 | `inert-client`, `inert-servo-ipc` ve `inert-servo-host` eklendi. `inert-servo-host` ayrı bir Cargo workspace. |
-| 2026-11-07 | §11.1 | Çizim katmanı `vello` + `parley` + `taffy` yerine `egui` + `eframe` (wgpu). §17'nin izin verdiği alternatif. |
-| 2026-11-07 | §11.2 | Tek süreç yerine üç süreç sınıfı: tarayıcı, Servo süreci, WebKit'in kendi süreçleri. |
-| 2026-11-07 | §11.3 | `https://` artık açılıyor: Servo varsayılan, Inbox sekmeleri WebKit, motor seçimi kuralları. |
-| 2026-11-07 | §16 | Bellek kriteri süreç bazında tanımlandı ve ölçüldü. |
-| 2026-11-07 | §18.1 | Sabah turu: Chrome tarzı sekme ve omnibox, yeni sekme arama kutusu, geçmiş zaman çizelgesi, Cookies eklentisi, Mullvad giriş/çıkış, Chrome'dan içe aktarma. 71 UI kontrolü. |
+| 2026-11-07 | §2 | Servo and the normal web, a read-only assistant, "Sign in with Claude / GPT", Mullvad VPN and Shield brought into scope. |
+| 2026-11-07 | §4 | Added `inert-client`, `inert-servo-ipc` and `inert-servo-host`. `inert-servo-host` is its own Cargo workspace. |
+| 2026-11-07 | §11.1 | Drawing layer: `egui` + `eframe` (wgpu) instead of `vello` + `parley` + `taffy`, the alternative §17 allowed. |
+| 2026-11-07 | §11.2 | Three process classes instead of one: the browser, the Servo process, WebKit's own processes. |
+| 2026-11-07 | §11.3 | `https://` opens: engine selection rules. |
+| 2026-11-07 | §16 | The memory criterion is defined and measured per process. |
+| 2026-11-07 | §18.1 | Chrome-style tabs and omnibox, new tab search box, history timeline, Cookies extension, Mullvad sign-in and sign-out, import from Chrome. |
+| 2026-11-11 | §18.4 | WebKit becomes the default web engine; Servo stays an option. |
 
 ---
 
-## 1. Amaç
+## 1. Goal
 
-Inert fikrinin uçtan uca çalıştığını kanıtlamak:
+Prove the Inert idea works end to end:
 
-1. Küçük bir sunucu, imzalı bir App Manifest ve buna uyan `Screen` verisi gönderir.
-2. Rust ile yazılmış tarayıcı, manifest imzasını pinlenmiş anahtara karşı doğrular, her `Screen`'i manifest'teki şablona karşı doğrular ve GPU ile çizer.
-3. Kullanıcı bir aksiyon tetiklediğinde tipli bir `Action` gider, sunucu bunu tekrar doğrular, handler çalışır ve yeni bir `Screen` döner.
-4. Projenin vaadi olan saldırı senaryoları otomatik testlerle reddedilir.
+1. A small server sends a signed App Manifest and `Screen` data that conforms to it.
+2. The Rust browser verifies the manifest signature against the pinned key, verifies every `Screen` against the manifest's template, and draws it on the GPU.
+3. When the user triggers an action, a typed `Action` goes out, the server verifies it again, the handler runs and a new `Screen` comes back.
+4. The attack scenarios the project promises to stop are rejected by automated tests.
 
-## 2. Kapsam
+## 2. Scope
 
-**Kapsam dışı:** Kullanıcı uyarlama AI'ı (font, kontrast, sade düzen), agent toolkit ve MCP istemcisi, gerçek DNS kaydı ile anahtar keşfi, şeffaflık kaydı, QUIC, `inert://` uygulamalarında giriş ekranı ve hesaplar, web sitesi, dağıtım paketleri ve imzalı `.app`.
+**Out of scope:** the user-adaptation AI (fonts, contrast, simple layout), the agent toolkit and MCP client, key discovery through real DNS records, a transparency log, QUIC, sign-in screens and accounts inside `inert://` apps, the website, distribution packages and a signed `.app`.
 
-**Sonradan kapsama alınanlar (2026-11-07, kullanıcının gece hedefi):** İlk taslakta kapsam dışıydılar.
-- Normal web, Servo ile (§11.3).
-- Asistan paneli, salt okunur. `inert://` sayfalarını imzalı ağaçtan, web sayfalarını güvenilmez metin olarak okur, hiçbir aksiyon almaz.
-- "Sign in with Claude / GPT" girişi.
-- Mullvad VPN paneli ve Shield reklam/izleyici engelleme.
-- Chrome'dan esinlenen tarayıcı özellikleri: sekme grupları (Inbox, Homeserver, Developer), yer imleri, omnibox tamamlama.
+**Brought into scope later (2026-11-07):** these were out of scope in the first draft.
+- The normal web (§11.3).
+- A read-only assistant panel. It reads `inert://` pages from the signed tree and web pages as untrusted text, and takes no actions.
+- "Sign in with Claude / GPT".
+- A Mullvad VPN panel and Shield ad and tracker blocking.
+- Browser features inspired by Chrome: tab groups (Inbox, Homeserver, Developer), bookmarks, omnibox completion.
 
-## 3. Terimler
+## 3. Terms
 
-| Terim | Anlamı |
+| Term | Meaning |
 |---|---|
-| **App Manifest** | Deploy zamanında çevrim dışı bir anahtarla imzalanan belge: ekran şablonları, aksiyon şemaları, tasarım token'ları, statik asset hash'leri. |
-| **Şablon** | Bir ekranın bileşen ağacı. Dinamik kısımları tipli **slot**'lardır. |
-| **Slot** | Şablondaki, çalışma zamanında `Screen` verisiyle doldurulan tipli yer. |
-| **Screen** | Bir şablonu dolduran çalışma zamanı verisi. İmzasızdır, TLS ile gelir, şablona uyması zorunludur. |
-| **Action** | Kullanıcının tetiklediği, şemaya uyması zorunlu istek. |
-| **Pin** | Tarayıcının bir alan adı için kabul ettiği manifest imza anahtarı. |
+| **App Manifest** | The document signed at deploy time with an offline key: screen templates, action schemas, design tokens, static asset hashes. |
+| **Template** | A screen's component tree. Its dynamic parts are typed **slots**. |
+| **Slot** | A typed place in a template, filled at runtime by `Screen` data. |
+| **Screen** | Runtime data that fills a template. Unsigned, it arrives over TLS and must conform to the template. |
+| **Action** | A request the user triggers. It must conform to its schema. |
+| **Pin** | The manifest signing key the browser accepts for a domain. |
 
-## 4. Mimari
+## 4. Architecture
 
-İki Cargo workspace. Ana workspace aşağıdaki crate'leri içerir, `inert-servo-host` ise kendi workspace'inde durur. Böylece Servo'nun bağımlılık ağacı ve birleşen Cargo özellikleri tarayıcıya hiç karışmaz.
+Two Cargo workspaces. The main one holds the crates below; `inert-servo-host` lives in its own workspace, so Servo's dependency tree and unified Cargo features never reach the browser.
 
-| Crate | Görevi | Bağımlılık |
+| Crate | Role | Depends on |
 |---|---|---|
-| `inert-proto` | Mesaj ve manifest tipleri, katı CBOR encode/decode, sınırlar. | — |
-| `inert-verify` | İmza kontrolü (Ed25519), manifest kuralları, `Screen` ↔ şablon ve `Action` ↔ şema doğrulaması, kontrast kontrolü. | `inert-proto` |
-| `inert-transport` | `Transport` trait'i, TCP + `rustls` implementasyonu, çerçeveleme, zaman aşımları. | `inert-proto` |
-| `inert-server` | Server SDK, `inert-sign` ve `inert dev` komutları. | proto, verify, transport |
-| `inert-client` | Tarayıcı ile ekransız test istemcisinin paylaştığı oturum: bağlan, pinle, imzayı ve şablonları doğrula, asset al. | proto, verify, transport |
-| `inert-browser` | Pencere, çizim, layout, 10 bileşen, tarayıcı arayüzü, güven deposu. Servo'ya bağlanmaz. | client, servo-ipc |
-| `inert-servo-ipc` | Tarayıcı ile Servo süreci arasındaki mesajlar (JSON satırları). `unsafe` yok. | — |
-| `inert-servo-host` | Ayrı süreçte Servo: normal web sayfalarını ekran dışında çizer, kareleri paylaşılan belleğe yazar. Ayrı workspace. | servo-ipc, servo |
-| `examples/{bank,shop,notes}` | Örnek uygulamalar. | `inert-server` |
+| `inert-proto` | Message and manifest types, strict CBOR encode/decode, limits. | — |
+| `inert-verify` | Signature checks (Ed25519), manifest rules, `Screen` ↔ template and `Action` ↔ schema verification, contrast checks. | `inert-proto` |
+| `inert-transport` | The `Transport` trait, a TCP + `rustls` implementation, framing, timeouts. | `inert-proto` |
+| `inert-server` | Server SDK, the `inert-sign` and `inert dev` commands. | proto, verify, transport |
+| `inert-client` | The session shared by the browser and the headless test client: dial, pin, verify the signature and templates, fetch assets. | proto, verify, transport |
+| `inert-browser` | Window, drawing, layout, the 10 components, browser UI, trust store. Does not link Servo. | client, servo-ipc |
+| `inert-servo-ipc` | Messages between the browser and the Servo process (JSON lines). No `unsafe`. | — |
+| `inert-servo-host` | Servo in its own process: draws normal web pages offscreen and writes frames to shared memory. Its own workspace. | servo-ipc, servo |
+| `examples/{bank,shop,notes}` | Example apps. | `inert-server` |
 
-**Kurallar:**
-- `inert-proto` ve `inert-verify` ağ, dosya sistemi, UI ya da async runtime'a bağımlı olamaz. İkisi de `#![forbid(unsafe_code)]` kullanır.
-- Doğrulama mantığı sadece `inert-verify`'da yaşar. Sunucu ve tarayıcı aynı kodu çağırır.
+**Rules:**
+- `inert-proto` and `inert-verify` cannot depend on the network, the file system, UI or an async runtime. Both use `#![forbid(unsafe_code)]`.
+- Verification logic lives only in `inert-verify`. The server and the browser call the same code.
 
-## 5. Kablo protokolü
+## 5. Wire protocol
 
-### 5.1 Çerçeveleme
+### 5.1 Framing
 
 ```
-[ u32 uzunluk, big-endian ][ CBOR gövde ]
+[ u32 length, big-endian ][ CBOR body ]
 ```
 
-Her gövde tek bir mesajdır: `{ "t": <mesaj tipi>, ...alanlar }`. Uzunluk, mesaj tipine göre geçerli sınırı (§12) aşarsa okuma yapılmadan `Fatal` gönderilir ve bağlantı kapanır.
+Each body is one message: `{ "t": <message type>, ...fields }`. If the length exceeds the limit for that message type (§12), `Fatal` is sent without reading the body and the connection closes.
 
-### 5.2 Katı CBOR kuralları
+### 5.2 Strict CBOR rules
 
-Decoder aşağıdakileri reddeder:
-- RFC 8949 "core deterministic encoding" dışındaki her kodlama (en kısa tamsayı biçimi, sıralı map anahtarları).
-- Belirsiz uzunluklu (indefinite-length) öğeler.
-- Tekrarlanan map anahtarları.
-- Her CBOR tag'i.
-- Float değerler (sayılar tamsayı ya da §6.4'teki decimal biçimiyle taşınır).
-- Tipte tanımlı olmayan her alan.
-- §12'deki derinlik, uzunluk ve boyut sınırlarını aşan her şey.
+The decoder rejects:
+- Any encoding other than RFC 8949 "core deterministic encoding" (shortest integer form, sorted map keys).
+- Indefinite-length items.
+- Repeated map keys.
+- Every CBOR tag.
+- Floats (numbers are integers or the decimal form in §6.4).
+- Any field the type doesn't define.
+- Anything beyond the depth, length and size limits in §12.
 
-Encoder sadece deterministik kodlama üretir. `encode(decode(x)) == x` her geçerli mesaj için doğrudur.
+The encoder only produces deterministic encoding. `encode(decode(x)) == x` holds for every valid message.
 
-### 5.3 Mesajlar
+### 5.3 Messages
 
-| Yön | `t` | Alanlar |
+| Direction | `t` | Fields |
 |---|---|---|
-| T → S | `hello` | `v: uint` (protokol sürümü, dilimde `1`) |
-| S → T | `welcome` | `v: uint`, `manifest: bstr` (manifest'in deterministik CBOR'u), `sig: bstr(64)`, `key_id: tstr` |
-| T → S | `open` | `screen: tstr`, `params: map` |
-| S → T | `screen` | `screen: tstr`, `data: map` |
-| T → S | `action` | `id: bstr(16)`, `screen: tstr`, `action: tstr`, `fields: map` |
-| S → T | `result` | `id: bstr(16)`, `ok: bool`, `error?: { code: uint, field?: tstr }`, `next?: screen` |
-| T → S | `get_asset` | `hash: bstr(32)` |
-| S → T | `asset` | `hash: bstr(32)`, `mime: tstr`, `bytes: bstr` |
-| her iki yön | `fatal` | `code: uint` |
+| B → S | `hello` | `v: uint` (protocol version, `1` in the slice) |
+| S → B | `welcome` | `v: uint`, `manifest: bstr` (the manifest's deterministic CBOR), `sig: bstr(64)`, `key_id: tstr` |
+| B → S | `open` | `screen: tstr`, `params: map` |
+| S → B | `screen` | `screen: tstr`, `data: map` |
+| B → S | `action` | `id: bstr(16)`, `screen: tstr`, `action: tstr`, `fields: map` |
+| S → B | `result` | `id: bstr(16)`, `ok: bool`, `error?: { code: uint, field?: tstr }`, `next?: screen` |
+| B → S | `get_asset` | `hash: bstr(32)` |
+| S → B | `asset` | `hash: bstr(32)`, `mime: tstr`, `bytes: bstr` |
+| both | `fatal` | `code: uint` |
 
-### 5.4 Oturum akışı
+### 5.4 Session flow
 
-1. TCP bağlantısı + TLS 1.3 el sıkışması.
-2. Tarayıcı `hello` gönderir. Sürüm desteklenmiyorsa sunucu `fatal` döner.
-3. Sunucu `welcome` gönderir. Tarayıcı imzayı ve pin'i doğrular (§8), ardından manifest kurallarını (§7.1) kontrol eder.
-4. Tarayıcı manifest'teki `entry` ekranı için `open` gönderir. Sunucu `screen` döner.
-5. Kullanıcı aksiyonları `action` → `result` döngüsüyle ilerler. `result.next`, varsa yeni ekrandır.
-6. `Link` ile aynı site içinde başka bir ekrana geçmek yeni bir `open` mesajıdır.
-7. Görseller ihtiyaç anında `get_asset` → `asset` ile alınır ve oturum boyunca önbellekte tutulur.
+1. TCP connection + TLS 1.3 handshake.
+2. The browser sends `hello`. If the version isn't supported, the server answers `fatal`.
+3. The server sends `welcome`. The browser verifies the signature and pin (§8), then the manifest rules (§7.1).
+4. The browser sends `open` for the manifest's `entry` screen. The server answers `screen`.
+5. User actions go through `action` → `result`. `result.next`, when present, is the new screen.
+6. Moving to another screen of the same site with a `Link` is a new `open`.
+7. Images are fetched on demand with `get_asset` → `asset` and cached for the session.
 
-Bir TCP bağlantısı bir oturumdur. Oturum durumu sunucu belleğinde tutulur. Dilimde giriş yoktur, her oturuma sahte bir kullanıcı atanır.
+One TCP connection is one session. Session state lives in server memory. The slice has no sign-in; each session gets a fake user.
 
 ## 6. App Manifest
 
-### 6.1 Yapı
+### 6.1 Structure
 
 ```
 Manifest {
-  app:      tstr            // alan adı, ör. "bank.example"
-  version:  uint            // uygulama sürümü, her imzada artar
-  entry:    tstr            // açılış ekranı
+  app:      tstr            // domain, e.g. "bank.example"
+  version:  uint            // app version, increases with every signature
+  entry:    tstr            // first screen
   design:   Design
-  assets:   map<hash, AssetMeta>     // statik görseller
+  assets:   map<hash, AssetMeta>     // static images
   screens:  map<tstr, ScreenDef>
   actions:  map<tstr, ActionDef>
 }
@@ -139,43 +140,43 @@ ActionDef { fields: map<tstr, FieldType> }
 AssetMeta { mime: tstr, bytes: uint, width: uint, height: uint }
 ```
 
-Geliştiriciler ve agent'lar manifest'i JSON olarak yazar (`app.inert.json`). Bunun için bir JSON Schema yayınlanır. JSON sadece kaynak formattır, kabloda her zaman deterministik CBOR gider.
+Developers and agents write the manifest as JSON (`app.inert.json`), with a published JSON Schema. JSON is only the source format; the wire always carries deterministic CBOR.
 
-### 6.2 Bileşenler
+### 6.2 Components
 
-Her `Node` aşağıdakilerden biridir. Metin ve görsel değerleri ya sabit (literal) olur ya da bir slot'a bağlanır (`bind`).
+Every `Node` is one of the following. Text and image values are either literals or bound to a slot (`bind`).
 
-| Bileşen | Özellikler |
+| Component | Properties |
 |---|---|
 | `Stack` | `dir: v \| h`, `gap: spacing token`, `align: start \| center \| end \| stretch`, `children: [Node]` |
 | `Text` | `style: display \| title \| body \| mono \| label`, `text: literal \| bind` |
 | `Button` | `label: literal`, `action: tstr`, `args?: map<field, literal \| bind>`, `variant: primary \| ghost` |
 | `Input` | `action`, `field`, `label`, `kind: text \| number \| multiline`, `placeholder?` |
-| `Select` | `action`, `field`, `label` (seçenekler alanın tipinden gelir) |
+| `Select` | `action`, `field`, `label` (options come from the field's type) |
 | `Toggle` | `action`, `field`, `label` |
-| `List` | `bind: slot`, `item: Node` (öğe içinde `item.<alan>` bağlanabilir) |
+| `List` | `bind: slot`, `item: Node` (`item.<field>` can be bound inside an item) |
 | `Divider` | — |
-| `Image` | `src: asset hash \| bind`, `alt: literal` (zorunlu), `width`, `height` |
-| `Link` | `label`, `to: ekran adı` ya da `href: inert://… \| https://…`, `params?` |
+| `Image` | `src: asset hash \| bind`, `alt: literal` (required), `width`, `height` |
+| `Link` | `label`, `to: screen name` or `href: inert://… \| https://…`, `params?` |
 
-**Form modeli:** `Input`, `Select` ve `Toggle`, bir aksiyonun bir alanına bağlanır. Aynı ekrandaki bir `Button` o aksiyonu tetiklediğinde, o aksiyona bağlı alanların değerleri ve butonun `args`'ı birleşip `action.fields` olur. Birleşik alan seti aksiyonun şemasıyla birebir eşleşmek zorundadır.
+**Form model:** `Input`, `Select` and `Toggle` bind to one field of an action. When a `Button` on the same screen triggers that action, the values of the fields bound to it and the button's `args` together become `action.fields`. The combined field set must match the action's schema exactly.
 
-### 6.3 Slot tipleri
+### 6.3 Slot types
 
-`string { max }`, `int { min, max }`, `decimal { scale, min, max }`, `bool`, `image` (dinamik görsel hash'i), `list { max, item: map<tstr, SlotType> }`.
+`string { max }`, `int { min, max }`, `decimal { scale, min, max }`, `bool`, `image` (a dynamic image hash), `list { max, item: map<tstr, SlotType> }`.
 
-### 6.4 Alan tipleri (aksiyon ve `open` parametreleri)
+### 6.4 Field types (action and `open` parameters)
 
-| Tip | Kural |
+| Type | Rule |
 |---|---|
-| `string { max }` | UTF-8, kontrol karakterleri yok, uzunluk ≤ `max`. Dilimde regex yok. |
-| `int { min, max }` | i64 aralığı içinde. |
-| `decimal { scale, min, max }` | Kabloda `[mantissa: int, scale: uint]`. `scale` tipteki değeri aşamaz. |
+| `string { max }` | UTF-8, no control characters, length ≤ `max`. No regex in the slice. |
+| `int { min, max }` | Within the i64 range. |
+| `decimal { scale, min, max }` | `[mantissa: int, scale: uint]` on the wire. `scale` can't exceed the type's. |
 | `bool` | — |
-| `enum { options: [{ value, label }] }` | Değer, manifest'teki seçeneklerden biri olmak zorunda. |
-| `choice { from: slot }` | `from`, öğelerinde `id: string` ve `label: string` alanları olan bir `list` slot'u olmak zorunda. Değer, mevcut `Screen` verisinde o listedeki `id`'lerden biri olmalı (ör. kullanıcıya özel hesaplar). Sunucu ayrıca sahipliği kontrol eder. |
+| `enum { options: [{ value, label }] }` | The value must be one of the manifest's options. |
+| `choice { from: slot }` | `from` must be a `list` slot whose items have `id: string` and `label: string`. The value must be one of that list's `id`s in the current `Screen` data (for example the user's own accounts). The server also checks ownership. |
 
-### 6.5 Tasarım token'ları
+### 6.5 Design tokens
 
 ```
 Design {
@@ -187,51 +188,51 @@ Design {
 }
 ```
 
-Siteler font dosyası gönderemez. Sadece tarayıcıya gömülü dört Geist fontundan seçebilir.
+Sites can't send font files. They can only choose among the four Geist fonts built into the browser.
 
-### 6.6 Görseller
+### 6.6 Images
 
-- **Statik:** Hash'leri `assets` içinde durur. Bayt ve boyutları manifest'te yazılıdır.
-- **Dinamik:** Sadece `image` tipindeki slot'lar için geçerlidir. Değer bir hash'tir, görsel `get_asset` ile alınır. Manifest'te olmamaları normaldir.
-- Her iki durumda da tarayıcı gelen baytların SHA-256'sını hash ile karşılaştırır, ardından §12 sınırları içinde decode eder.
-- Formatlar: `image/png` ve `image/webp`. Decoder'lar bellek güvenli Rust crate'leridir.
+- **Static:** their hashes are in `assets`, with bytes and size written in the manifest.
+- **Dynamic:** only for `image` slots. The value is a hash and the image is fetched with `get_asset`. They aren't in the manifest.
+- Either way the browser compares the SHA-256 of the bytes with the hash, then decodes within the limits of §12.
+- Formats: `image/png` and `image/webp`, decoded by memory-safe Rust crates.
 
-## 7. Doğrulama kuralları (`inert-verify`)
+## 7. Verification rules (`inert-verify`)
 
-### 7.1 Manifest (hem `inert-sign build` sırasında hem tarayıcıda)
+### 7.1 Manifest (in `inert-sign build` and in the browser)
 
-- İmza geçerli ve `key_id`'nin anahtarına ait.
-- `entry` ekranı var. Her `Button`, `Input`, `Select` ve `Toggle` var olan bir aksiyona ve alana bağlı. Her `Link.to` var olan bir ekrana bağlı.
-- Her `bind` ekranda tanımlı bir slot'a, tipi de bileşenle uyumlu (ör. `Text` → `string`, `int` ya da `decimal`; `Image` → `image`).
-- Bir aksiyonun alan seti, onu tetikleyen her ekrandaki form alanları + `args` ile birebir eşleşiyor.
-- Her statik görsel hash'i `assets` içinde.
-- Her `Image` için `alt` dolu.
-- **Kontrast:** `fg/bg`, `muted/bg`, `accent/bg` ve `on_accent/accent` çiftlerinin WCAG kontrast oranı ≥ 4.5:1. Bu, hem erişilebilirlik hem de "görünmez metin" ile prompt injection'a karşı bir kuraldır.
-- Tüm sayısal sınırlar §12 içinde.
+- The signature is valid and belongs to `key_id`'s key.
+- The `entry` screen exists. Every `Button`, `Input`, `Select` and `Toggle` is bound to an existing action and field. Every `Link.to` points to an existing screen.
+- Every `bind` points to a slot defined on the screen, with a type that fits the component (for example `Text` → `string`, `int` or `decimal`; `Image` → `image`).
+- An action's field set matches, exactly, the form fields + `args` on every screen that triggers it.
+- Every static image hash is in `assets`.
+- Every `Image` has an `alt`.
+- **Contrast:** the WCAG contrast ratio of `fg/bg`, `muted/bg`, `accent/bg` and `on_accent/accent` is ≥ 4.5:1. This is for accessibility, and against prompt injection through invisible text.
+- All numeric limits are within §12.
 
-### 7.2 `Screen` (tarayıcıda ve sunucuda gönderimden önce)
+### 7.2 `Screen` (in the browser, and in the server before sending)
 
-- `screen` adı manifest'te var.
-- `data` tam olarak ekranın slot setini içeriyor: eksik yok, fazla yok.
-- Her değer slot tipine ve sınırlarına uyuyor. Listeler `max`'ı aşmıyor ve her öğe öğe tipine uyuyor.
+- The `screen` name exists in the manifest.
+- `data` holds exactly the screen's slot set: nothing missing, nothing extra.
+- Every value fits its slot type and limits. Lists don't exceed `max` and every item fits the item type.
 
-### 7.3 `Action` (tarayıcıda göndermeden önce, sunucuda handler'dan önce)
+### 7.3 `Action` (in the browser before sending, in the server before the handler)
 
-- `action` adı manifest'te var ve `screen` adlı ekrandan tetiklenebiliyor.
-- `fields` tam olarak aksiyonun alan setini içeriyor ve her değer kendi tipine uyuyor.
-- `choice` alanları, oturumun o ekran için en son gönderdiği `Screen` verisine göre kontrol edilir. Sunucu bu veriyi oturumda tutar.
-- `id` 16 bayt. Aynı oturumda daha önce görülmüşse aksiyon işlenmez, önceki `result` tekrar gönderilir.
+- The `action` name exists in the manifest and can be triggered from the screen named `screen`.
+- `fields` holds exactly the action's field set and every value fits its type.
+- `choice` fields are checked against the `Screen` data the session last sent for that screen. The server keeps that data in the session.
+- `id` is 16 bytes. If it was seen before in the same session the action isn't processed and the previous `result` is sent again.
 
-### 7.4 `Open` (sunucuda handler'dan önce)
+### 7.4 `Open` (in the server before the handler)
 
-- `screen` adı manifest'te var.
-- `params` tam olarak ekranın `params` setini içeriyor ve her değer kendi alan tipine uyuyor (§6.4).
+- The `screen` name exists in the manifest.
+- `params` holds exactly the screen's `params` set and every value fits its field type (§6.4).
 
-## 8. Güven modeli
+## 8. Trust model
 
-- **Kanal:** TLS 1.3, `rustls`, post-quantum hibrit anahtar değişimi açık. Üretimde WebPKI sertifika doğrulaması yapılır.
-- **Manifest anahtarı:** Ed25519. Üretim modelinde anahtar `_inert.<alan>` TXT kaydında yayınlanır ve ilk ziyarette pinlenir. **Dilimde DNS yok**, bu yol sadece arayüz olarak tanımlanır.
-- **Güven deposu:** `~/.config/inert/trust.toml`
+- **Channel:** TLS 1.3 with `rustls`, post-quantum hybrid key exchange on. WebPKI certificate verification in production.
+- **Manifest key:** Ed25519. In production the key is published in a `_inert.<domain>` TXT record and pinned on first visit. **The slice has no DNS**; this path is only defined as an interface.
+- **Trust store:** `~/.config/inert/trust.toml`
 
   ```toml
   [pins."bank.example"]
@@ -239,22 +240,22 @@ Siteler font dosyası gönderemez. Sadece tarayıcıya gömülü dört Geist fon
   pinned_at = "2026-11-07T00:00:00Z"
   ```
 
-- **Geliştirme modu:** `inert-browser --dev-trust <dosya>` ile verilen dosya, hem TLS sertifikasını (kendinden imzalı) hem manifest anahtarını içerir. Bu mod adres çubuğunda açıkça `DEV` olarak işaretlenir.
-- **Anahtar değişimi:** Pinlenmiş anahtarla eşleşmeyen bir manifest gelirse sayfa açılmaz, tam ekran uyarı gösterilir. Kullanıcı açıkça onaylamadan yeni anahtar pinlenmez.
-- **Sürüm geri alma koruması:** Tarayıcı her alan adı için gördüğü en yüksek `manifest.version`'ı saklar ve daha düşük sürümü reddeder.
+- **Development mode:** the file given with `inert-browser --dev-trust <file>` holds both the (self-signed) TLS certificate and the manifest key. This mode is marked `DEV` in the address bar.
+- **Key change:** a manifest that doesn't match the pinned key doesn't open; a full-screen warning shows. The new key isn't pinned without the user's explicit approval.
+- **Rollback protection:** the browser stores the highest `manifest.version` it has seen for each domain and rejects lower ones.
 
-## 9. Taşıma
+## 9. Transport
 
-- `Transport` trait'i: bağlan, çerçeve gönder, çerçeve al, kapat. Dilimdeki tek implementasyon TCP + `rustls`. QUIC ileride aynı trait'in arkasına gelecek.
-- Async runtime: `tokio`, sadece `inert-transport`, `inert-server` ve tarayıcının ağ thread'inde.
-- Zaman aşımları §12'de.
+- The `Transport` trait: connect, send frame, receive frame, close. The slice's only implementation is TCP + `rustls`. QUIC will come later behind the same trait.
+- Async runtime: `tokio`, only in `inert-transport`, `inert-server` and the browser's network thread.
+- Timeouts are in §12.
 
-## 10. Sunucu tarafı
+## 10. Server side
 
 ### 10.1 `inert-sign`
 
-- `inert-sign keygen --out <dosya>`: Ed25519 anahtar çifti üretir. Anahtar dosyası repo dışında tutulur.
-- `inert-sign build app.inert.json --key <dosya> --out manifest.signed.cbor`: JSON'u okur, §7.1 kurallarını uygular, deterministik CBOR üretir ve imzalar. Kurallardan biri bile başarısız olursa çıktı üretilmez.
+- `inert-sign keygen --out <file>`: makes an Ed25519 key pair. The key file stays outside the repo.
+- `inert-sign build app.inert.json --key <file> --out manifest.signed.cbor`: reads the JSON, applies the rules of §7.1, produces deterministic CBOR and signs it. If any rule fails, there is no output.
 
 ### 10.2 Server SDK
 
@@ -268,7 +269,7 @@ app.screen("overview", |session, params| {
 });
 
 app.action("transfer", |session, action| {
-    let amount = action.decimal("amount");   // zaten doğrulanmış
+    let amount = action.decimal("amount");   // already verified
     let from = action.choice("from");
     session.user.transfer(from, amount)?;
     Ok(Next::screen("overview"))
@@ -277,342 +278,313 @@ app.action("transfer", |session, action| {
 app.serve("0.0.0.0:7443", tls_config).await
 ```
 
-- **Sunucu imza anahtarını görmez**, sadece `manifest.signed.cbor`'u yükler.
-- **Başlangıç kontrolü:** Manifest'teki her ekranın ve aksiyonun tam olarak bir handler'ı olmalı. Eksik ya da fazla varsa `serve` başlamaz.
-- Handler'a sadece §7.3'ten geçmiş aksiyonlar ulaşır. Handler'ın döndürdüğü her `Screen` gönderilmeden önce §7.2'ye karşı kontrol edilir. Başarısız olursa istemciye `internal` hatası gider, ayrıntı loglanır.
-- Handler'daki panikler yakalanır ve `internal` hatasına çevrilir.
+- **The server never sees the signing key**; it only loads `manifest.signed.cbor`.
+- **Startup check:** every screen and action in the manifest must have exactly one handler. If any is missing or extra, `serve` doesn't start.
+- Only actions that passed §7.3 reach a handler. Every `Screen` a handler returns is checked against §7.2 before it's sent. If that fails the client gets an `internal` error and the details are logged.
+- Handler panics are caught and turned into `internal` errors.
 
 ### 10.3 `inert dev`
 
-Tek komutla şunları yapar: kendinden imzalı bir TLS sertifikası ve geliştirme anahtarı üretir (yoksa), manifest'i imzalar, sunucuyu başlatır, `--dev-trust` dosyasını yazar ve `app.inert.json` değiştiğinde yeniden imzalayıp yükler. Geliştirme anahtarları `.gitignore`'dadır.
+One command: makes a self-signed TLS certificate and a development key (if missing), signs the manifest, starts the server, writes the `--dev-trust` file, and re-signs and reloads when `app.inert.json` changes. Development keys are in `.gitignore`.
 
-## 11. Tarayıcı (`inert-browser`)
+## 11. Browser (`inert-browser`)
 
-### 11.1 Katmanlar
+### 11.1 Layers
 
-| Görev | Kullanılan |
+| Job | Used |
 |---|---|
-| Pencere, girdi, IME | `winit` (`eframe` üzerinden) |
+| Window, input, IME | `winit` (through `eframe`) |
 | GPU | `wgpu` |
-| 2B çizim, metin, layout | `egui` 0.37 (`vello` + `parley` + `taffy` yerine, §17) |
-| Erişilebilirlik | `accesskit` (egui'nin kendi entegrasyonu) |
-| Görsel decode | Bellek güvenli `png` ve `image-webp` |
-| Normal web | Servo 0.7 (ayrı süreç) ve WebKit (`wry`, WKWebView) |
+| 2D drawing, text, layout | `egui` 0.37 (instead of `vello` + `parley` + `taffy`, §17) |
+| Accessibility | `accesskit` (egui's own integration) |
+| Image decoding | Memory-safe `png` and `image-webp` |
+| Normal web | WebKit (`wry`, WKWebView) and Servo 0.7 (in its own process) |
 
-### 11.2 Süreç ve thread modeli
+### 11.2 Process and thread model
 
-- **Tarayıcı süreci:** `inert://` çekirdeği, renderer ve arayüz. Ağ ve protokol ayrı bir thread'de (`tokio`) çalışır, kanal üzerinden ana thread'e sadece doğrulanmış ekranlar iletilir. Çizim ve girdi ana thread'dedir. Servo bu sürece bağlanmaz, AI anahtarları ve pinler sadece buradadır.
-- **Servo süreci (`inert-servo-host`):** İlk Servo sekmesi açıldığında başlatılır. Tarayıcı, stdin'e JSON satırı komutlar yazar (oluştur, yükle, göster, boyutlandır, girdi, geri/ileri, zoom, script, Shield). Süreç stdout'a olaylar yazar (yükleme, URL, başlık, geçmiş, imleç, engellenen istek, `inert://` yönlendirmesi). Aktif sekmenin kareleri iki yuvalı, bellek eşlemli bir dosyaya yazılır. Tarayıcı dosyayı salt okunur eşler ve kareyi kopyalar. Süreç ölürse sekmeleri düşürülür ve en fazla üç kez yeniden başlatılır, sonra WebKit'e geçilir. Tarayıcı kapanınca stdin kapanır ve süreç kendiliğinden çıkar.
-- **WebKit süreçleri:** WKWebView kendi WebContent ve Networking süreçlerini macOS'un sandbox'ında açar.
+- **Browser process:** the `inert://` core, the renderer and the UI. Network and protocol run on their own thread (`tokio`); only verified screens reach the main thread, over a channel. Drawing and input are on the main thread. Servo isn't linked into this process; AI keys and pins live only here.
+- **Servo process (`inert-servo-host`):** started when the first Servo tab opens. The browser writes JSON-line commands to its stdin (create, load, show, resize, input, back/forward, zoom, script, Shield). The process writes events to stdout (load, URL, title, history, cursor, blocked request, `inert://` hand-off). The active tab's frames go to a two-slot memory-mapped file that the browser maps read-only and copies from. If the process dies its tabs are dropped and it restarts at most three times, then tabs fall back to WebKit. When the browser exits stdin closes and the process exits on its own.
+- **WebKit processes:** WKWebView runs its own WebContent and Networking processes in the macOS sandbox.
 
-### 11.3 Tarayıcı arayüzü
+### 11.3 Browser UI
 
-Adres çubuğu ve güven göstergesi aynı bileşen setiyle ve aynı renderer ile çizilir (Yön A dili, koyu). Gösterge durumları:
+The address bar and the trust indicator are drawn with the same renderer. Indicator states:
 
-| Durum | Gösterge |
+| State | Indicator |
 |---|---|
-| İmza ve pin geçerli | `● SECURED` + anahtar parmak izi (ilk ve son 4 karakter) |
-| Geliştirme modu | `● SECURED · DEV` |
-| Anahtar değişmiş | Tam ekran uyarı, sayfa çizilmez |
-| Protokol hatası | Hata ekranı + kod + "yeniden bağlan" |
+| Signature and pin valid | `● SECURED` + key fingerprint (first and last 4 characters) |
+| Development mode | `● SECURED · DEV` |
+| Key changed | Full-screen warning, the page isn't drawn |
+| Protocol error | Error screen + code + "reconnect" |
 
-`Link.href` başka bir `inert://` alanına gidiyorsa bir onay gösterilir. `https://` ve `http://` sayfaları `UNSECURED` (şifresiz bağlantıda `NOT ENCRYPTED`) rozetiyle açılır.
+If `Link.href` goes to another `inert://` domain, a confirmation shows. `https://` and `http://` pages open with an `UNSECURED` badge (`NOT ENCRYPTED` without TLS).
 
-**Motor seçimi:**
-1. Varsayılan motor Servo'dur (ayarlardan WebKit seçilebilir).
-2. Inbox grubundaki sekmeler, "Inbox sekmeleri WebKit kullansın" ayarı açıkken (varsayılan) WebKit ile açılır, çünkü Gmail ve WhatsApp Web Servo'da tam çalışmıyor.
-3. Her sayfa, site güvenliği panelinden diğer motorla yeniden açılabilir. Seçim sekme bazındadır.
-4. Servo süreci başlatılamazsa ya da tekrar tekrar çökerse sekmeler WebKit ile açılır.
-5. Servo'daki bir sayfa `inert://` linkine gittiğinde Servo gezinmeyi reddeder ve link güvenli motorda açılır.
+**Engine selection:**
+1. The default engine is WebKit (Servo can be chosen in Settings).
+2. Every page can be reopened in the other engine from the site security panel. The choice is per tab.
+3. If the Servo process can't start or keeps crashing, tabs open in WebKit.
+4. When a page in Servo follows an `inert://` link, Servo refuses the navigation and the link opens in the secured engine.
 
 ### 11.4 Renderer
 
-- Şablon + `Screen` verisi → `taffy` düğüm ağacı → layout → `vello` sahnesi.
-- Fontlar gömülüdür: Geist Serif, Sans, Mono ve Pixel (SIL OFL).
-- Sayılar dilimde yerelleştirme olmadan gösterilir: `int` olduğu gibi, `decimal` kendi `scale`'i kadar ondalık basamakla ve nokta ayırıcıyla.
-- Erişilebilirlik ağacı aynı düğüm ağacından üretilir. Her `Image`'ın `alt`'ı, her form alanının `label`'ı vardır.
-- Tarayıcı, gönderilmeden önce her `Action`'ı §7.3'e karşı kontrol eder ve hataları ilgili alanın altında gösterir.
+- Template + `Screen` data → node tree → layout → drawing.
+- Fonts are built in: Geist Serif, Sans, Mono and Pixel (SIL OFL).
+- Numbers aren't localized in the slice: `int` as is, `decimal` with as many decimal places as its `scale` and a dot separator.
+- The accessibility tree is built from the same node tree. Every `Image` has an `alt` and every form field a `label`.
+- The browser checks every `Action` against §7.3 before sending it and shows errors under the field.
 
-## 12. Sınırlar (başlangıç değerleri)
+## 12. Limits (starting values)
 
-| Sınır | Değer |
+| Limit | Value |
 |---|---|
-| Çerçeve boyutu: `welcome`, `asset` | 4 MiB |
-| Çerçeve boyutu: diğer mesajlar | 256 KiB |
-| CBOR iç içe geçme derinliği | 32 |
-| Şablon ağacı derinliği | 16 |
-| Ekran sayısı / aksiyon sayısı | 256 / 256 |
-| `string` için mutlak üst sınır | 4096 karakter |
-| `list` için mutlak üst sınır | 1000 öğe |
-| Görsel boyutu | 2 MiB, en fazla 4096 × 4096 ve 16 megapiksel |
-| El sıkışma zaman aşımı | 10 sn |
-| Tek mesaj okuma zaman aşımı | 30 sn |
-| Boşta bekleme zaman aşımı | 300 sn |
-| Oturumda hatırlanan `action.id` | son 1024 |
+| Frame size: `welcome`, `asset` | 4 MiB |
+| Frame size: other messages | 256 KiB |
+| CBOR nesting depth | 32 |
+| Template tree depth | 16 |
+| Screens / actions | 256 / 256 |
+| Absolute maximum for `string` | 4096 characters |
+| Absolute maximum for `list` | 1000 items |
+| Image size | 2 MiB, at most 4096 × 4096 and 16 megapixels |
+| Handshake timeout | 10 s |
+| Single message read timeout | 30 s |
+| Idle timeout | 300 s |
+| `action.id`s remembered per session | last 1024 |
 
-Manifest bu mutlak sınırların altında kendi sınırlarını belirleyebilir, üstüne çıkamaz.
+A manifest can set its own limits below these absolute ones, never above.
 
-## 13. Hata yönetimi
+## 13. Error handling
 
-### 13.1 Sınıflar
+### 13.1 Classes
 
-| Sınıf | Ne olur |
+| Class | What happens |
 |---|---|
-| **Ölümcül** (protokol ihlali) | `fatal` gönderilir, bağlantı kapanır, tarayıcı hata ekranı gösterir. Kısmi çizim yok. |
-| **Düzeltilebilir** (aksiyon hatası) | `result { ok: false, error }` döner. Tarayıcı hatayı ilgili alanın altında gösterir. |
-| **Güven** | Tam ekran uyarı. |
-| **Ağ** | "Yeniden bağlan". Aksiyonlar otomatik tekrarlanmaz. |
+| **Fatal** (protocol violation) | `fatal` is sent, the connection closes, the browser shows an error screen. No partial drawing. |
+| **Recoverable** (action error) | `result { ok: false, error }`. The browser shows the error under the field. |
+| **Trust** | Full-screen warning. |
+| **Network** | "Reconnect". Actions are never retried automatically. |
 
-### 13.2 Hata kodları
+### 13.2 Error codes
 
-| Kod | Ad | Sınıf |
+| Code | Name | Class |
 |---|---|---|
-| 1 | `unsupported_version` | ölümcül |
-| 2 | `frame_too_large` | ölümcül |
-| 3 | `malformed_cbor` | ölümcül |
-| 4 | `unknown_message` | ölümcül |
-| 5 | `bad_signature` | ölümcül |
-| 6 | `manifest_invalid` | ölümcül |
-| 7 | `screen_invalid` | ölümcül |
-| 8 | `asset_invalid` | ölümcül |
-| 9 | `timeout` | ölümcül |
-| 100 | `field_invalid` | düzeltilebilir |
-| 101 | `action_unknown` | düzeltilebilir |
-| 102 | `rejected` | düzeltilebilir (handler'ın iş kuralı reddi, ör. yetersiz bakiye) |
-| 103 | `internal` | düzeltilebilir |
+| 1 | `unsupported_version` | fatal |
+| 2 | `frame_too_large` | fatal |
+| 3 | `malformed_cbor` | fatal |
+| 4 | `unknown_message` | fatal |
+| 5 | `bad_signature` | fatal |
+| 6 | `manifest_invalid` | fatal |
+| 7 | `screen_invalid` | fatal |
+| 8 | `asset_invalid` | fatal |
+| 9 | `timeout` | fatal |
+| 100 | `field_invalid` | recoverable |
+| 101 | `action_unknown` | recoverable |
+| 102 | `rejected` | recoverable (a business rule in the handler, for example insufficient funds) |
+| 103 | `internal` | recoverable |
 
-## 14. Örnek uygulamalar
+## 14. Example apps
 
-| Uygulama | Ekranlar | Öne çıkan bileşenler |
+| App | Screens | Notable components |
 |---|---|---|
-| `bank` | Özet, Transfer, Ayarlar | `List` (işlemler), `Select` + `choice` (hesap), `Input` (tutar), `Toggle` (bildirim), `Image` (statik logo) |
-| `shop` | Katalog, Ürün, Sepet, Ödeme | `Image` (dinamik ürün görseli), `Select` + `enum` (beden), `Input` (adet), `Link` |
-| `notes` | Liste, Not | `Input` (başlık, metin), `Toggle` (tamamlandı), `Select` (kategori), `List` içinde `Button` + `args` (sil) |
+| `bank` | Overview, Transfer, Settings | `List` (transactions), `Select` + `choice` (account), `Input` (amount), `Toggle` (notifications), `Image` (static logo) |
+| `shop` | Catalog, Product, Cart, Checkout | `Image` (dynamic product image), `Select` + `enum` (size), `Input` (quantity), `Link` |
+| `notes` | List, Note | `Input` (title, text), `Toggle` (done), `Select` (category), `Button` + `args` inside a `List` (delete) |
 
-Tüm veriler sahte ve bellekte. Gerçek bir servise bağlantı yok. Ürün görselleri repoda üretilmiş yer tutucu görsellerdir.
+All data is fake and in memory. Nothing connects to a real service. Product images are placeholders generated in the repo.
 
-## 15. Test stratejisi
+## 15. Test strategy
 
-| Katman | Testler |
+| Layer | Tests |
 |---|---|
-| `inert-proto` | `proptest` ile encode/decode gidiş-dönüş testleri. Deterministik olmayan CBOR, tag, float, tekrarlanan anahtar ve fazladan alan içeren girdilerin reddedildiğini gösteren testler. `cargo-fuzz` hedefi: decoder. |
-| `inert-verify` | Her kural için unit testler. `cargo-fuzz` hedefleri: manifest doğrulama, `Screen` doğrulama, `Action` doğrulama. |
-| Uyumluluk vektörleri | `spec/vectors/` altında geçerli ve geçersiz `manifest`, `screen` ve `action` örnekleri, her biri beklenen sonuç ve hata koduyla. Dilden bağımsızdır. |
-| `inert-transport` | Localhost'ta gerçek TLS ile entegrasyon testleri, zaman aşımları dahil. |
-| Uçtan uca | Ekransız bir test istemcisi (`inert-proto` + `inert-verify` + `inert-transport`) üç örneği de sürer. |
-| `inert-browser` | Her bileşen için ekran dışı çizim + referans PNG karşılaştırması. Erişilebilirlik ağacı snapshot'ı. |
+| `inert-proto` | `proptest` encode/decode round trips. Tests that non-deterministic CBOR, tags, floats, repeated keys and extra fields are rejected. `cargo-fuzz` target: the decoder. |
+| `inert-verify` | Unit tests for every rule. `cargo-fuzz` targets: manifest, `Screen` and `Action` verification. |
+| Conformance vectors | Valid and invalid `manifest`, `screen` and `action` samples under `spec/vectors/`, each with its expected result and error code. Language-independent. |
+| `inert-transport` | Integration tests over real TLS on localhost, timeouts included. |
+| End to end | A headless test client (`inert-proto` + `inert-verify` + `inert-transport`) drives all three examples. |
+| `inert-browser` | A UI driver that injects mouse and keyboard events into the real browser (`drive.rs`). |
 
-### 15.1 Saldırı senaryoları (her biri otomatik test)
+### 15.1 Attack scenarios (each an automated test)
 
-1. Sunucu, şablonda olmayan bir şifre alanı içeren bir `Screen` gönderiyor → `screen_invalid`.
-2. `Screen` verisinde fazladan bir anahtar var → `screen_invalid`.
-3. Manifest'in tek bir baytı değiştirilmiş → `bad_signature`.
-4. Sunucu farklı bir anahtarla imzalanmış manifest sunuyor → güven uyarısı, sayfa çizilmez.
-5. Daha eski sürümlü bir manifest sunuluyor → reddedilir.
-6. Düşük kontrastlı token'lar → `inert-sign build` başarısız olur.
-7. Sınırı aşan ya da hash'i tutmayan görsel → `asset_invalid`.
-8. Aynı `action.id` iki kez gönderiliyor → handler bir kez çalışır.
-9. `choice` alanına ekranda olmayan bir hesap id'si yazılıyor → `field_invalid`.
-10. Sınırı aşan çerçeve → `frame_too_large`, gövde okunmaz.
+1. The server sends a `Screen` with a password field that isn't in the template → `screen_invalid`.
+2. The `Screen` data has an extra key → `screen_invalid`.
+3. One byte of the manifest is changed → `bad_signature`.
+4. The server presents a manifest signed with a different key → trust warning, nothing drawn.
+5. A manifest with an older version → rejected.
+6. Low-contrast tokens → `inert-sign build` fails.
+7. An image over the limits or with a wrong hash → `asset_invalid`.
+8. The same `action.id` sent twice → the handler runs once.
+9. A `choice` field set to an account id not on the screen → `field_invalid`.
+10. A frame over the limit → `frame_too_large`, the body isn't read.
 
-## 16. Başarı kriterleri
+## 16. Success criteria
 
-- `inert dev` ile çalışan üç örnek uygulama, `inert-browser` ile macOS'ta açılıyor ve tüm ekran akışları çalışıyor.
-- §15.1'deki on saldırı senaryosunun hepsi geçiyor.
-- Her fuzz hedefi yerelde 30 dakika çöküş olmadan çalışıyor.
-- `inert-proto` ve `inert-verify` `unsafe` kod içermiyor ve I/O bağımlılığı yok.
-- Banka örneği açıkken tarayıcının bellek kullanımı ölçülüp raporlanıyor. Hedef **tarayıcı süreci** için 150 MB'ın altı. Normal web motorlarının süreçleri (Servo süreci, WebKit süreçleri) ayrı ölçülür ve raporlanır. Bu hedef bir kabul şartı değil, ilk ölçüm (sonuçlar §18'de).
+- The three example apps, run with `inert dev`, open in `inert-browser` on macOS and every screen flow works.
+- All ten attack scenarios of §15.1 pass.
+- Every fuzz target runs locally for 30 minutes without a crash.
+- `inert-proto` and `inert-verify` contain no `unsafe` code and have no I/O dependencies.
+- The browser's memory with the bank example open is measured and reported. The target for the **browser process** is under 150 MB. The normal web engines' processes (Servo, WebKit) are measured and reported separately. This target is a first measurement, not an acceptance condition (results in §18).
 
-## 17. Plan aşamasında netleşecek noktalar
+## 17. Open points for planning
 
-- ~~`vello` ile `parley`'in mevcut sürümlerinin dilim için yeterli olup olmadığı.~~ Karar: `egui` (§11.1).
-- CBOR crate'inin seçimi (`minicbor` ya da benzeri) ve katı mod için ne kadar özel kod gerekeceği.
-- WebP decode için bellek güvenli bir crate'in olgunluğu. Yetersizse dilimde sadece PNG.
+- ~~Whether current `vello` and `parley` are enough for the slice.~~ Decision: `egui` (§11.1).
+- The CBOR crate (`minicbor` or similar) and how much custom code strict mode needs.
+- Maturity of a memory-safe WebP decoder. If not enough, PNG only in the slice.
 
 ---
 
-## 18. Uygulama notları (2026-11-07, ilk implementasyon)
+## 18. Implementation notes
 
-Spec'ten bilinçli sapmalar ve eklemeler. Her biri kodda tek bir sınırın arkasında duruyor, geri dönmek mümkün.
+Deliberate departures from the spec and additions. Each sits behind a single boundary in the code and can be reverted.
 
-**Protokol eklemeleri (geriye uyumlu küçük alanlar):**
-- `Manifest.name`: tarayıcıda gösterilen uygulama adı.
-- `ScreenDef.title`: sekme başlığı ve erişilebilirlik için ekran adı.
-- `Input` / `Select` / `Toggle` üzerinde isteğe bağlı `init`: form alanının başlangıç değeri (literal ya da üst seviye bir slot'a bind). Verifier, `init`'in alan tipine uyduğunu kontrol eder.
-- Dev trust dosyası (`~/Library/Application Support/Inert/dev-trust/<host>.toml`) TLS dev CA'sını, manifest anahtarını ve bağlanılacak adresi birlikte taşır.
+**Protocol additions (small, backward-compatible fields):**
+- `Manifest.name`: the app name shown in the browser.
+- `ScreenDef.title`: the screen name for the tab title and accessibility.
+- Optional `init` on `Input` / `Select` / `Toggle`: the form field's initial value (a literal, or a bind to a top-level slot). The verifier checks that `init` fits the field type.
+- The dev trust file (`~/Library/Application Support/Inert/dev-trust/<host>.toml`) carries the TLS dev CA, the manifest key and the address to dial together.
 
-**Crate yapısı:** `inert-client` adında altıncı bir crate eklendi. Tarayıcı ile ekransız test istemcisi aynı oturum kodunu (pin, imza, şablon kontrolü, asset hash kontrolü) paylaşıyor.
+**Crate layout:** a sixth crate, `inert-client`. The browser and the headless test client share the same session code (pin, signature, template checks, asset hash checks).
 
-**Hata davranışı:** Geçersiz bir `open` mesajı sunucuda `fatal screen_invalid` ile, ekran handler'ının hatası `fatal internal` ile sonlanır. Sunucu, şablona uymayan bir ekranı göndermeden önce kendisi yakalar ve `internal` döner.
+**Error behavior:** an invalid `open` ends with `fatal screen_invalid` on the server, a failing screen handler with `fatal internal`. The server catches a screen that doesn't fit its template before sending it and returns `internal`.
 
-**Tarayıcı çizim katmanı:** §11.1'deki `vello` + `parley` + `taffy` yerine `egui` + `eframe` (wgpu) kullanıldı (§17'nin izin verdiği alternatif). Erişilebilirlik (AccessKit), IME, metin düzenleme ve ekran okuyucu desteği kutudan çıkıyor. Tarayıcının kendi arayüzü ve `inert://` renderer'ı aynı katmanla çiziliyor.
+**Drawing layer:** `egui` + `eframe` (wgpu) instead of `vello` + `parley` + `taffy` (§17 allowed it). Accessibility (AccessKit), IME, text editing and screen reader support come built in. The browser's own UI and the `inert://` renderer are drawn with the same layer.
 
-**Normal web motoru (güncellendi, 2026-11-07 sabah): Servo varsayılan, WebKit seçenek.** Servo 0.7, `inert-servo-host` adında ayrı bir süreçte çalışıyor (§11.2). `SoftwareRenderingContext` ile ekran dışında çiziyor, kareler paylaşılan bellekten egui'de doku olarak gösteriliyor. Fare, tekerlek ve klavye girdisi Servo'ya iletiliyor. `inert://` linkleri Servo'dan güvenli motora devrediliyor. Inbox grubundaki sekmeler (Gmail, WhatsApp) uyumluluk için varsayılan olarak WebKit (WKWebView) ile açılıyor; bu bir ayar. Her web sayfası, site güvenliği panelinden diğer motorla yeniden açılabilir. Shield, Servo sekmelerinde Brave'in `adblock` motoruyla istekleri yakalayıp engelliyor; WebKit sekmelerinde WebKit'in kendi içerik engelleyicisi kullanılıyor.
+**Normal web engine:** WebKit (WKWebView) by default since 2026-11-11 (§18.4); Servo 0.7 runs in its own process, `inert-servo-host` (§11.2). Servo draws offscreen with `SoftwareRenderingContext` and its frames are shown in egui as a texture from shared memory. Mouse, wheel and keyboard input are forwarded to it; `inert://` links are handed from Servo to the secured engine. Every web page can be reopened in the other engine from the site security panel. Shield blocks requests with Brave's `adblock` engine in Servo tabs and uses WebKit's own content blocker in WebKit tabs.
 
-**epaint yaması (kaldırıldı):** Servo tarayıcıya gömülüyken `vello_cpu`'nun çok iş parçacıklı özelliği Cargo'nun özellik birleştirmesiyle egui'ye de geçiyor ve glif rasterleştirmesini çökertiyordu. Geçici olarak `vendor/epaint` yaması kullanıldı. Servo ayrı bir süreç ve ayrı bir workspace'e taşınınca bağımlılık ağaçları ayrıldı ve yama silindi.
+**epaint patch (removed):** with Servo linked into the browser, `vello_cpu`'s multithreading feature leaked into egui through Cargo feature unification and crashed glyph rasterization. A temporary `vendor/epaint` patch was used. Moving Servo into its own process and workspace separated the dependency trees and the patch was deleted.
 
-**Giriş:** "Sign in with Claude / GPT" ekranı sadece sağlayıcıyı soruyor. Üçüncü taraf uygulamalar için bu sağlayıcıların OAuth girişi kullanılmadığı için anahtar bir API key olarak alınıyor ve macOS Keychain'de saklanıyor. Anahtar atlanabilir.
+**Sign-in:** "Sign in with Claude / GPT" only asks for the provider. Those providers don't offer OAuth sign-in to third-party apps, so the model is reached with an API key, stored in the macOS Keychain. The key can be skipped.
 
-**VPN:** Mullvad uygulamasının kendi WireGuard tüneli, resmi `mullvad` CLI'ı üzerinden yönetiliyor. Tünel tarayıcıya değil, bütün Mac'e uygulanıyor ve arayüzde de bu şekilde anlatılıyor. Hesap numarası hiçbir zaman arayüze okunmuyor.
+**VPN:** the Mullvad app's own WireGuard tunnel, controlled through the official `mullvad` CLI. The tunnel applies to the whole Mac, not just the browser, and the UI says so. The account number is never read back into the UI.
 
-**Reklam engelleme:** EasyList ve EasyPrivacy, Brave'in `adblock` crate'i ile WebKit content-blocker kurallarına çevriliyor (yaklaşık 131 bin kural), WebKit'te bir kez derleniyor ve sonraki açılışlarda önbellekten kullanılıyor.
+**Ad blocking:** filter lists are converted to WebKit content-blocker rules with Brave's `adblock` crate, compiled in WebKit once and reused from the cache on later launches.
 
-**Ölçümler (release, macOS, 2026-11-07 sabah, Servo ayrı süreçte):**
+**Measurements (release, macOS, Servo in its own process):**
 
-Ana ölçü fiziksel ayak izi (`footprint`), yani Activity Monitor'daki "Bellek". RSS ayrıca veriliyor, çünkü macOS'un paylaşılan framework sayfalarını da sayıyor. `scripts/ui-test.sh` 49 kontrolü koşarken iki süreci de sürekli örnekliyor (`docs/test-results/memory-ui-driver.csv`).
+The main figure is the physical footprint (`footprint`), the "Memory" column in Activity Monitor. RSS is given too, since macOS counts shared framework pages in it. `scripts/ui-test.sh` samples both processes continuously while it runs.
 
-| Durum | Medyan | En fazla |
+| State | Median | Max |
 |---|---|---|
-| **Sadece banka açık**, pencere sürekli çiziliyor, 30 sn (`scripts/memory-bank.sh`, §16 kriteri) | **73–74 MB** | **74 MB** |
-| 49 kontrollük UI turu, tarayıcı süreci, ayak izi (4 koşu) | **80–95 MB** | **98–105 MB** |
-| Tarayıcı süreci, RSS | 126 MB | 140 MB |
-| Servo süreci, ayak izi | 131 MB | 177 MB |
-| Tarayıcı, testin ekran görüntüleri açıkken (`SHOTS=1`) | 139 MB | 160 MB |
+| **Only the bank open**, window redrawn continuously, 30 s (`scripts/memory-bank.sh`, §16) | **73–74 MB** | **74 MB** |
+| UI driver run, browser process, footprint | **80–95 MB** | **98–105 MB** |
+| Browser process, RSS | 126 MB | 140 MB |
+| Servo process, footprint | 131 MB | 177 MB |
+| Browser with the test's screenshots on (`SHOTS=1`) | 139 MB | 160 MB |
 
-- §16: Tarayıcı süreci tüm tur boyunca 150 MB hedefinin altında. Normal web motorunun belleği kendi sürecinde.
-- Binary: `inert-browser` 19 MB, `inert-servo-host` 95 MB.
-- **Nereden geldi:** İlk ölçümde tarayıcı tur boyunca medyan 187 MB'tı. Üç neden vardı:
-  1. Servo aynı süreçteydi. Ayrı sürece taşındı.
-  2. macOS'un bellek ayırıcısı, serbest bırakılan büyük blokları (sayfa kareleri, çözülen görseller) kendi önbelleğinde kirli tutuyordu. Bu yaklaşık 40 MB ediyordu. Önbellek sadece süreç başlarken kapatılabildiği için tarayıcı ilk açılışta `MallocLargeCache=0` ile kendini bir kez yeniden çalıştırıyor (aynı PID, birkaç ms). Servo süreci ayarı devralıyor.
-  3. Testin uygulama içi ekran görüntüleri, egui-wgpu'nun yakalama dokusu ve okuma tamponlarıyla yaklaşık 36 MB GPU belleği tutuyordu. Bu testin kendi yükü, tarayıcıya ait değil. Ekran görüntüleri artık isteğe bağlı (`SHOTS=1`).
-- **Geçersiz ölçüm, değiştirildi:** Önceki "banka açıkken 70 MB" ölçümü ekran kilitliyken yapıldı. Ekran kilitliyken normal açılan bir pencere hiç çizilmiyor (10 saniyede 0 kare), yani o ölçüm çizim belleğini içermiyordu. Yeni banka ölçümü UI sürücüsüyle yapılıyor. Sürücü pencereyi saniyede yaklaşık 33 kez çizdiriyor, kare sayacı da bunu doğruluyor: 30 saniyelik beklemede 1563'ten 2427'ye çıktı.
-- Önceki ölçüm (Servo tarayıcıya gömülüyken, RSS): tur boyunca medyan 167, en fazla 281 MB, binary 108 MB.
-- **Çökme izolasyonu:** Servo süreci `kill -9` ile öldürüldüğünde tarayıcı açık kalıyor, Servo sekmeleri düşüyor ve yeni bir Servo süreci başlıyor (elle denendi, 2026-11-07).
+- §16: the browser process stays under the 150 MB target through the whole run. The normal web engine's memory is in its own process.
+- **Where it came from:** in the first measurement the browser's median was 187 MB. Three causes:
+  1. Servo was in the same process. It moved out.
+  2. The macOS allocator kept large freed blocks (page frames, decoded images) dirty in its own cache, about 40 MB. That cache can only be turned off at process start, so the browser re-executes itself once with `MallocLargeCache=0` on first launch (same PID, a few ms). The Servo process inherits the setting.
+  3. The test's in-app screenshots held about 36 MB of GPU memory in egui-wgpu's capture texture and readback buffers. That's the test's own overhead; screenshots are now optional (`SHOTS=1`).
+- An earlier "70 MB with the bank open" figure was invalid: it was taken with the screen locked, when a normally opened window isn't drawn at all. The bank measurement now runs under the UI driver, which redraws about 33 times a second.
+- **Crash isolation:** when the Servo process is killed with `kill -9`, the browser stays open, Servo tabs drop and a new Servo process starts.
 
-**Tasarım kontrolü (Yön A):** `theme.rs` token'ları Claude Design'daki Yön A dosyasıyla birebir aynı:
-- Zemin #000000, metin #EDEDED, başlık #FFFFFF, ikincil #9A9A9A ve #8A8A8A.
-- Çizgiler #222222 ve #3A3A3A. Vurgular #B48CFF, #7F9CFF, #B9C6FF.
-- Etiketler Geist Mono, büyük harf, geniş harf aralığı. Köşeler 2 px.
+**UI tests:** `crates/inert-browser/src/drive.rs` injects real mouse and keyboard events into egui's input (`App::raw_input_hook`), covering sign-in, omnibox completion, bank transfers (including an over-limit amount), the shop cart, notes, bookmarks, tab groups, the context menu, shortcuts, clicking and typing in Servo, switching engines, VPN, Shield, the assistant, history and more.
 
-Eklenenler:
-- Yükseltilmiş yüzeyler: #080808, #101010, #181818.
-- Durum renkleri ve grup renkleri.
+**Fuzzing:** four targets (`cbor_decode`, `message_decode`, `manifest_verify`, `screen_action_verify`) ran in parallel for 30 minutes each (§16): about 213 million inputs, no crashes or artifacts.
 
-`scripts/design-check.py` ekran görüntülerinin piksellerini bu palete karşı sayıyor. Tarayıcı arayüzündeki düz renklerin %85–99'u paletten. Gerisi grup renklerinin soluk tonları ve dither çizimi (`docs/test-results/design-check.json`).
+### 18.1 Chrome-style browser features (2026-11-07)
 
-**UI testleri:** `crates/inert-browser/src/drive.rs`, egui'nin girdi akışına gerçek fare ve klavye olayları enjekte ediyor (`App::raw_input_hook`). 49 kontrol var: giriş, omnibox tamamlama, banka transferi (limit dışı tutar dahil), mağaza sepeti, not ekleme ve kaydetme, yer imleri, sekme grupları, sağ tık menüsü, kısayollar, Servo'da tıklama ve yazma, motor değiştirme, Inbox'ın WebKit'te açılması, VPN, Shield, asistan, geçmiş. Hepsi geçiyor (`docs/test-results/ui-driver.json`), Servo ayrı süreçteyken tekrar koşuldu. Bu testler 4 gerçek hata buldu ve düzeltildi.
-
-**Fuzzing (2026-11-07):** Dört hedef (`cbor_decode`, `message_decode`, `manifest_verify`, `screen_action_verify`) paralel olarak her biri 30 dakika çalıştı (§16). Toplam yaklaşık 213 milyon girdi denendi, hiç çökme ya da artifact yok. İlk 10 dakikalık koşu (78 milyon girdi) da temizdi.
-
-### 18.1 Sabah turu (2026-11-07)
-
-Kullanıcının dokuz maddelik listesi. Her madde UI sürücüsünde bir kontrolle doğrulanıyor (71/71, `docs/test-results/ui-driver.json`).
-
-| # | İstek | Ne yapıldı |
+| # | Feature | What was done |
 |---|---|---|
-| 1 | Sekme ve arama çubuğu yayvan, animasyon, Chrome gibi | Sekmeler 36 px, Chrome'un şekli (yuvarlak üst köşe, alt kıvrımlar, aktif sekme araç çubuğuna akıyor). Yeni sekme genişleyerek açılıyor, kapanan sekme yerinde daralıyor, hover ve genişlik değişimleri yumuşak. Omnibox hap biçiminde, odakta vurgu halkası. Açılır liste ve paneller kayarak ve solarak açılıyor. |
-| 2 | Linkler adres çubuğunda ortada değil, üstte | Metin alanı tam bir satır yüksekliğinde ve iç boşluksuz, hapın tam ortasında. Odak dışında host beyaz, gerisi soluk. |
-| 3 | Grup açılıp kapanırken efekt, daha yuvarlak | Grubun sekmeleri 0,24 sn'de açılıp kapanıyor. Etiket hap biçiminde, kapalıyken dolu (Chrome gibi). Genel köşe yarıçapları 8 (bileşen), 12 (menü), 14 (panel). |
-| 4 | Yeni sekme arama kutusu üstteki bara yazıyor | Kutu artık gerçek bir alan: kendi satır içi tamamlaması, kendi önerileri, ok tuşları ve Enter. Üstteki bar dokunulmadan kalıyor. |
-| 5 | DuckDuckGo varsayılan karanlık | Arama ve duckduckgo.com adresleri `kae=d` ile açılıyor. Pencere koyu, WebKit sayfaları `prefers-color-scheme: dark` görüyor, Servo görünümlerine `Theme::Dark` bildiriliyor. |
-| 6 | Geçmiş | Her ziyaret kaydediliyor (en fazla 20 000). Gün gün kartlar, saatler, arama, satır silme, "Recently closed", zaman aralıklı "Clear browsing data" (isteğe bağlı çerezlerle). |
-| 7 | Çerez yönetimi eklentisi | Yerleşik "Cookies" eklentisi. Bulunulan sitenin çerezleri (değerler gösterilmez), tek tek veya site bazında silme, "bu sitede çerez tutma" listesi, çerez bantlarını otomatik reddetme (OneTrust, Cookiebot, Didomi, … ve metinden "Reject all / Only necessary"). WebKit'te `WKHTTPCookieStore`, Servo'da yardımcı süreçteki `SiteDataManager`. Ayarlarda tüm siteler. |
-| 8 | Mullvad: başlıktaki tik, çıkış, kurulum | Simge etiketle aynı satırda. Kurulum adımları, sadece hesap numarasıyla giriş (16 hane kontrolü, numara arayüzde ve profilde tutulmuyor), onaylı çıkış. Kullanıcının isteğiyle gerçek hesaptan çıkış yapıldı, panel gerçek "Sign in to Mullvad" durumunu gösteriyor. Kurulum ekranı gerçek modda (demo değil), gerçek algılama koduyla da gösterildi: `INERT_MULLVAD_BIN` var olmayan bir yolu gösterince tarayıcı Mullvad'ı kurulu saymıyor (`docs/screenshots/43`); Mullvad kaldırılmadı. Kurulum akışının dört adımı `docs/screenshots/37…40` (`INERT_DRIVE_SCENARIO=vpn`, `INERT_DEMO_VPN=not-installed` / `logged-out`). |
-| 9 | Chrome'dan geçişte yer imleri, hesaplar, alışkanlıklar | Girişten sonra 2. adım (atlanabilir) ve `about:import`. Chrome, Brave, Edge, Arc, Vivaldi, Chromium profilleri bulunuyor. Yer imleri, geçmiş ve ziyaretler, kayıtlı şifreler (macOS Keychain'e, adres çubuğundaki anahtarla doldurma), çerezler (oturumlar açık kalıyor), arama motoru, yer imi çubuğu, açılış sayfaları. SQLite dosyaları kopyalanıp sistemin `sqlite3` aracıyla ayrı süreçte okunuyor. Şifre ve çerez anahtarı "Chrome Safe Storage"; macOS önce kullanıcıya soruyor. |
+| 1 | Tabs and address bar | Chrome-shaped tabs with grow and shrink animations; a pill omnibox with a focus ring; dropdowns and panels slide and fade in. |
+| 2 | Address bar text | The text field is one line tall and centered in the pill. Out of focus the host is white and the rest dimmed. |
+| 3 | Tab groups | A group's tabs open and close in 0.24 s. Pill labels, filled when collapsed. |
+| 4 | New tab search box | A real field with its own inline completion, suggestions, arrow keys and Enter. The address bar is left alone. |
+| 5 | Dark DuckDuckGo | Searches and duckduckgo.com open with `kae=d`. WebKit pages see `prefers-color-scheme: dark`; Servo views are told `Theme::Dark`. |
+| 6 | History | Every visit is recorded (up to 20,000). Day cards, times, search, row deletion, "Recently closed", "Clear browsing data" by time range (optionally with cookies). |
+| 7 | Cookies extension | A built-in "Cookies" extension: the current site's cookies (values never shown), deletion one by one or per site, a "keep no cookies for this site" list, automatic rejection of cookie banners (OneTrust, Cookiebot, Didomi… and "Reject all / Only necessary" by text). `WKHTTPCookieStore` in WebKit, `SiteDataManager` in the Servo process. |
+| 8 | Mullvad | Setup steps, sign-in with just the account number (16 digits checked, the number is kept neither in the UI nor in the profile), confirmed sign-out. |
+| 9 | Moving from Chrome | Step 2 of the first run (skippable) and `about:import`. Finds Chrome, Brave, Edge, Arc, Vivaldi, Chromium and Dia profiles. Bookmarks, history and visits, saved passwords (into the macOS Keychain, filled from the key in the address bar), cookies (sessions stay signed in), search engine, bookmarks bar, startup pages. SQLite files are copied and read by the system's `sqlite3` in a separate process. The password and cookie key is "Chrome Safe Storage"; macOS asks the user first. |
 
-- Bu Mac'te Chrome kurulu değil. İçe aktarıcı, Chrome'un dosya biçimlerinde (aynı tablolar, aynı `v10` şifreleme, sürüm 24 çerez öneki) sahte bir profille test ediliyor (`import.rs` birim testi ve demo profili). Gerçek bir Chrome profiliyle denenmedi. Çerez sorgusu bu Mac'teki beş gerçek Chromium çerez veritabanında (VS Code, Obsidian, Linear, Arduino IDE, Logi Options+; şema sürümleri 24 ve 21) `LIMIT 0` ile koşuldu ve geçti, hiçbir değer okunmadı (`import::tests::real_chromium_cookie_schema`, `INERT_REAL_COOKIES` ile, varsayılan olarak kapalı). **Gerçek Chrome ile:** Kurulu Google Chrome 156, geçici bir profil ve `--use-mock-keychain` ile çalıştırıldı (kullanıcının Keychain'i ve verisi kullanılmadı). Chrome kendisi iki sayfa ziyaretini, bir çerezi, `chrome://bookmarks` üzerinden bir yer imini ve `chrome://password-manager` üzerinden bir şifreyi yazdı. İçe aktarıcı hepsini aldı: yer imi, geçmiş (ziyaret sayılarıyla), 3 ziyaret, şifre ve çerez (çözülmüş, sürüm 24 öneki atılmış). Yanlış anahtarla şifre ve çerez çıkmıyor. Aynı profil tarayıcının giriş ekranından da içe aktarıldı (7/7). Tekrar: `scripts/real-chrome-import.sh`. Kullanıcının kendi Chrome profiliyle (gerçek Keychain izni dahil) henüz denenmedi.
-- Mullvad girişi gerçek bir hesapla denenmedi (numara kullanıcıda). Çıkış ve oturum kapalı durumun okunması gerçek CLI ile doğrulandı.
-- Bellek, 71 kontrollük turda: tarayıcı medyan 97 MB, en fazla 109 MB; Servo süreci medyan 56 MB, en fazla 185 MB.
+The importer was tested end to end against a real Chrome run with a throwaway profile and `--use-mock-keychain` (`scripts/real-chrome-import.sh`): Chrome itself wrote visits, a cookie, a bookmark and a password, and the importer read them all back. With a wrong key, no passwords or cookies come out.
 
-### 18.2 Glyph arayüzü (2026-11-10)
+### 18.2 Glyph interface (2026-11-10)
 
-Tarayıcı arayüzü baştan tasarlandı. Kaynaklar: glyphblue (ana tema), Dia ve Facet (düzen, butonlar, hareket).
+The browser UI was redesigned, drawing on glyphblue (main theme), Dia and Facet (layout, buttons, motion).
 
-| Parça | Karar |
+| Part | Decision |
 |---|---|
-| Çerçeve | Pencerenin tamamı kobalt mavi (`#1F4DFF`). Üzerinde Geist Mono ile çizilen ASCII glif haritası; imlecin altında yükselir ve harfleri değişir. Doku tutulmaz, satırlar metin olarak çizilir (`art.rs`). |
-| Sekmeler | Sol kenar çubuğu (252 pt). Sabitlenen sekmeler cam karolar, gruplar renkli çipli klasör satırları, sekmeler satır. Cmd+S ile gizlenir. Altta VPN hapı, geçmiş, ayarlar, asistan. |
-| Sayfa | İçe gömülü, 14 pt yuvarlak koyu kart (`#090B12`). WebKit görünümleri katman yarıçapıyla, egui içeriği köşe maskeleriyle yuvarlanır. |
-| Adres çubuğu | Mavi çerçevede lacivert cam hap, ortalanmış. Sayfa yüklenirken alt kenarında ışık gezer. |
-| Butonlar | Düz yazılı, hap biçimli (`theme::cta`). Mono büyük harf yalnızca küçük etiketlerde. |
-| Yeni sekme | Glif kartı (kahraman) ve altına taşan arama kutusu: alan, arama motoru çipi, gönder düğmesi. |
-| Giriş | Tüm pencere glif kartı. Yazı gerektiren adımlar koyu panelde. |
-| Hareket | Üzerine gelme ve basma geçişleri, sekme satırlarının açılıp katlanması, grup oku dönüşü, kenar çubuğu kayması, açılır panellerde belirme ve kayma, sekme değişiminde sayfa belirmesi. |
-| macOS | Trafik ışıkları araç çubuğu hizasına taşınır (`web::mac::traffic_lights`). |
+| Frame | The whole window is cobalt blue (`#1F4DFF`), with an ASCII glyph map drawn in Geist Mono; it rises and changes letters under the pointer. No textures: rows are drawn as text (`art.rs`). |
+| Tabs | A left sidebar. Pinned tabs are glass tiles, groups folder rows with colored chips, tabs rows. Cmd+S hides it. VPN pill, history, settings and the assistant at the bottom. |
+| Page | An inset dark card with rounded corners (`#090B12`). WebKit views are rounded with a layer radius, egui content with corner masks. |
+| Address bar | A dark glass pill on the blue frame. A light runs along its bottom edge while a page loads. |
+| Buttons | Plain-text pills (`theme::cta`). Mono capitals only for small labels. |
+| New tab | A glyph card (hero) with the search box overlapping its bottom: field, search engine chip, send button. |
+| Sign-in | The whole window is the glyph card; steps that need typing sit in a dark panel. |
+| Motion | Hover and press transitions, tab rows opening and folding, group arrow rotation, the sidebar sliding, panels fading and sliding in, the page fading in on tab change. |
+| macOS | The traffic lights are moved to the toolbar's line (`web::mac::traffic_lights`). |
 
-Notlar:
-- Kenar çubuğu satırları sabit kimlik taşır. Otomatik kimlikler, üstteki satırlar katlanınca kayıyor ve açık sağ tık menüsünü başka sekmeye bağlıyordu.
-- Yukarı açılan panel (VPN) içeriği değişince aynı kare yeniden yerleştirilir (`request_discard`), panel zıplamaz.
-- Demo siteleri yeni dile uyduruldu (yarıçap 14, sans başlıklar); her site kendi vurgu rengini korur.
-- Bellek: yalnız banka açıkken ayak izi 134 MB ölçüldü (önceki sürüm aynı ekranda 60 MB). Glif haritası bunun ~4 MB'ı; kalan artışın nedeni bulunmadı. Açık iş.
-- Doğrulama: son tam UI turu 68/75 (kalan 7 hata VPN çıkış adımı ve ona bağlı adımlar; düzeltmesi yazıldı, tam turla doğrulanmadı). `scripts/design-check.py` hâlâ Yön A paletini sayıyor, güncellenmedi.
-- Ekran görüntüleri: `docs/screenshots/44…49`.
+- Sidebar rows carry stable ids. Automatic ids shifted when rows above folded and bound an open context menu to the wrong tab.
+- A panel that opens upward (VPN) is laid out again in the same frame when its content changes (`request_discard`), so it never jumps.
 
-### 18.3 Kurulum, asistan ve sayfa araçları (2026-11-11)
+### 18.3 Setup, assistant and page tools (2026-11-11)
 
-| Parça | Karar |
+| Part | Decision |
 |---|---|
-| Kurulum | Üç adım, ilerleme çubuğuyla: görünüm (Mavi/Koyu, renk, sekmeler kenarda ya da üstte) → model (API key) → Chrome'dan aktarım. Şifreler okunurken "Unlock your data" bekleme ekranı. |
-| Görünüm | `Settings.dark`, `accent` (8 renk, `theme::ACCENTS`), `tabs_top`. Koyu görünümde çerçeve siyaha yakın, glifler seçilen renkte. |
-| Logo | Halka içinde ortalanmış I, marka mavisi üzerinde beyaz glifler. Uygulama simgesini tarayıcı kendisi üretir (`--write-icon`). `scripts/bundle.sh` Inert.app'i kurar. |
-| Modeller | Varsayılan `claude-sonnet-5-5` ve `gpt-6.1-sol`. Giriş API key ile: Anthropic üçüncü taraf uygulamalara claude.ai girişi ya da abonelik limiti sunma izni vermiyor. |
-| Chrome aktarımı | `Bookmarks` ve `AccountBookmarks` birlikte okunur; site simgeleri Chrome'un `Favicons` veritabanından gelir. macOS veri klasörünü koruyorsa Tam Disk Erişimi adımları gösterilir. Yalnız-host çerezleri Domain özniteliği olmadan yazılır (aksi `__Host-` çerezlerini düşürüyor, GitHub yarım oturum görüyordu). |
-| Site simgeleri | `favicon.rs`: host başına PNG, profil klasöründe. Kaynak: Chrome önbelleği ve ziyaret sonrası indirme. Yer imleri kendi başına ağ isteği başlatmaz. |
-| Sayfa menüsü | Servo'nun bağlam menüsü tarayıcıda çizilir: kopyala, kes, yapıştır, tümünü seç, bağlantı ve görsel satırları, sayfayı çevir (Google Translate), WebKit ile incele, asistana ekle. Cmd+C/V/X/A/Z kendi Edit menü öğelerimizle egui alanlarına, Servo'ya ve WebKit'e yönlenir. |
-| Asistan | Yanıtlar Markdown olarak çizilir (`md.rs`). Panel kenarda, sayfanın üstünde yüzer ya da kendi sekmesinde (`about:chat`). Kırpma aracı sayfadan seçilen bölgeyi görsel olarak, "Attach to assistant" seçili metni ekler; ikisi de modele veri olarak gider. Yeni sekmede açık sekmeler ve son sayfalar (yalnız başlık ve adres) bağlam olur. Alt+Enter adres çubuğundaki metni asistana sorar. |
-| Shield | uBlock Origin'in varsayılan listeleri: EasyList, EasyPrivacy ve uBlock filtreleri. WebKit tek kural listesinde 140 bin kuralla sınırlı; Servo tarafı tümünü kullanır. |
-| Bas-konuş | Option+Space basılıyken `inert-dictate` (Swift, Apple Speech; dil destekliyorsa cihaz üzerinde) dinler, bırakınca metin klavyenin olduğu yere yazılır. |
+| Setup | Steps with a progress bar: model (API key) → look (Blue/Dark, color, sidebar) → permissions and import. An "Unlock your data" screen while passwords are read. |
+| Look | `Settings.dark`, `accent` (8 colors, `theme::ACCENTS`). In the dark look the frame is near black and the glyphs take the chosen color. |
+| Logo | "Held caret": a text caret held still between two brackets. The browser draws the app icon itself (`--write-icon`); `scripts/bundle.sh` builds Inert.app. |
+| Chrome import | `Bookmarks` and `AccountBookmarks` are read together; site icons come from Chrome's `Favicons` database. If macOS protects the data folder, Full Disk Access steps are shown. Host-only cookies are written without a Domain attribute (otherwise `__Host-` cookies drop and GitHub sees half a session). |
+| Site icons | `favicon.rs`: one PNG per host in the profile folder, from Chrome's cache and fetched after a visit. Bookmarks never start a network request on their own. |
+| Page menu | Servo's context menu is drawn by the browser: copy, cut, paste, select all, link and image rows, translate the page, inspect with WebKit, add to the assistant. Cmd+C/V/X/A/Z go through our own Edit menu items to egui fields, Servo and WebKit. |
+| Assistant | Replies are rendered as Markdown (`md.rs`). The panel sits at the side, floats over the page or has its own tab (`about:chat`). The clip tool attaches a region of the page as an image, "Attach to assistant" the selected text; both go to the model as data. On a new tab, open tabs and recent pages (titles and addresses only) are context. Alt+Enter asks the assistant what's in the address bar. |
+| Shield | uBlock Origin's default lists: EasyList, EasyPrivacy and the uBlock filters. WebKit is limited to 140,000 rules in one list; Servo uses them all. |
+| Push-to-talk | While Option+Space is held, `inert-dictate` (Swift, Apple Speech, on device when the language supports it) listens; on release the text is typed where the keyboard is. |
 
-Yapılmayanlar: Chrome eklentilerini içe aktarma (Inert eklenti çalıştırmaz), Gmail gibi uygulama bağlantıları, passkey (WebKit'te Apple'ın tarayıcılara verdiği yetki gerekir; Servo'da WebAuthn yok), WebKit sayfalarında kırpma ve yüzen asistan. Bu turdaki değişikliklerden sonra tam UI testi koşturulmadı; kısa görsel tur 2/2.
+Not done: importing Chrome extensions (Inert runs no extensions), app connections such as Gmail, passkeys (§18.7).
 
-### 18.4 Varsayılan web motoru: WebKit (2026-11-11)
+### 18.4 Default web engine: WebKit (2026-11-11)
 
-Gündelik kullanımda Servo yetmedi: Google basit sürümünü gönderiyor, GitHub oturumu takılıyor, sitelerin beklediği bazı web özellikleri yok. Varsayılan WebKit oldu; Servo Ayarlar'da seçenek olarak duruyor ve her sayfa güvenlik panelinden Servo ile açılabiliyor. Servo varsayılanken oluşturulan profiller bir kez WebKit'e geçer (`engine_v2`). Demo profili ve UI testleri Servo'da kalır.
+Servo wasn't enough for everyday use: Google sends its basic version, GitHub sessions get stuck, and some web features sites expect are missing. WebKit became the default; Servo stays an option in Settings and any page can be opened in Servo from the security panel. Profiles created while Servo was the default switch to WebKit once (`engine_v2`). The demo profile and UI tests stay on Servo.
 
-WebKit sayfalarında bilinen eksikler: kırpma aracı ve yüzen asistan çalışmaz (yerel görünümün üstüne çizilemiyor), sağ tık menüsü WebKit'in kendi menüsüdür ("Attach to assistant" ve çeviri ⋮ menüsünde). Passkey iki motorda da yok.
+Known gaps in WebKit pages: the clip tool and the floating assistant can't draw over the native view, and the context menu is WebKit's own ("Attach to assistant" and translation are in the ⋮ menu).
 
-Aynı gün: Servo'ya ekran ölçeği iletiliyor (Retina'da sayfalar yarı boyutta çiziliyordu); Shield sol altta VPN'in yanında, "bu sitede" ve "her yerde" anahtarlarıyla (`adblock_off`); sekmeler üstteyken adres çubuğu başlık boyunca uzanır; adı silinen grup yalnız ikonuyla görünür; kurulum sırası açılış → model → görünüm → izinler ve aktarım.
+### 18.5 Private tabs, page tools and assistant additions (2026-11-11)
 
-### 18.5 Gizli sekmeler, sayfa araçları ve asistan eklemeleri (2026-11-11)
-
-| Özellik | Nasıl çalışıyor | Sınırı |
+| Feature | How it works | Limit |
 |---|---|---|
-| Gizli sekme (Shift+Cmd+N) | WebKit görünümü, kendi geçici veri deposuyla; diske yazılmaz, başka sekmeyle paylaşılmaz. Geçmişe, Rewind'e, oturuma girmez; site simgesi istenmez. | Yalnız WebKit. Servo tek çerez kavanozu kullandığı için gizli sekmede kullanılmaz. |
-| Her sekme ayrı | Her gizli sekmenin deposu ayrıdır. | Normal sekmeler ortak depoyu kullanır. |
-| Kendini siler | Boşta kalma süresi dolunca gizli sekmeler kapanır (ayar: asla, 5, 15, 30, 60 dk). | Süre, tarayıcıdaki son girdiye göre ölçülür. |
-| İndirmeler kaybolur | Gizli sekmeden inen dosya, sekme kapanınca silinir; İndirilenler'de "Keep" ile tutulur. | — |
-| Pano temizlenir | İlk gizli sekme açılırken panonun sayacı alınır; son gizli sekme kapanırken değişmişse pano boşaltılır. | Kopyalamanın hangi uygulamada yapıldığına bakılmaz. |
-| Panik tuşu (Ctrl+Opt+Cmd+H) | Tüm gizli sekmeleri kapatır, pencereyi simge durumuna alır. | — |
-| Konumumu gizle | Sayfa betiği: konum isteği her zaman "reddedildi" yanıtı alır. | Ağ adresinden çıkan konumu VPN gizler. Betik düzeyinde bir engel. |
-| Kamera ve mikrofon | wry izin işleyicisi "sor" döndürür; WebKit her seferinde sorar. | Gerçek bir sitede denenmedi. |
-| Her zaman gizli siteler | Listedeki site (eTLD+1) normal sekmede açılmaz, gizli sekmeye yönlenir. Ayarlar'dan ya da kilit panelinden eklenir. | — |
-| Gizli favoriler | Anahtar Zinciri'nde tutulur, yer imleri sayfasında Touch ID'den sonra görünür, gizli sekmede açılır. 5 dakikada yeniden kilitlenir. | Touch ID gerçek cihazda denenmedi (demo profili onay verir). |
-| Touch ID kilidi | Ayar açıksa Inert arka plana geçince gizli sekmeler örtülür; Touch ID açar. Gizli sekme görünürken pencere ekran görüntüsüne ve paylaşımına kapatılır (`sharingType`). | Aynı. |
-| Bölünmüş görünüm | Etkin sayfa solda, ikinci sayfa sağda; başlıkta yer değiştir ve kapat. | Sağ bölme WebKit ve inert:// sayfalarını gösterir; Servo ve Inert'in kendi sayfaları solda kalır. |
-| Rewind | Ziyaret edilen sayfanın metni (6000 karakter, en çok 1500 sayfa) `rewind.json` içinde bu Mac'te tutulur; Geçmiş'teki arama sayfa içlerinde de arar. | Gizli sekmeler hatırlanmaz. |
-| Tüm sekmelere sor | Asistan kutusundaki "All tabs" ya da yeni sekmedeki hazır sorular: açık her sayfanın metni toplanır (4 sn sınır), tek soruyla modele gider. | Uyuyan sekmeler yalnız başlık ve adresle katılır. |
-| Özetle | Menü ve sağ tık: sayfa metni modele gider. | Video özeti yok. |
-| Yerinde çeviri | Sayfanın metin düğümleri (en çok 260 parça, 14 bin karakter) kullanıcının modeliyle çevrilir ve yerine yazılır. Anahtar yoksa Google Translate sekmesi açılır. | Uzun sayfalarda yalnız ilk kısım çevrilir. |
-| Anında yanıt | Adres çubuğunda toplama-çarpma burada hesaplanır; kısa bilgiler, web önerileri açıksa DuckDuckGo'nun anında yanıt servisinden gelir. | — |
-| Sesli oku | Seçim, yoksa makale metni macOS `say` ile okunur; tekrar basınca durur. | Sistem sesi ve dili. |
-| Resim içinde resim | Sayfadaki en büyük video için WebKit'in PiP kipi. | Gerçek sitede denenmedi. |
-| Altyazı | Videonun kendi altyazı izlerini (ve YouTube'un altyazı düğmesini) açar. | Canlı konuşma tanıma değil: altyazısı olmayan videoda bir şey yapmaz. |
-| Sakin kip | YouTube, X, Instagram ve TikTok'ta Shorts, akış ve öneri bölümlerini gizleyen stil. | Sitelerin kendi işaretlemesine bağlı; değişirse güncellenmeli. |
+| Private tab (Shift+Cmd+N) | A WebKit view with its own temporary data store, never written to disk or shared with another tab. Not in history, Rewind or the session; no site icon is fetched. | WebKit only: Servo has a single cookie jar. |
+| Every tab sealed off | Each private tab has its own store. | Normal tabs share one store. |
+| Erases itself | Private tabs close after an idle time (never, 5, 15, 30, 60 min). | Idle time counts from the last input in the browser. |
+| Downloads vanish | A file downloaded in a private tab is deleted when the tab closes, unless kept in Downloads. | — |
+| Clipboard cleared | The pasteboard's change count is noted when the first private tab opens; if it changed, the pasteboard is cleared when the last one closes. | It can't tell which app copied. |
+| Panic key (Ctrl+Opt+Cmd+H) | Closes every private tab and minimizes the window. | — |
+| Hide my location | A page script answers every location request with "denied". | The location your network address reveals is the VPN's job. |
+| Camera and microphone | The wry permission handler returns "ask"; WebKit asks every time. | — |
+| Always-private sites | A listed site (eTLD+1) never opens in a normal tab; it goes to a private one. | — |
+| Secret favorites | Kept in the Keychain, shown on the bookmarks page after Touch ID, opened in private tabs. Lock again after 5 minutes. | — |
+| Touch ID lock | When on, private tabs are covered while Inert is in the background; Touch ID opens them. While a private tab shows, the window is hidden from screenshots and screen sharing (`sharingType`). | — |
+| Split view | The active page on the left, a second page on the right; swap and close in its header. | The right pane shows WebKit and inert:// pages; Servo and Inert's own pages stay on the left. |
+| Rewind | The text of visited pages (6000 characters, at most 1500 pages) is kept in `rewind.json` on this Mac; history search looks inside pages too. | Private tabs aren't remembered. |
+| Ask all tabs | "All tabs" in the assistant, or the prompts on a new tab: every open page's text is gathered (4 s limit) and sent with one question. | Sleeping tabs join with title and address only. |
+| Summarize | Menu and context menu: the page text goes to the model. | No video summaries. |
+| Translate in place | The page's text nodes (at most 260 pieces, 14,000 characters) are translated with the user's model and written back. Without a key, a Google Translate tab opens. | Only the first part of long pages. |
+| Instant answers | Sums are worked out in the address bar; short facts come from DuckDuckGo's instant answer service when web suggestions are on. | — |
+| Read aloud | The selection, or else the article text, read with macOS `say`; press again to stop. | System voice and language. |
+| Picture in picture | WebKit's PiP for the largest video on the page. | — |
+| Captions | Turns on the video's own caption tracks (and YouTube's caption button). | Not live speech recognition. |
+| Calm mode | A style that hides Shorts, feeds and recommendations on YouTube, X, Instagram and TikTok. | Depends on the sites' markup. |
 
-Aynı tur: adres çubuğundaki güvenlik göstergesi yalnız renkli kilit (yeşil: doğrulanmış inert://, sarı: yerel geliştirme anahtarı ya da doğrulanıyor, turuncu: sıradan HTTPS sayfası, kırmızı açık kilit: şifresiz ya da doğrulama başarısız); ayrıntı tıklayınca açılır. Sayfa kaydırma sınırını aşınca açılan boşluk `overscroll-behavior: none` ile kapatıldı. Yer imi yokken yer imi çubuğu yer kaplamaz. İçe aktarma kaynaklarına Dia eklendi.
+Also: the security indicator in the address bar is just a colored lock (green: verified inert://, yellow: local development key or still verifying, orange: an ordinary HTTPS page, red open lock: unencrypted or failed verification); details open on click. The gap when scrolling past a page's edge is closed with `overscroll-behavior: none`. Without bookmarks the bookmarks bar takes no space.
 
-İçe aktarma ve izinler: uygulama kalıcı bir imzayla imzalanmadığı için macOS, her yeni derlemede Tam Disk Erişimi iznini unutuyor. Anahtar Zinciri'nde "Inert Dev" adlı bir kod imzalama sertifikası varsa `scripts/bundle.sh` onu kullanır ve izin kalıcı olur.
+Import and permissions: without a stable signature macOS forgets the Full Disk Access permission on every new build. If the Keychain has a code-signing certificate named "Inert Dev", `scripts/bundle.sh` uses it and the permission sticks.
 
-Doğrulama: UI testi 80/80 (demo profili, Servo). Yeni özelliklerden gizli sekme, anında yanıt, bölünmüş görünüm, gizli favoriler ve Shield paneli testte; gerisi gerçek sitelerde elle denenmedi.
+### 18.6 Logo, layout settings and real-site checks (2026-11-11)
 
-### 18.6 Logo, düzen ayarları ve gerçek site doğrulaması (2026-11-11)
+- **Settings in categories:** General, AI, Search & pages, Privacy, Shield & cookies, Passwords & import, VPN, About.
+- **Sidebar width** is set by dragging its edge (200–440 pt, double-click for the default).
+- **One layout, two states:** with the sidebar open, tabs are in it; closed (Cmd+S), they're in a strip on top. The address bar runs from the back/forward/reload buttons to the tools in both.
+- **Menus over the page:** a WebKit view is native, so Inert's drawing can't go above it. When a menu opens, a snapshot of the page (`takeSnapshotWithConfiguration`) is drawn in its place while the view hides.
+- **Shield:** a real ad script (`pagead2.googlesyndication.com`) is blocked in WebKit (measured). YouTube video ads come from the same servers as videos and can't be blocked by network rules; with Shield on they're skipped as they start and ad slots are hidden (`page_js::YT_ADS`).
+- **Real-site run** (`INERT_DRIVE_SCENARIO=real-web`, a throwaway profile through `INERT_PROFILE_DIR`, WebKit): page loads, overscroll gap, hidden location, Rewind, history, translate in place, read-aloud text, site icons, GitHub, page snapshot under menus, Shield, calm mode on YouTube, picture in picture, captions, private tabs, always-private sites, split view with two real pages, instant answers, the panic key.
+- **Known:** when the screen locks macOS treats the window as occluded and stops producing frames; tests run under `caffeinate -dimu`. WebKit sends no "loaded" event for a directly opened video or image; if the active tab stays loading, the page's `document.readyState` is asked and loading ends.
 
-- **Logo:** "Held caret" seçildi: iki köşeli parantez arasında duran metin imleci (çalışmayan kod). `art::mark`, `art::logo` ve uygulama simgesi (`art::icon_image`) bunu çiziyor.
-- **Ayarlar kategorili:** General, AI, Search & pages, Privacy, Shield & cookies, Passwords & import, VPN, About. Bir seferde bir kategori.
-- **Kenar çubuğu genişliği** kenarından sürüklenerek ayarlanır (200–440 pt, çift tıkla varsayılan), `sidebar_w`.
-- **Sekmeler üstteyken** trafik ışıklarından sonra 14 pt fazladan boşluk.
-- **Menü açılınca sayfanın kararması:** WebKit görünümü yerel olduğu için Inert'in kendi çizimi üstüne çıkamıyor; menü açılırken sayfanın görüntüsü alınıp (`takeSnapshotWithConfiguration`) görünüm gizlenince yerine çiziliyor.
-- **Shield:** gerçek bir reklam betiği (`pagead2.googlesyndication.com`) WebKit'te engelleniyor (ölçüldü). YouTube video reklamları videolarla aynı sunuculardan geldiği için ağ kuralıyla engellenemiyor; Shield açıkken YouTube'da reklamlar başlar başlamaz atlanıyor ve reklam alanları gizleniyor (`page_js::YT_ADS`).
-- **Chrome aktarımı teşhisi** (`--import-check`, yalnız sayılar): Chrome klasörünü macOS engelliyor; Dia okunabiliyor (32 yer imi, 4989 geçmiş satırı). Aktarma ekranı artık engellenen tarayıcıyı, okunabilenlerin yanında Tam Disk Erişimi adımlarıyla gösteriyor.
-- **Gerçek site turu** (`INERT_DRIVE_SCENARIO=real-web`, `INERT_PROFILE_DIR` ile geçici profil, demo değil, WebKit): sayfa yükleme, kaydırma boşluğu, konum gizleme, Rewind, geçmiş, yerinde çeviri (topla/geri yaz), sesli oku metni, site simgesi, GitHub, menü altında sayfa görüntüsü, Shield, YouTube'da sakin kip, resim içinde resim, altyazı, gizli sekmeler (geçmiş yok, birbirinden ve normal sekmelerden ayrı depo, boşta silinme, indirme silinmesi), her zaman gizli site, iki gerçek sayfayla bölünmüş görünüm, web'den anında yanıt, panik tuşu. Bu tur bir hata buldu: gizli sekmenin başlığı geçmişe yazılıyordu (düzeltildi).
-- **Bilinen:** gece ekran kilitlenince macOS pencereyi örtülü sayıp kare üretmeyi durduruyor; testler `caffeinate -dimu` ile koşuyor. Doğrudan açılan bir video ya da görsel için WebKit "yüklendi" olayı göndermiyor; etkin sekme bir süre yükleniyor kalırsa sayfanın `document.readyState` değeri sorulup yükleme kapatılıyor (gerçek site turunda doğrulandı, 39/39).
-- **Uygulamanın kendi izinleriyle uçtan uca denetim** (`open -a Inert.app --args …`, yalnız sayılar yazılır): `--touchid-check` bu Mac'te Touch ID'nin kurulu ve sorulabilir olduğunu gösterdi (istem gösterilmedi; parmakla onay kullanıcıda). `--import-run` okunabilen ilk tarayıcıdan (Dia) geçici bir profile 31 yer imi ve 4989 geçmiş satırı aktardı, kaydedilen profilde 38 yer imi (7 hazır yer imiyle). Geçici profil silindi. Chrome, macOS Tam Disk Erişimi verilene kadar okunamıyor.
-- **Tek düzen, iki durum (2026-11-11):** ayrı "sekmeler kenarda / üstte" ayarı kalktı. Kenar çubuğu açıkken sekmeler orada; kapalıyken (Cmd+S) üstte bir şeritte. Adres çubuğu her iki durumda geri/ileri/yenile düğmelerinden araçlara kadar uzanıyor. Kurulumdaki seçim kenar çubuğunun başlangıç durumunu belirliyor. UI testi 80/80.
+### 18.7 Gmail, Google sign-in, passkeys (2026-11-11)
 
-### 18.7 Gmail, Google ile giriş, passkey (2026-11-11)
+- **Empty Gmail messages:** uBlock Origin's generic hiding rule `##.ads` hid Gmail's message container (`div.adn.ads`). uBO applies that rule with site exceptions, which are lost in WebKit's rule format. Generic hiding rules (`css-display-none` without a site) are no longer compiled; network blocking and site-specific hiding stay (`inert-adblock-v3`).
+- **Blank Google sign-in:** the popup opened as a tab and lost its link to the opener (`window.opener`). Sign-in providers and popups opened with a size now open as real windows (wry `NewWindowResponse::Allow`).
+- **Passkeys:** WebKit's passkey and security key support needs the `com.apple.developer.web-browser.public-key-credential` entitlement, which Apple grants only to approved browsers, and a Developer ID signature. Until then the menu has "Open in Safari (passkeys)".
 
-- **Gmail'de mailler boş görünüyordu:** uBlock Origin'in genel gizleme kuralı `##.ads`, Gmail'in mesaj kabını (`div.adn.ads`) gizliyordu. uBO bu kuralı site istisnalarıyla uygular; WebKit kural biçimine çevrilince istisna kayboluyor. Genel gizleme kuralları (site adı olmayan `css-display-none`) artık derlenmiyor; ağ engelleme ve siteye özel gizleme kalıyor (`inert-adblock-v3`). Gerçek site turuna kontrol eklendi.
-- **Google ile giriş boş açılıyordu:** açılır pencere sekmede açılıyordu, açan sayfayla bağı (`window.opener`) kopuyordu. Giriş sağlayıcılarının adresleri ve boyut verilen açılır pencereler artık gerçek pencere olarak açılıyor (wry `NewWindowResponse::Allow`). Kullanıcı tıklaması gerektirdiği için otomatik testte denenmedi.
-- **Passkey:** WebKit'in passkey ve güvenlik anahtarı desteği, Apple'ın yalnız onayladığı tarayıcılara verdiği `com.apple.developer.web-browser.public-key-credential` iznini ve Developer ID imzasını istiyor. İzin alınana kadar menüde "Open in Safari (passkeys)" var.
-- Doğrulama: gerçek site turu 40/40, UI testi 80/80.
+### 18.8 Cursors and bug hunt (2026-11-11)
 
+- The pointing hand shows over everything that is only clickable; text fields show the I-beam. WebKit pages show their own cursor: the window's cursor rects (egui's cursor over the whole view) are off while the mouse is over a web view.
+- A bug hunt over every feature found 13 bugs; all are fixed. Notes in `docs/bug-hunt-2026-11-11.md`.

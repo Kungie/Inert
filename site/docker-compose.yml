@@ -2,7 +2,7 @@
 # without opening a port. No domain yet: the tunnel is a "quick tunnel" and
 # its address (https://<words>.trycloudflare.com) is in `docker compose logs cloudflared`.
 # With a domain: create a named tunnel and switch the command to
-# `tunnel --no-autoupdate --config /etc/cloudflared/config.yml run`, like gut-site.
+# `tunnel --no-autoupdate --config /etc/cloudflared/config.yml run`.
 services:
   site:
     image: caddy:2-alpine

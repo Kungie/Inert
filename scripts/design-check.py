@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Checks rendered browser screenshots against the Yön A (Stencil) design file.
+"""Checks rendered browser screenshots against the Direction A (Stencil) design file.
 
-The design file's tokens (Claude Design, "Yön A"): background #000000, text
+The design file's tokens (Direction A): background #000000, text
 #EDEDED, headings #FFFFFF, muted #9A9A9A / #8A8A8A, borders #222222 /
 #3A3A3A, accents #B48CFF / #7F9CFF / #B9C6FF.
 
