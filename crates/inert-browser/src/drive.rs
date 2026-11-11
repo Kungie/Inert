@@ -85,6 +85,13 @@ fn data_len(b: &Browser, slot: &str) -> usize {
 }
 
 fn dump(b: &Browser) -> String {
+    if let Some(p) = &b.probe {
+        return format!("probe={:?} | {}", p.chars().take(120).collect::<String>(), dump_state(b));
+    }
+    dump_state(b)
+}
+
+fn dump_state(b: &Browser) -> String {
     let t = b.active_tab();
     format!(
         "active={:?} omni={:?} editing={} popover={:?} rename={:?} groups={:?} tabs={} closed={:?}",
@@ -431,6 +438,340 @@ impl Driver {
                 Pause(30000),
                 expect("bank.still_verified", 1000, |b| inert_on(b, "overview")),
             ]
+        } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("real-web") {
+            // The new features against real sites, in WebKit, on a throwaway
+            // profile (run without --demo and with INERT_PROFILE_DIR set).
+            // It spends no API credit, makes no sound and leaves the clipboard alone.
+            let probe = |script: &'static str| -> Step {
+                Setup(Box::new(move |b| {
+                    b.probe = None;
+                    b.ask_page(crate::app::Ask::Probe, script);
+                }))
+            };
+            let web_ready = |name: &'static str, part: &'static str| expect(name, 30000, move |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some() && !w.loading && w.url.contains(part)));
+            vec![
+                Pause(1500),
+                Click(s("signin:claude")),
+                Click(s("signin:skip")),
+                Click(s("look:blue")),
+                Click(s("look:next")),
+                Click(s("import:skip")),
+                expect("real.signed_in", 3000, |b| b.profile.onboarded),
+                // WebKit is the default engine; a real page loads in it.
+                Setup(Box::new(|b| {
+                    b.add_tab("https://example.com/", None, true, None);
+                })),
+                web_ready("real.webkit_loads_page", "example.com"),
+                expect("real.webkit_is_default", 1000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.engine == Some(profile::Engine::WebKit))),
+                Pause(1500),
+                // No rubber-band gap: the page's root does not overscroll.
+                probe("getComputedStyle(document.documentElement).overscrollBehaviorY"),
+                expect("real.no_overscroll_gap", 5000, |b| b.probe.as_deref() == Some("none")),
+                // Hide my location: geolocation answers "denied" (code 1).
+                Setup(Box::new(|b| {
+                    b.probe = None;
+                    if let Some(Kind::Web(w)) = b.active_tab().map(|t| &t.kind) {
+                        crate::web::js(w, "window.__geo='waiting';navigator.geolocation.getCurrentPosition(function(){window.__geo='allowed';},function(e){window.__geo='denied:'+e.code;});");
+                    }
+                })),
+                Pause(1200),
+                probe("String(window.__geo)"),
+                expect("real.location_hidden", 5000, |b| b.probe.as_deref() == Some("denied:1")),
+                // Rewind and history: the page's text is remembered, the visit recorded.
+                expect("real.rewind_keeps_page_text", 8000, |b| b.rewind.iter().any(|s| s.url.contains("example.com") && s.text.contains("documentation"))),
+                expect("real.history_records_visit", 1000, |b| b.profile.visits.iter().any(|v| v.url.contains("example.com"))),
+                // Translate in place: the page's text is collected and written back.
+                probe(crate::page_js::TRANSLATE_COLLECT),
+                expect("real.translate_collects_text", 5000, |b| b.probe.as_deref().is_some_and(|p| p.starts_with('[') && p.contains("documentation"))),
+                Setup(Box::new(|b| {
+                    let items: Vec<String> = serde_json::from_str(b.probe.as_deref().unwrap_or("[]")).unwrap_or_default();
+                    let fake: Vec<String> = items.iter().map(|t| format!("TR:{t}")).collect();
+                    if let Some(Kind::Web(w)) = b.active_tab().map(|t| &t.kind) {
+                        crate::web::js(w, &crate::page_js::translate_apply(&serde_json::to_string(&fake).unwrap_or_default()));
+                    }
+                })),
+                Pause(600),
+                probe("document.body.innerText"),
+                expect("real.translate_writes_back", 5000, |b| b.probe.as_deref().is_some_and(|p| p.contains("TR:"))),
+                // Read aloud: the text it would speak (not spoken here).
+                probe(crate::page_js::READABLE),
+                expect("real.readable_text", 5000, |b| b.probe.as_deref().is_some_and(|p| p.contains("documentation"))),
+                Shot(s("rw01-webkit-page")),
+                // A site icon is fetched after a visit.
+                Setup(Box::new(|b| {
+                    let id = b.active;
+                    b.navigate(id, "https://www.wikipedia.org/");
+                })),
+                web_ready("real.wikipedia_loads", "wikipedia.org"),
+                expect("real.favicon_fetched", 15000, |_| crate::profile::Profile::dir(false).join("favicons").join("wikipedia.org.png").exists()),
+                // GitHub and Google open as full pages.
+                Setup(Box::new(|b| {
+                    let id = b.active;
+                    b.navigate(id, "https://github.com/");
+                })),
+                web_ready("real.github_loads", "github.com"),
+                expect("real.github_is_not_the_error_page", 5000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.title.contains("GitHub") && !w.title.contains("What"))),
+                Pause(800),
+                Shot(s("rw02-github")),
+                // A menu over a WebKit page shows the page's picture, not a dark card.
+                Click(s("menu")),
+                expect("real.menu_keeps_page_visible", 3000, |b| b.web_snap.is_some()),
+                Pause(300),
+                Shot(s("rw02b-menu-over-page")),
+                Press(Key::Escape, Modifiers::NONE),
+                // The Shield blocks a known ad script on a real page.
+                expect("real.shield_ready", 90000, |b| matches!(b.ad.state, crate::adblock::State::Ready(_))),
+                Setup(Box::new(|b| {
+                    b.add_tab("https://example.com/?ads=1", None, true, None);
+                })),
+                web_ready("real.ad_test_page_loads", "ads=1"),
+                Pause(800),
+                Setup(Box::new(|b| {
+                    if let Some(Kind::Web(w)) = b.active_tab().map(|t| &t.kind) {
+                        crate::web::js(w, "window.__ad='waiting';fetch('https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js',{mode:'no-cors'}).then(function(){window.__ad='loaded';},function(){window.__ad='blocked';});");
+                    }
+                })),
+                Pause(2500),
+                probe("String(window.__ad)"),
+                expect("real.shield_blocks_ad_script", 5000, |b| b.probe.as_deref() == Some("blocked")),
+                Setup(Box::new(|b| {
+                    let id = b.active;
+                    b.close_tab(id);
+                })),
+                // Calm mode's style lands on YouTube pages (when the page is YouTube's own).
+                Setup(Box::new(|b| {
+                    b.profile.settings.calm = true;
+                    b.add_tab("https://www.youtube.com/", None, true, None);
+                })),
+                web_ready("real.youtube_loads", "youtube.com"),
+                Pause(2500),
+                probe("location.hostname + '|' + [].some.call(document.querySelectorAll('style'), function(s){return s.textContent.indexOf('ytd-reel-shelf-renderer')>=0;})"),
+                expect("real.calm_mode_on_youtube", 6000, |b| b.probe.as_deref().is_some_and(|p| p.ends_with("|true") || !p.starts_with("www.youtube.com"))),
+                Shot(s("rw03-youtube-calm")),
+                Setup(Box::new(|b| {
+                    let id = b.active;
+                    b.close_tab(id);
+                })),
+                // Picture in picture: a real video goes in and comes back.
+                Setup(Box::new(|b| {
+                    b.add_tab("https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4", None, true, None);
+                })),
+                // A bare video file never reports "finished loading"; its view is enough.
+                expect("real.video_loads", 30000, |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some() && w.url.contains("flower.mp4"))),
+                Pause(2500),
+                probe(crate::page_js::PIP),
+                expect("real.pip_starts", 6000, |b| b.probe.as_deref() == Some("on")),
+                Pause(1200),
+                probe(crate::page_js::PIP),
+                expect("real.pip_stops", 6000, |b| b.probe.as_deref() == Some("off")),
+                probe(crate::page_js::CAPTIONS),
+                expect("real.captions_report_none", 6000, |b| b.probe.as_deref() == Some("0")),
+                Setup(Box::new(|b| {
+                    let id = b.active;
+                    b.close_tab(id);
+                })),
+                // Private tabs: sealed from each other and from normal tabs, no history.
+                Setup(Box::new(|b| {
+                    b.add_private_tab("https://example.com/?private=1");
+                })),
+                web_ready("real.private_tab_loads", "private=1"),
+                expect("real.private_leaves_no_history", 1500, |b| !b.profile.visits.iter().any(|v| v.url.contains("private=1")) && !b.rewind.iter().any(|s| s.url.contains("private=1"))),
+                expect("real.private_hidden_from_capture", 1500, |b| b.active_tab().is_some_and(|t| t.private)),
+                probe("localStorage.setItem('inert-seal','1'); document.cookie='inert_seal=1; max-age=600; path=/'; 'set'"),
+                expect("real.private_store_written", 5000, |b| b.probe.as_deref() == Some("set")),
+                Setup(Box::new(|b| {
+                    b.add_private_tab("https://example.com/?private=2");
+                })),
+                web_ready("real.second_private_tab_loads", "private=2"),
+                Pause(800),
+                probe("String(localStorage.getItem('inert-seal')) + '|' + document.cookie"),
+                expect("real.private_tabs_sealed_from_each_other", 5000, |b| b.probe.as_deref() == Some("null|")),
+                Shot(s("rw04-private-tab")),
+                // A download from a private tab vanishes with it.
+                Setup(Box::new(|b| {
+                    let path = std::env::temp_dir().join("inert-private-download-test.bin");
+                    let _ = std::fs::write(&path, b"x");
+                    let id = b.active;
+                    b.downloads.push(crate::app::Download { url: "https://example.com/file".into(), path, private_tab: Some(id), keep: false });
+                })),
+                // Erases itself: the idle clock runs out.
+                Setup(Box::new(|b| {
+                    b.profile.settings.private_idle_min = 5;
+                    b.last_input = std::time::Instant::now() - Duration::from_secs(6 * 60);
+                })),
+                expect("real.private_tabs_erase_when_idle", 4000, |b| !b.tabs.iter().any(|t| t.private)),
+                expect("real.private_download_vanished", 2000, |_| !std::env::temp_dir().join("inert-private-download-test.bin").exists()),
+                // The normal tab never saw what the private tab stored.
+                Setup(Box::new(|b| {
+                    b.add_tab("https://example.com/?normal=1", None, true, None);
+                })),
+                web_ready("real.normal_tab_loads", "normal=1"),
+                Pause(800),
+                probe("String(localStorage.getItem('inert-seal')) + '|' + document.cookie"),
+                expect("real.private_sealed_from_normal_tabs", 5000, |b| b.probe.as_deref() == Some("null|")),
+                // Always-private sites: the site refuses a normal tab.
+                Setup(Box::new(|b| {
+                    b.profile.settings.private_sites.push("iana.org".into());
+                    let id = b.active;
+                    b.navigate(id, "https://www.iana.org/help/example-domains");
+                })),
+                expect("real.always_private_site_opens_private", 30000, |b| b.active_tab().is_some_and(|t| t.private && t.url().contains("iana.org"))),
+                // Split view with two real pages.
+                Setup(Box::new(|b| {
+                    b.close_private_tabs();
+                    b.add_tab("https://example.org/", None, true, None);
+                })),
+                web_ready("real.second_page_loads", "example.org"),
+                Click(s("menu")),
+                Click(s("menu:Split view")),
+                expect("real.split_view_two_web_pages", 15000, |b| b.split.is_some_and(|id| matches!(b.tab(id).map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some()))),
+                Pause(1500),
+                Shot(s("rw05-split-web")),
+                Click(s("split:close")),
+                // Instant answers: a quick fact from the web, and a sum worked out here.
+                Click(s("omnibox")),
+                Type(s("rust programming language")),
+                expect("real.instant_answer_from_web", 12000, |b| b.omni.sugg.iter().any(|x| x.kind == crate::omnibox::Kind::Answer)),
+                Pause(400),
+                Shot(s("rw06-instant-answer")),
+                Press(Key::Escape, Modifiers::NONE),
+                // Panic: private tabs gone (the window also steps aside).
+                Setup(Box::new(|b| {
+                    b.add_private_tab("about:newtab");
+                })),
+                Press(Key::H, Modifiers::COMMAND | Modifiers::ALT | Modifiers::CTRL),
+                expect("real.panic_erases_private_tabs", 3000, |b| !b.tabs.iter().any(|t| t.private)),
+            ]
+        } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("real-ad") {
+            // The new features against real sites, in WebKit, on a throwaway
+            // profile (run without --demo and with INERT_PROFILE_DIR set).
+            // It spends no API credit, makes no sound and leaves the clipboard alone.
+            let probe = |script: &'static str| -> Step {
+                Setup(Box::new(move |b| {
+                    b.probe = None;
+                    b.ask_page(crate::app::Ask::Probe, script);
+                }))
+            };
+            let web_ready = |name: &'static str, part: &'static str| expect(name, 30000, move |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some() && !w.loading && w.url.contains(part)));
+            vec![
+                Pause(1500),
+                Click(s("signin:claude")),
+                Click(s("signin:skip")),
+                Click(s("look:blue")),
+                Click(s("look:next")),
+                Click(s("import:skip")),
+                expect("real.signed_in", 3000, |b| b.profile.onboarded),
+                // The Shield blocks a known ad script on a real page.
+                expect("real.shield_ready", 90000, |b| matches!(b.ad.state, crate::adblock::State::Ready(_))),
+                Setup(Box::new(|b| {
+                    b.add_tab("https://example.com/?ads=1", None, true, None);
+                })),
+                web_ready("real.ad_test_page_loads", "ads=1"),
+                Pause(800),
+                Setup(Box::new(|b| {
+                    if let Some(Kind::Web(w)) = b.active_tab().map(|t| &t.kind) {
+                        crate::web::js(w, "window.__ad='waiting';fetch('https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js',{mode:'no-cors'}).then(function(){window.__ad='loaded';},function(){window.__ad='blocked';});");
+                    }
+                })),
+                Pause(2500),
+                probe("String(window.__ad)"),
+                expect("real.shield_blocks_ad_script", 5000, |b| b.probe.as_deref() == Some("blocked")),
+                Setup(Box::new(|b| {
+                    let id = b.active;
+                    b.close_tab(id);
+                })),
+            ]
+        } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("real-private") {
+            // The new features against real sites, in WebKit, on a throwaway
+            // profile (run without --demo and with INERT_PROFILE_DIR set).
+            // It spends no API credit, makes no sound and leaves the clipboard alone.
+            let probe = |script: &'static str| -> Step {
+                Setup(Box::new(move |b| {
+                    b.probe = None;
+                    b.ask_page(crate::app::Ask::Probe, script);
+                }))
+            };
+            let web_ready = |name: &'static str, part: &'static str| expect(name, 30000, move |b| matches!(b.active_tab().map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some() && !w.loading && w.url.contains(part)));
+            vec![
+                Pause(1500),
+                Click(s("signin:claude")),
+                Click(s("signin:skip")),
+                Click(s("look:blue")),
+                Click(s("look:next")),
+                Click(s("import:skip")),
+                expect("real.signed_in", 3000, |b| b.profile.onboarded),
+                // Private tabs: sealed from each other and from normal tabs, no history.
+                Setup(Box::new(|b| {
+                    b.add_private_tab("https://example.com/?private=1");
+                })),
+                web_ready("real.private_tab_loads", "private=1"),
+                expect("real.private_leaves_no_history", 1500, |b| !b.profile.visits.iter().any(|v| v.url.contains("private=1")) && !b.rewind.iter().any(|s| s.url.contains("private=1"))),
+                expect("real.private_hidden_from_capture", 1500, |b| b.active_tab().is_some_and(|t| t.private)),
+                probe("localStorage.setItem('inert-seal','1'); document.cookie='inert_seal=1; max-age=600; path=/'; 'set'"),
+                expect("real.private_store_written", 5000, |b| b.probe.as_deref() == Some("set")),
+                Setup(Box::new(|b| {
+                    b.add_private_tab("https://example.com/?private=2");
+                })),
+                web_ready("real.second_private_tab_loads", "private=2"),
+                Pause(800),
+                probe("String(localStorage.getItem('inert-seal')) + '|' + document.cookie"),
+                expect("real.private_tabs_sealed_from_each_other", 5000, |b| b.probe.as_deref() == Some("null|")),
+                Shot(s("rw04-private-tab")),
+                // A download from a private tab vanishes with it.
+                Setup(Box::new(|b| {
+                    let path = std::env::temp_dir().join("inert-private-download-test.bin");
+                    let _ = std::fs::write(&path, b"x");
+                    let id = b.active;
+                    b.downloads.push(crate::app::Download { url: "https://example.com/file".into(), path, private_tab: Some(id), keep: false });
+                })),
+                // Erases itself: the idle clock runs out.
+                Setup(Box::new(|b| {
+                    b.profile.settings.private_idle_min = 5;
+                    b.last_input = std::time::Instant::now() - Duration::from_secs(6 * 60);
+                })),
+                expect("real.private_tabs_erase_when_idle", 4000, |b| !b.tabs.iter().any(|t| t.private)),
+                expect("real.private_download_vanished", 2000, |_| !std::env::temp_dir().join("inert-private-download-test.bin").exists()),
+                // The normal tab never saw what the private tab stored.
+                Setup(Box::new(|b| {
+                    b.add_tab("https://example.com/?normal=1", None, true, None);
+                })),
+                web_ready("real.normal_tab_loads", "normal=1"),
+                Pause(800),
+                probe("String(localStorage.getItem('inert-seal')) + '|' + document.cookie"),
+                expect("real.private_sealed_from_normal_tabs", 5000, |b| b.probe.as_deref() == Some("null|")),
+                // Always-private sites: the site refuses a normal tab.
+                Setup(Box::new(|b| {
+                    b.profile.settings.private_sites.push("iana.org".into());
+                    let id = b.active;
+                    b.navigate(id, "https://www.iana.org/help/example-domains");
+                })),
+                expect("real.always_private_site_opens_private", 30000, |b| b.active_tab().is_some_and(|t| t.private && t.url().contains("iana.org"))),
+                // Split view with two real pages.
+                Setup(Box::new(|b| {
+                    b.close_private_tabs();
+                    b.add_tab("https://example.org/", None, true, None);
+                })),
+                web_ready("real.second_page_loads", "example.org"),
+                Click(s("menu")),
+                Click(s("menu:Split view")),
+                expect("real.split_view_two_web_pages", 15000, |b| b.split.is_some_and(|id| matches!(b.tab(id).map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some()))),
+                Pause(1500),
+                Shot(s("rw05-split-web")),
+                Click(s("split:close")),
+                // Instant answers: a quick fact from the web, and a sum worked out here.
+                Click(s("omnibox")),
+                Type(s("capital of france")),
+                expect("real.instant_answer_from_web", 12000, |b| b.omni.sugg.iter().any(|x| x.kind == crate::omnibox::Kind::Answer)),
+                Pause(400),
+                Shot(s("rw06-instant-answer")),
+                Press(Key::Escape, Modifiers::NONE),
+                // Panic: private tabs gone (the window also steps aside).
+                Setup(Box::new(|b| {
+                    b.add_private_tab("about:newtab");
+                })),
+                Press(Key::H, Modifiers::COMMAND | Modifiers::ALT | Modifiers::CTRL),
+                expect("real.panic_erases_private_tabs", 3000, |b| !b.tabs.iter().any(|t| t.private)),
+            ]
         } else if std::env::var("INERT_DRIVE_SCENARIO").as_deref() == Ok("web") {
             // One Servo page, for checking how it is drawn (scale, corners).
             vec![
@@ -759,6 +1100,29 @@ fn look_steps() -> Vec<Step> {
         Click(s("tab:Inert Bank")),
         Pause(600),
         Shot(s("l13-dark-bank")),
+        // Back to blue: settings by category, the privacy page, tabs on top.
+        Setup(Box::new(|b| {
+            b.profile.settings.dark = Some(false);
+            crate::theme::set_dark(false);
+            b.add_tab("about:settings", None, true, None);
+        })),
+        Pause(600),
+        Shot(s("l14-settings")),
+        Click(s("settings:Privacy")),
+        Pause(500),
+        Shot(s("l15-settings-privacy")),
+        Setup(Box::new(|b| {
+            b.add_private_tab("about:newtab");
+        })),
+        Pause(700),
+        Shot(s("l16-private")),
+        Setup(Box::new(|b| {
+            b.close_private_tabs();
+            b.profile.settings.tabs_top = true;
+            b.add_tab("inert://bank.example", None, true, None);
+        })),
+        Pause(2500),
+        Shot(s("l17-tabs-top")),
     ]
 }
 

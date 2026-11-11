@@ -70,6 +70,29 @@ impl Browser {
             }
             return;
         }
+        // Some browsers are readable, others are kept out by macOS: say so
+        // next to the ones that are, so the blocked one isn't just missing.
+        if !self.import.blocked.is_empty() {
+            let names = self.import.blocked.join(", ");
+            egui::Frame::new().fill(WARN.gamma_multiply(0.10)).corner_radius(14).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(theme::label_c(&format!("{names} is here, but macOS keeps Inert out"), WARN));
+                ui.label(theme::muted("Privacy & Security → Full Disk Access → turn on Inert (after an update: off and on again). Then Try again."));
+                ui.horizontal(|ui| {
+                    if ui.add(theme::cta("Open Privacy settings", accent(), WHITE, 32.0)).clicked() {
+                        let _ = std::process::Command::new("open").arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles").spawn();
+                    }
+                    let t = ui.add(theme::cta_ghost("Try again", 32.0));
+                    crate::drive::reg("import:retry-partial", t.rect);
+                    if t.clicked() {
+                        self.import.sources = import::sources();
+                        self.import.blocked = import::blocked();
+                        self.import.pick = 0;
+                    }
+                });
+            });
+            ui.add_space(12.0);
+        }
         ui.label(theme::label("From"));
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {

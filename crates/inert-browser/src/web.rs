@@ -80,6 +80,8 @@ pub struct Opts {
     pub private: bool,
     pub hide_location: bool,
     pub calm: bool,
+    /// The Shield is on for this page's site.
+    pub shield: bool,
 }
 
 /// Creates the web view for a tab as a child of the browser window.
@@ -90,6 +92,9 @@ pub fn create(frame: &eframe::Frame, tab: u64, url: &str, rect: egui::Rect, tx: 
     }
     if opts.calm {
         script.push_str(crate::page_js::CALM);
+    }
+    if opts.shield {
+        script.push_str(crate::page_js::YT_ADS);
     }
     let (t1, t2, t3, t4, t5) = (tx.clone(), tx.clone(), tx.clone(), tx.clone(), tx.clone());
     let (c1, c2, c3, c4, c5) = (ctx.clone(), ctx.clone(), ctx.clone(), ctx.clone(), ctx.clone());
@@ -220,6 +225,9 @@ pub mod mac {
     unsafe impl Encode for Rc {
         const ENCODING: Encoding = Encoding::Struct("CGRect", &[Pt::ENCODING, Sz::ENCODING]);
     }
+    unsafe impl objc2::encode::RefEncode for Rc {
+        const ENCODING_REF: Encoding = Encoding::Pointer(&<Rc as Encode>::ENCODING);
+    }
 
     /// Sends an Edit-menu action (cut:, copy:, paste:, selectAll:, undo:,
     /// redo:) to a web view.
@@ -347,6 +355,63 @@ pub mod mac {
             }
             let s: *mut objc2_foundation::NSString = msg_send![pb, stringForType: &*ty];
             s.as_ref().map(|s| s.to_string())
+        }
+    }
+
+    #[repr(C)]
+    pub struct CGImage {
+        _p: [u8; 0],
+    }
+    unsafe impl objc2::encode::RefEncode for CGImage {
+        const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("CGImage", &[]));
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGImageGetWidth(img: *const CGImage) -> usize;
+        fn CGImageGetHeight(img: *const CGImage) -> usize;
+        fn CGColorSpaceCreateDeviceRGB() -> *mut std::ffi::c_void;
+        fn CGColorSpaceRelease(cs: *mut std::ffi::c_void);
+        fn CGBitmapContextCreate(data: *mut std::ffi::c_void, w: usize, h: usize, bpc: usize, bpr: usize, cs: *mut std::ffi::c_void, info: u32) -> *mut std::ffi::c_void;
+        fn CGContextDrawImage(ctx: *mut std::ffi::c_void, rect: Rc, img: *const CGImage);
+        fn CGContextRelease(ctx: *mut std::ffi::c_void);
+    }
+
+    /// Takes a picture of what the web view shows, for drawing in its place
+    /// while a menu or panel covers the page (a native view can't sit under
+    /// Inert's own drawing). `done` gets the pixels on the main thread.
+    pub fn snapshot(view: &wry::WebView, done: impl Fn(eframe::egui::ColorImage) + 'static) {
+        use wry::WebViewExtMacOS;
+        let wv = view.webview();
+        let block = block2::RcBlock::new(move |img: *mut AnyObject, _err: *mut AnyObject| {
+            if img.is_null() {
+                return;
+            }
+            unsafe {
+                let nil: *mut AnyObject = std::ptr::null_mut();
+                let cg: *const CGImage = msg_send![img, CGImageForProposedRect: std::ptr::null_mut::<Rc>(), context: nil, hints: nil];
+                if cg.is_null() {
+                    return;
+                }
+                let (w, h) = (CGImageGetWidth(cg), CGImageGetHeight(cg));
+                if w == 0 || h == 0 || w > 8192 || h > 8192 {
+                    return;
+                }
+                let mut buf = vec![0u8; w * h * 4];
+                let cs = CGColorSpaceCreateDeviceRGB();
+                // RGBA, premultiplied, byte order 32 big.
+                let ctx = CGBitmapContextCreate(buf.as_mut_ptr() as *mut _, w, h, 8, w * 4, cs, 1 | (4 << 12));
+                if !ctx.is_null() {
+                    CGContextDrawImage(ctx, Rc { o: Pt { x: 0.0, y: 0.0 }, s: Sz { w: w as f64, h: h as f64 } }, cg);
+                    CGContextRelease(ctx);
+                }
+                CGColorSpaceRelease(cs);
+                done(eframe::egui::ColorImage::from_rgba_premultiplied([w, h], &buf));
+            }
+        });
+        unsafe {
+            let nil: *mut AnyObject = std::ptr::null_mut();
+            let _: () = msg_send![&*wv, takeSnapshotWithConfiguration: nil, completionHandler: &*block];
         }
     }
 

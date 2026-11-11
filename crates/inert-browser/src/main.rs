@@ -50,6 +50,31 @@ fn main() -> eframe::Result {
         drive::save_png(std::path::Path::new(out), &art::icon_image(n));
         return Ok(());
     }
+    // `--import-check <file>`: what the Chrome import can see on this Mac,
+    // as counts only (nothing from the browser's data is written out).
+    if let Some(out) = args.iter().position(|a| a == "--import-check").and_then(|i| args.get(i + 1)) {
+        let mut lines = vec![format!("blocked by macOS: {:?}", import::blocked())];
+        for src in import::sources() {
+            let folder = src.dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+            let exists = |n: &str| if src.dir.join(n).exists() { "yes" } else { "no" };
+            let r = import::run(&src, import::What { bookmarks: true, history: true, passwords: false, cookies: false, settings: false });
+            lines.push(format!(
+                "{} · folder {folder}: Bookmarks file {} · AccountBookmarks file {} · bookmarks read {} · history rows {} · icons {} · errors {:?}",
+                src.browser,
+                exists("Bookmarks"),
+                exists("AccountBookmarks"),
+                r.bookmarks.len(),
+                r.history.len(),
+                r.favicons.len(),
+                r.errors
+            ));
+        }
+        if lines.len() == 1 {
+            lines.push("no browser profiles readable".into());
+        }
+        let _ = std::fs::write(out, lines.join("\n") + "\n");
+        return Ok(());
+    }
     let icon = art::icon_image(256);
     let icon = egui::IconData { rgba: icon.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect(), width: 256, height: 256 };
 

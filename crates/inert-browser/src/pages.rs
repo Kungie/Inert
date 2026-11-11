@@ -91,9 +91,11 @@ fn row(ui: &mut Ui, time: &str, title: &str, url: &str, removable: bool) -> (egu
 
 fn section(ui: &mut Ui, n: &str, title: &str) {
     ui.add_space(28.0);
-    ui.label(theme::label(&format!("{n} — {title}")));
+    ui.label(theme::label(&if n.is_empty() { title.to_owned() } else { format!("{n} — {title}") }));
     ui.add_space(10.0);
 }
+
+const SETTINGS_CATS: [(&str, Icon); 8] = [("General", Icon::Gear), ("AI", Icon::Spark), ("Search & pages", Icon::Search), ("Privacy", Icon::Mask), ("Shield & cookies", Icon::Shield), ("Passwords & import", Icon::Key), ("VPN", Icon::Vpn), ("About", Icon::Spark)];
 
 impl Browser {
     // ------------------------------------------------------------------ sign in
@@ -1082,8 +1084,64 @@ impl Browser {
         ui.add_space(48.0);
         ui.label(theme::label("Settings"));
         ui.label(theme::title("Make it yours.", 44.0));
+        ui.add_space(18.0);
+        // Categories: one at a time, chosen from the row of pills.
+        let key = Id::unique("settings-cat");
+        let mut cat: usize = ui.ctx().data(|d| d.get_temp(key)).unwrap_or(0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            for (i, (name, icon)) in SETTINGS_CATS.iter().enumerate() {
+                let on = cat == i;
+                let g = ui.painter().layout_no_wrap((*name).to_owned(), FontId::new(13.0, sans_medium()), FG);
+                let (r, _) = ui.allocate_exact_size(vec2(g.size().x + 44.0, 36.0), Sense::hover());
+                let resp = ui.interact(r, Id::unique(("settings-cat", i)), Sense::click());
+                crate::drive::reg(format!("settings:{name}"), r);
+                let h = ui.ctx().animate_bool_with_time(resp.id.with("h"), resp.hovered(), 0.12);
+                let p = ui.painter();
+                p.rect_filled(r, 18.0, if on { accent() } else { RAISED.lerp_to_gamma(HOVER, h) });
+                icons::paint(p, Rect::from_center_size(pos2(r.left() + 20.0, r.center().y), Vec2::splat(14.0)), *icon, if on { WHITE } else { MUTED });
+                p.galley(pos2(r.left() + 34.0, r.center().y - g.size().y / 2.0), g, if on { WHITE } else { FG });
+                if resp.clicked() {
+                    cat = i;
+                }
+            }
+        });
+        ui.ctx().data_mut(|d| d.insert_temp(key, cat));
+        match cat {
 
-        section(ui, "01", "AI provider");
+            0 => self.settings_cat_0(ui),
+            1 => self.settings_cat_1(ui),
+            2 => self.settings_cat_2(ui),
+            3 => self.settings_cat_3(ui),
+            4 => self.settings_cat_4(ui),
+            5 => self.settings_cat_5(ui),
+            6 => self.settings_cat_6(ui),
+            7 => self.settings_cat_7(ui),
+            _ => {}
+        }
+    }
+
+    /// Settings: General.
+    fn settings_cat_0(&mut self, ui: &mut Ui) {
+        section(ui, "", "Look");
+        self.look_picker(ui, false);
+
+        section(ui, "", "Performance");
+        if ui.checkbox(&mut self.profile.settings.memory_saver, "Memory saver: unload web tabs unused for 15 minutes (Inbox tabs stay awake)").changed() {
+            self.dirty = true;
+        }
+        if ui.checkbox(&mut self.profile.settings.bookmarks_bar, "Show bookmarks bar").changed() {
+            self.dirty = true;
+        }
+        if ui.checkbox(&mut self.profile.settings.sidebar, "Show the tab sidebar (Cmd+S)").changed() {
+            self.dirty = true;
+        }
+
+    }
+
+    /// Settings: AI.
+    fn settings_cat_1(&mut self, ui: &mut Ui) {
+        section(ui, "", "AI provider");
         let current = self.profile.settings.provider;
         ui.horizontal(|ui| {
             for p in [Provider::Claude, Provider::Gpt] {
@@ -1129,10 +1187,11 @@ impl Browser {
             ui.ctx().data_mut(|d| d.insert_temp(key, k));
         }
 
-        section(ui, "02", "Look");
-        self.look_picker(ui, false);
+    }
 
-        section(ui, "03", "Search");
+    /// Settings: Search & pages.
+    fn settings_cat_2(&mut self, ui: &mut Ui) {
+        section(ui, "", "Search");
         ui.horizontal(|ui| {
             for e in SearchEngine::ALL {
                 if ui.selectable_label(self.profile.settings.search == e, e.name()).clicked() {
@@ -1162,13 +1221,21 @@ impl Browser {
         }
         ui.label(theme::muted("WebKit runs today's sites as they are. Servo is written in Rust and still misses things many sites need. Applies to tabs opened from now on; any page can switch engines from its site security panel."));
 
-        section(ui, "04", "Private tabs & privacy");
-        self.privacy_settings(ui);
-
-        section(ui, "05", "Page tools");
+        section(ui, "", "Page tools");
         self.tools_settings(ui);
 
-        section(ui, "06", "Shield");
+    }
+
+    /// Settings: Privacy.
+    fn settings_cat_3(&mut self, ui: &mut Ui) {
+        section(ui, "", "Private tabs & privacy");
+        self.privacy_settings(ui);
+
+    }
+
+    /// Settings: Shield & cookies.
+    fn settings_cat_4(&mut self, ui: &mut Ui) {
+        section(ui, "", "Shield");
         let mut on = self.profile.settings.adblock;
         if ui.checkbox(&mut on, "Block ads & trackers on web pages (EasyList, EasyPrivacy, uBlock Origin filters)").changed() {
             self.profile.settings.adblock = on;
@@ -1203,31 +1270,32 @@ impl Browser {
             self.dirty = true;
         }
 
-        section(ui, "07", "Extensions");
+        section(ui, "", "Extensions");
         self.extensions_settings(ui);
 
-        section(ui, "08", "Passwords & import");
+    }
+
+    /// Settings: Passwords & import.
+    fn settings_cat_5(&mut self, ui: &mut Ui) {
+        section(ui, "", "Passwords & import");
         self.passwords_settings(ui);
 
-        section(ui, "09", "VPN");
+    }
+
+    /// Settings: VPN.
+    fn settings_cat_6(&mut self, ui: &mut Ui) {
+        section(ui, "", "VPN");
         let s = self.vpn.status.clone();
         ui.label(theme::body(if s.installed { "Mullvad is installed. Open the VPN pill at the foot of the sidebar to connect or pick a location." } else { "Install Mullvad VPN to enable the built-in VPN." }));
         if s.installed {
             ui.label(theme::muted(&format!("Status: {}{}", s.state, if s.connected() { format!(" · {}, {}", s.city, s.country) } else { String::new() })));
         }
 
-        section(ui, "10", "Performance");
-        if ui.checkbox(&mut self.profile.settings.memory_saver, "Memory saver: unload web tabs unused for 15 minutes (Inbox tabs stay awake)").changed() {
-            self.dirty = true;
-        }
-        if ui.checkbox(&mut self.profile.settings.bookmarks_bar, "Show bookmarks bar").changed() {
-            self.dirty = true;
-        }
-        if ui.checkbox(&mut self.profile.settings.sidebar, "Show the tab sidebar (Cmd+S)").changed() {
-            self.dirty = true;
-        }
+    }
 
-        section(ui, "11", "About");
+    /// Settings: About.
+    fn settings_cat_7(&mut self, ui: &mut Ui) {
+        section(ui, "", "About");
         ui.label(theme::body("Inert Browser 0.1 — Rust, egui + wgpu, Servo and WebKit for the unsecured web."));
         ui.label(theme::muted("inert:// protocol v1 · TLS 1.3 with X25519MLKEM768 · Ed25519-signed manifests."));
         ui.label(theme::muted("Typefaces: Geist Sans, Mono, Pixel and Serif by Vercel (SIL Open Font License)."));

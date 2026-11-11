@@ -48,6 +48,8 @@ pub enum Event {
     Translated { tab: u64, result: Result<String, String> },
     /// An instant answer for what was typed: (query, answer).
     Instant(String, String),
+    /// A picture of a WebKit page, shown while a menu covers it.
+    WebSnap { tab: u64, image: egui::ColorImage },
     /// Touch ID answered.
     Unlocked { what: Unlock, ok: bool },
     /// Push-to-talk: what the dictation helper heard.
@@ -76,6 +78,8 @@ fn load_rewind(demo: bool) -> Vec<Snap> {
 /// What a page script was run for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Ask {
+    /// A check run by the UI driver; the answer lands in `Browser::probe`.
+    Probe,
     Translate,
     Readable,
     Pip,
@@ -344,6 +348,12 @@ pub struct Browser {
     pub prev_active: u64,
     /// Rewind: the text of pages seen (newest last), kept on this Mac.
     pub rewind: Vec<Snap>,
+    /// A picture of the active WebKit page, drawn while the native view is
+    /// hidden under a menu or panel, so the page doesn't go dark.
+    pub web_snap: Option<(u64, egui::TextureHandle)>,
+    snap_asked: Option<Instant>,
+    /// The last answer to a driver probe (see `Ask::Probe`).
+    pub probe: Option<String>,
     /// "Read aloud" while it is speaking.
     pub say: Option<std::process::Child>,
     rewind_dirty: bool,
@@ -461,6 +471,9 @@ impl Browser {
             prev_active: 0,
             rewind: load_rewind(demo),
             say: None,
+            probe: None,
+            web_snap: None,
+            snap_asked: None,
             rewind_dirty: false,
             last_input: Instant::now(),
             capture_hidden: false,
@@ -897,12 +910,16 @@ impl Browser {
                 }
                 Event::WebTitle { tab, title } => {
                     let mut url = String::new();
+                    let private = self.tab(tab).is_some_and(|t| t.private);
                     if let Some(Kind::Web(w)) = self.tab_mut(tab).map(|t| &mut t.kind) {
                         w.title = title.clone();
                         url = w.url.clone();
                     }
-                    self.profile.record_visit(&url, &title);
-                    self.dirty = true;
+                    // A private tab's title is not history either.
+                    if !private {
+                        self.profile.record_visit(&url, &title);
+                        self.dirty = true;
+                    }
                 }
                 Event::OpenTab { url, background } => {
                     let g = self.active_tab().and_then(|t| t.group);
@@ -952,6 +969,12 @@ impl Browser {
                 }
                 Event::Clipped { rect, image } => self.on_clipped(rect, &image),
                 Event::Dictate(h) => self.on_heard(h),
+                Event::WebSnap { tab, image } => {
+                    if self.snap_asked.is_some() && tab == self.active {
+                        let t = self.ctx.load_texture("web-snap", image, egui::TextureOptions::LINEAR);
+                        self.web_snap = Some((tab, t));
+                    }
+                }
                 Event::PageAnswer { tab, ask, text } => self.on_page_answer(tab, ask, text),
                 Event::Translated { tab, result } => match result {
                     Ok(json) => {
@@ -1303,7 +1326,9 @@ impl Browser {
 
     fn on_page_answer(&mut self, tab: u64, ask: Ask, text: String) {
         match ask {
+            Ask::Probe => self.probe = Some(text),
             Ask::Pip => {
+                self.probe = Some(text.clone());
                 if text == "none" {
                     self.toast("No video is playing on this page");
                 }
@@ -1435,6 +1460,45 @@ impl Browser {
         }
     }
 
+    /// Whether the active native web view should hide for a menu or panel.
+    /// Before it hides, a picture of it is taken and drawn in its place, so
+    /// the page stays where it was instead of going dark.
+    fn overlay_gate(&mut self, overlay: bool) -> bool {
+        if !overlay {
+            self.web_snap = None;
+            self.snap_asked = None;
+            return false;
+        }
+        let id = self.active;
+        if self.web_snap.as_ref().is_some_and(|(t, _)| *t == id) {
+            return true;
+        }
+        let shown = matches!(self.tab(id).map(|t| &t.kind), Some(Kind::Web(w)) if w.view.is_some() && w.visible);
+        match self.snap_asked {
+            None if shown => {
+                self.snap_asked = Some(Instant::now());
+                #[cfg(target_os = "macos")]
+                if let Some(Kind::Web(w)) = self.tab(id).map(|t| &t.kind) {
+                    if let Some(v) = &w.view {
+                        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+                        web::mac::snapshot(v, move |image| {
+                            let _ = tx.send(Event::WebSnap { tab: id, image });
+                            ctx.request_repaint();
+                        });
+                    }
+                }
+                self.ctx.request_repaint_after(Duration::from_millis(16));
+                false
+            }
+            // A picture takes a frame or two; never longer than this.
+            Some(t) if t.elapsed() < Duration::from_millis(300) => {
+                self.ctx.request_repaint_after(Duration::from_millis(16));
+                false
+            }
+            _ => true,
+        }
+    }
+
     /// Whether a URL's site is on the always-private list.
     pub fn wants_private(&self, url: &str) -> bool {
         if self.profile.settings.private_sites.is_empty() || !url.starts_with("http") {
@@ -1502,7 +1566,10 @@ impl Browser {
         self.close_private_tabs();
         self.popover = Popover::None;
         self.ai.open = false;
-        self.ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        // (The UI driver keeps the window up so it can check the result.)
+        if self.driver.is_none() {
+            self.ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
     }
 
     /// Per-frame upkeep for private tabs: erase when idle, hide from capture.
@@ -1810,7 +1877,7 @@ impl Browser {
             if t.id == active {
                 w.last_active = Instant::now();
                 if w.view.is_none() {
-                    let opts = web::Opts { private: t.private, hide_location, calm };
+                    let opts = web::Opts { private: t.private, hide_location, calm, shield: adblock_on && !off_sites.contains(&crate::cookies::site_of(&crate::cookies::host_of(&w.url))) };
                     match web::create(frame, t.id, &w.url, content, &tx, &ctx, opts) {
                         Ok(v) => {
                             #[cfg(target_os = "macos")]
@@ -1828,7 +1895,7 @@ impl Browser {
             } else if split == Some(t.id) && split_rect.width() > 40.0 {
                 // The right pane of split view.
                 if w.view.is_none() {
-                    let opts = web::Opts { private: t.private, hide_location, calm };
+                    let opts = web::Opts { private: t.private, hide_location, calm, shield: adblock_on && !off_sites.contains(&crate::cookies::site_of(&crate::cookies::host_of(&w.url))) };
                     match web::create(frame, t.id, &w.url, split_rect, &tx, &ctx, opts) {
                         Ok(v) => {
                             #[cfg(target_os = "macos")]
@@ -1929,7 +1996,8 @@ impl eframe::App for Browser {
         let content = self.content_rect;
         let locked = self.private_locked && self.active_tab().is_some_and(|t| t.private);
         let overlay = locked || self.popover != Popover::None || (!self.omni.sugg.is_empty() && self.omni.editing) || egui::Popup::is_any_open(&ctx) || self.rename.is_some() || self.confirming() || self.page_menu.is_some();
-        self.sync_webviews(frame, content, overlay);
+        let hide = self.overlay_gate(overlay);
+        self.sync_webviews(frame, content, hide);
         self.memory_saver();
         self.after_frame(&ctx, frame);
     }
@@ -1953,6 +2021,9 @@ impl Browser {
     }
 
     fn after_frame(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        if std::env::var_os("INERT_DEBUG_FRAMES").is_some() && ctx.cumulative_pass_nr() % 60 == 0 {
+            eprintln!("frame {} at {:?}", ctx.cumulative_pass_nr(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
+        }
         if self.dirty && self.last_save.elapsed() > Duration::from_secs(2) {
             self.save_now();
         }

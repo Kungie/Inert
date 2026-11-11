@@ -13,7 +13,9 @@ use crate::{adblock, ai, vpn};
 use eframe::egui::{self, Align, Color32, FontId, Id, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use std::time::{Duration, Instant};
 
-const SIDE_W: f32 = 252.0;
+/// Sidebar width limits (it is dragged at its edge).
+const SIDE_MIN: f32 = 200.0;
+const SIDE_MAX: f32 = 440.0;
 const TOP_H: f32 = 52.0;
 /// Height of the tab strip when tabs are on top.
 pub const STRIP_H: f32 = 44.0;
@@ -143,7 +145,8 @@ impl Browser {
         let win = ui.max_rect();
         let top = self.profile.settings.tabs_top;
         let side_t = if top { 0.0 } else { ease(ctx.animate_bool_with_time(Id::unique("side-open"), self.profile.settings.sidebar, 0.28)) };
-        let side_w = (SIDE_W * side_t).round();
+        let side_full = self.profile.settings.sidebar_w.clamp(SIDE_MIN, SIDE_MAX);
+        let side_w = (side_full * side_t).round();
         // An empty bookmarks bar takes no room.
         let show_marks = self.profile.settings.bookmarks_bar && !self.profile.bookmarks.is_empty();
         let marks = if show_marks { MARKS_H } else { 0.0 } + if top { STRIP_H } else { 0.0 };
@@ -157,6 +160,25 @@ impl Browser {
         crate::art::glyphs(&p, &ctx, Rect::from_min_max(win.min, pos2(win.left() + side_w, win.bottom())), ptr, &g);
         crate::art::glyphs(&p, &ctx, Rect::from_min_max(pos2(win.left() + side_w, win.top()), pos2(win.right(), win.top() + TOP_H + marks)), ptr, &g);
 
+        if side_w >= 1.0 && side_t > 0.99 {
+            // The sidebar's edge: drag to resize, double-click for the default.
+            let edge = Rect::from_min_max(pos2(win.left() + side_w - 3.0, win.top() + TOP_H), pos2(win.left() + side_w + GAP.min(5.0), win.bottom()));
+            let r = ui.interact(edge, Id::unique("side-edge"), Sense::click_and_drag());
+            if r.hovered() || r.dragged() {
+                ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            if r.dragged() {
+                if let Some(pt) = ctx.pointer_latest_pos() {
+                    self.profile.settings.sidebar_w = (pt.x - win.left()).clamp(SIDE_MIN, SIDE_MAX).round();
+                    self.dirty = true;
+                }
+            }
+            if r.double_clicked() {
+                self.profile.settings.sidebar_w = 252.0;
+                self.dirty = true;
+            }
+            crate::drive::reg("sidebar:edge", edge);
+        }
         if side_w >= 1.0 {
             egui::Panel::left("side").resizable(false).show_separator_line(false).exact_size(side_w).frame(egui::Frame::NONE).show(ui, |ui| self.sidebar(ui));
         }
@@ -313,7 +335,7 @@ impl Browser {
     fn sidebar(&mut self, ui: &mut Ui) {
         let panel = ui.max_rect();
         // Laid out at full width; it slides in from the left while the panel opens.
-        let full = Rect::from_min_max(pos2(panel.right() - SIDE_W, panel.top()), panel.max);
+        let full = Rect::from_min_max(pos2(panel.right() - self.profile.settings.sidebar_w.clamp(SIDE_MIN, SIDE_MAX), panel.top()), panel.max);
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
         self.frame_drag(ui, panel, "side-drag");
@@ -538,7 +560,8 @@ impl Browser {
         self.ai_button(&mut ru);
         self.vpn_pill(&mut ru);
 
-        let tabs = Rect::from_min_max(pos2(full.left() + LEFT_INSET, full.top()), pos2(right.left() - 8.0, full.bottom()));
+        // A little more room after the traffic lights than in the sidebar.
+        let tabs = Rect::from_min_max(pos2(full.left() + LEFT_INSET + 14.0, full.top()), pos2(right.left() - 8.0, full.bottom()));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tabs).layout(Layout::left_to_right(Align::Center)));
         let ui = &mut child;
         ui.set_clip_rect(tabs);
@@ -2709,9 +2732,15 @@ impl Browser {
                     }
                 },
                 Kind::Web(_) => {
-                    // The native WebKit view covers this area.
+                    // The native WebKit view covers this area. While it is
+                    // hidden under a menu, its picture stands in for it.
                     let r = ui.max_rect();
                     ui.painter().rect_filled(r, 0.0, BG);
+                    if let Some((sid, tex)) = &self.web_snap {
+                        if *sid == id {
+                            ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                        }
+                    }
                 }
                 Kind::Page(_) => {}
             }

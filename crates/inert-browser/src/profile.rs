@@ -85,6 +85,10 @@ fn yes() -> bool {
     true
 }
 
+fn side_w() -> f32 {
+    252.0
+}
+
 fn fifteen() -> u32 {
     15
 }
@@ -120,6 +124,9 @@ pub struct Settings {
     /// Index into `theme::ACCENTS`.
     #[serde(default)]
     pub accent: usize,
+    /// The sidebar's width in points (dragged at its edge).
+    #[serde(default = "side_w")]
+    pub sidebar_w: f32,
     /// Tabs in a strip on top instead of the sidebar.
     #[serde(default)]
     pub tabs_top: bool,
@@ -182,6 +189,7 @@ impl Default for Settings {
             dark: None,
             accent: 0,
             tabs_top: false,
+            sidebar_w: 252.0,
             ai_mode: 0,
             hide_location: true,
             calm: false,

@@ -146,25 +146,34 @@ pub fn glyphs(p: &Painter, ctx: &egui::Context, rect: Rect, pointer: Option<Pos2
     }
 }
 
-/// The Inert mark: the letter I, centered in a ring.
+/// The Inert mark: a text caret held between two brackets — text that
+/// stays put, code that never runs.
 pub fn mark(p: &Painter, c: Pos2, r: f32, color: Color32) {
-    // Snapped to whole pixels so the bar sits exactly in the middle.
-    let c = pos2(c.x.round(), c.y.round());
-    let w = (r * 0.16).max(1.5).round();
-    p.circle_stroke(c, r, egui::Stroke::new(w, color));
-    p.rect_filled(Rect::from_center_size(c, egui::vec2(w, (r * 0.96).round())), w / 2.0, color);
+    // In a 100-unit box: brackets at x 24–37 and 63–76, y 22–78; the caret
+    // in the middle. `r` is half the box.
+    let k = r / 50.0;
+    let at = |x: f32, y: f32| pos2((c.x + (x - 50.0) * k).round(), (c.y + (y - 50.0) * k).round());
+    let w = (7.0 * k).max(1.5);
+    let s = egui::Stroke::new(w, color);
+    p.add(egui::Shape::line(vec![at(37.0, 22.0), at(24.0, 22.0), at(24.0, 78.0), at(37.0, 78.0)], s));
+    p.add(egui::Shape::line(vec![at(63.0, 22.0), at(76.0, 22.0), at(76.0, 78.0), at(63.0, 78.0)], s));
+    // Round line ends.
+    for pt in [at(37.0, 22.0), at(37.0, 78.0), at(63.0, 22.0), at(63.0, 78.0)] {
+        p.circle_filled(pt, w / 2.0, color);
+    }
+    p.rect_filled(Rect::from_min_max(at(46.5, 32.0), at(53.5, 68.0)), w / 2.0, color);
 }
 
 /// The logo: a rounded tile in the brand blue with the glyph map and the
-/// mark. `bg` is what the tile sits on (its corners are painted with it).
+/// held caret. `bg` is what the tile sits on (its corners are painted with it).
 pub fn logo(p: &Painter, ctx: &egui::Context, r: Rect, time: f32, bg: Color32) {
     let rad = r.width() * 0.24;
     p.rect_filled(r, rad, theme::BLUE);
     let size = (r.width() / 9.0).clamp(4.0, 10.0);
     glyphs(p, ctx, r, None, &Glyphs::logo(time, size));
     let c = r.center();
-    p.circle_filled(c, r.width() * 0.33, theme::BLUE);
-    mark(p, c, r.width() * 0.25, theme::WHITE);
+    p.rect_filled(Rect::from_center_size(c, egui::vec2(r.width() * 0.72, r.height() * 0.58)), r.width() * 0.13, theme::BLUE);
+    mark(p, c, r.width() * 0.34, theme::WHITE);
     crate::chrome::round_corners(p, r, rad, bg);
 }
 
@@ -200,9 +209,8 @@ pub fn icon_image(n: usize) -> egui::ColorImage {
     let u = (nf / 240.0).max(1.0);
     let (cw, ch) = (7.0 * u, 9.0 * u);
     let c = nf / 2.0;
-    let ring_r = nf * 0.21;
-    let ring_w = nf * 0.028;
-    let clear_r = nf * 0.27;
+    // The letters stay clear of a box around the mark.
+    let (clear_w, clear_h) = (nf * 0.215, nf * 0.225);
     for y in 0..n {
         for x in 0..n {
             // 4×4 samples per pixel for smooth edges.
@@ -216,7 +224,8 @@ pub fn icon_image(n: usize) -> egui::ColorImage {
                     }
                     let mut col = navy;
                     let d = ((fx - c).powi(2) + (fy - c).powi(2)).sqrt();
-                    if d > clear_r {
+                    let _ = d;
+                    if (fx - c).abs() > clear_w || (fy - c).abs() > clear_h {
                         // Flowing letters: a diagonal band field.
                         let (gx, gy) = ((fx / cw).floor(), (fy / ch).floor());
                         let v = field(gx * 0.16 + gy * 0.05, gy * 0.20);
@@ -231,13 +240,13 @@ pub fn icon_image(n: usize) -> egui::ColorImage {
                             }
                         }
                     }
-                    // The ring and the keyhole.
-                    if (d - ring_r).abs() < ring_w / 2.0 {
-                        col = [255, 255, 255];
-                    }
-                    // The I: a bar centered in the ring.
-                    let (kx, ky) = (fx - c, fy - c);
-                    if kx.abs() < ring_w / 2.0 && ky.abs() < ring_r * 0.48 {
+                    // The held caret: two brackets and a bar, white.
+                    let (ux, uy) = ((fx - c) / (nf * 0.31) * 50.0 + 50.0, (fy - c) / (nf * 0.31) * 50.0 + 50.0);
+                    let half = 3.5;
+                    let near = |x0: f32, y0: f32, x1: f32, y1: f32| ux >= x0.min(x1) - half && ux <= x0.max(x1) + half && uy >= y0.min(y1) - half && uy <= y0.max(y1) + half;
+                    let bracket = near(24.0, 22.0, 37.0, 22.0) || near(24.0, 78.0, 37.0, 78.0) || near(24.0, 22.0, 24.0, 78.0) || near(63.0, 22.0, 76.0, 22.0) || near(63.0, 78.0, 76.0, 78.0) || near(76.0, 22.0, 76.0, 78.0);
+                    let caret = (ux - 50.0).abs() <= 3.5 && (32.0..=68.0).contains(&uy);
+                    if bracket || caret {
                         col = [255, 255, 255];
                     }
                     acc[0] += col[0] as f32;

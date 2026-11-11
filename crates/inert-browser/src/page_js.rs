@@ -36,3 +36,9 @@ pub const TRANSLATE_COLLECT: &str = r#"(function(){var out=[],nodes=[],total=0;v
 pub fn translate_apply(json: &str) -> String {
     format!("(function(t){{var n=window.__inertT||[];for(var i=0;i<n.length&&i<t.length;i++){{if(typeof t[i]==='string')n[i].nodeValue=t[i];}}return String(Math.min(n.length,t.length));}})({json})")
 }
+
+/// With the Shield on: YouTube's video ads come from the same servers as
+/// the videos, so no network rule can stop them. This skips them as they
+/// start (and hides the ad slots around the player), the way uBlock
+/// Origin's own YouTube fixes do.
+pub const YT_ADS: &str = r#"(function(){if(!/(^|\.)youtube\.com$/.test(location.hostname))return;try{if(window.__inertCss)window.__inertCss('ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,ytd-banner-promo-renderer,ytd-statement-banner-renderer,#player-ads,#masthead-ad,ytd-promoted-sparkles-web-renderer,ytd-companion-slot-renderer,.ytp-ad-overlay-container{display:none!important}');var tick=function(){var p=document.querySelector('.html5-video-player');if(p&&p.classList.contains('ad-showing')){var v=p.querySelector('video');if(v){v.muted=true;if(isFinite(v.duration)&&v.duration>0)v.currentTime=v.duration;}var b=document.querySelector('.ytp-skip-ad-button,.ytp-ad-skip-button,.ytp-ad-skip-button-modern');if(b)b.click();}};setInterval(tick,300);}catch(e){}})();"#;
