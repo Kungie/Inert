@@ -144,10 +144,15 @@ impl Browser {
             return;
         }
         if self.signin.import_step {
-            ui.add_space((col.height() - 560.0).max(0.0) * 0.5);
-            theme::panel_frame(26, 32.0).show(ui, |ui| {
-                ui.set_width(600.0);
-                self.import_screen(ui);
+            // This step can grow (a browser macOS keeps out, many profiles):
+            // it scrolls, so its buttons are always reachable.
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.add_space((col.height() - 640.0).max(0.0) * 0.5);
+                theme::panel_frame(26, 32.0).show(ui, |ui| {
+                    ui.set_width(600.0);
+                    self.import_screen(ui);
+                });
+                ui.add_space(24.0);
             });
             return;
         }

@@ -76,8 +76,10 @@ impl Browser {
             let names = self.import.blocked.join(", ");
             egui::Frame::new().fill(WARN.gamma_multiply(0.10)).corner_radius(14).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(theme::label_c(&format!("{names} is here, but macOS keeps Inert out"), WARN));
-                ui.label(theme::muted("Privacy & Security → Full Disk Access → turn on Inert (after an update: off and on again). Then Try again."));
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(theme::label_c(&format!("{names} is here, but macOS keeps Inert out"), WARN));
+                    ui.label(theme::muted("Full Disk Access → Inert on, then Try again."));
+                });
                 ui.horizontal(|ui| {
                     if ui.add(theme::cta("Open Privacy settings", accent(), WHITE, 32.0)).clicked() {
                         let _ = std::process::Command::new("open").arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles").spawn();
