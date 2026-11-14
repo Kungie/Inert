@@ -1,0 +1,7 @@
+# Copy to config.yml on the server and fill in the tunnel id and hostname.
+tunnel: TUNNEL_ID
+credentials-file: /etc/cloudflared/tunnel.json
+ingress:
+  - hostname: HOSTNAME
+    service: http://site:80
+  - service: http_status:404

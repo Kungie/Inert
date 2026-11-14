@@ -1,8 +1,6 @@
-# inert website: Caddy serves ./public, and a Cloudflare Tunnel publishes it
-# without opening a port. No domain yet: the tunnel is a "quick tunnel" and
-# its address (https://<words>.trycloudflare.com) is in `docker compose logs cloudflared`.
-# With a domain: create a named tunnel and switch the command to
-# `tunnel --no-autoupdate --config /etc/cloudflared/config.yml run`.
+# Inert website: Caddy serves ./public, and a named Cloudflare Tunnel publishes
+# it without opening a port. Tunnel config and credentials live in
+# ./cloudflared (see README.md); they are never committed.
 services:
   site:
     image: caddy:2-alpine
@@ -13,7 +11,11 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:2026.10.4
-    command: tunnel --no-autoupdate --url http://site:80
+    # The uid that owns ./cloudflared, so the read-only credentials file is readable.
+    user: "1000:1000"
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
     depends_on:
       - site
     restart: unless-stopped
