@@ -11,6 +11,7 @@
 </p>
 
 <p align="center">
+  <a href="https://inert.erenkahraman.dev"><img src="https://img.shields.io/badge/website-inert.erenkahraman.dev-1F4DFF" alt="Website"></a>
   <a href="https://github.com/Kungie/Inert/releases/latest"><img src="https://img.shields.io/github/v/release/Kungie/Inert?color=1F4DFF&label=release" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-1F4DFF" alt="License: AGPL-3.0"></a>
   <img src="https://img.shields.io/badge/rust-2024%20edition-1F4DFF?logo=rust&logoColor=white" alt="Rust 2024 edition">
@@ -28,6 +29,8 @@ add a password field, a button or a script.
 The rest of the web opens in the same browser as **unsecured** tabs, in WebKit
 (or Servo, in its own process), with ad and tracker blocking, private tabs and
 an assistant that treats web pages as untrusted text.
+
+More on the website: **[inert.erenkahraman.dev](https://inert.erenkahraman.dev)**.
 
 ![Inert Bank in the Inert browser](site/shots/l02-bank.png)
 
@@ -93,7 +96,7 @@ Sign-in asks for one thing: your AI provider. The API key, if you give one, live
 | `examples/{bank,shop,notes}` | Three demo sites with fake data. |
 | `spec/vectors` | Language-independent conformance vectors. |
 | `fuzz` | cargo-fuzz targets for the decoder and verifier. |
-| `site` | The website (static HTML). |
+| `site` | The website (static HTML), live at [inert.erenkahraman.dev](https://inert.erenkahraman.dev). |
 | `docs/superpowers/specs` | The design spec. |
 
 ## Build from source
